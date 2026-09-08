@@ -75,7 +75,7 @@ impl ModelSpec {
 /// Returns `Ok(assets)` when every required file exists and is non-empty,
 /// otherwise returns `Err` with a developer-facing description of the first
 /// missing piece. Callers that want to surface a user-facing message should
-/// inspect [`super::model_store::classify_availability`] before calling this.
+/// inspect the Local Model Store status before calling this.
 pub(crate) fn resolve_assets_in_store(
     spec: &ModelSpec,
     store_root: &Path,
@@ -122,17 +122,8 @@ where
     F: FnMut(&str),
 {
     let data_root = crate::local_data_location::resolve_data_root()?;
-    let executable_dir = std::env::current_exe()
-        .map_err(|error| format!("Failed to resolve current executable path: {error}"))?
-        .parent()
-        .ok_or_else(|| "executable has no parent directory".to_owned())?
-        .to_path_buf();
-
-    match local_model_store_status_for(&data_root, &executable_dir, spec) {
+    match local_model_store_status_for(&data_root, spec) {
         LocalModelStoreStatus::Installed => {}
-        LocalModelStoreStatus::InstalledViaMigration => {
-            on_progress("Migrated bundled model to Local Model Store…");
-        }
         LocalModelStoreStatus::Missing => return Err(MISSING_MODEL_USER_MESSAGE.to_owned()),
         LocalModelStoreStatus::Downloading { .. } => {
             return Err("Semantic Search assets are still installing.".to_owned());
@@ -149,26 +140,12 @@ pub(crate) fn default_local_model_store_status() -> LocalModelStoreStatus {
         Ok(root) => root,
         Err(error) => return LocalModelStoreStatus::Failed(error),
     };
-    let executable_dir = match std::env::current_exe()
-        .map_err(|error| format!("Failed to resolve current executable path: {error}"))
-        .and_then(|path| {
-            path.parent()
-                .map(Path::to_path_buf)
-                .ok_or_else(|| "executable has no parent directory".to_owned())
-        }) {
-        Ok(path) => path,
-        Err(error) => return LocalModelStoreStatus::Failed(error),
-    };
-    local_model_store_status_for(&data_root, &executable_dir, &DEFAULT_SEMANTIC_SEARCH_MODEL)
+    local_model_store_status_for(&data_root, &DEFAULT_SEMANTIC_SEARCH_MODEL)
 }
 
-fn local_model_store_status_for(
-    data_root: &Path,
-    executable_dir: &Path,
-    spec: &ModelSpec,
-) -> LocalModelStoreStatus {
+fn local_model_store_status_for(data_root: &Path, spec: &ModelSpec) -> LocalModelStoreStatus {
     let required_files = spec.required_model_files();
-    refresh_local_model_store_status(data_root, executable_dir, spec.model_key, &required_files)
+    refresh_local_model_store_status(data_root, spec.model_key, &required_files)
 }
 
 /// In-process text encoder for search queries. Image embedding runs in the

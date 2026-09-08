@@ -6,7 +6,7 @@ use super::{
 };
 use crate::data::CanvasImageLod;
 use crate::library::storage::Library;
-use crate::placement::arrange_rect_world;
+use crate::placement::initial_layout::arrange_rect_with_existing_layout;
 use crate::test_support::TempRoot;
 use image::{ColorType, ImageFormat};
 use pollster::block_on;
@@ -70,42 +70,12 @@ fn file_imports_land_in_same_area_band() {
     let square_path = write_png(&root, "square.png", 1000, 1000);
     let small_path = write_png(&root, "small.png", 180, 240);
 
-    let portrait = import_path_sync(
-        &library,
-        portrait_path,
-        eframe::egui::Pos2::ZERO,
-        test_viewport_world(),
-        true,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-    )
-    .unwrap();
-    let landscape = import_path_sync(
-        &library,
-        landscape_path,
-        eframe::egui::Pos2::ZERO,
-        test_viewport_world(),
-        true,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-    )
-    .unwrap();
-    let square = import_path_sync(
-        &library,
-        square_path,
-        eframe::egui::Pos2::ZERO,
-        test_viewport_world(),
-        true,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-    )
-    .unwrap();
-    let small = import_path_sync(
-        &library,
-        small_path,
-        eframe::egui::Pos2::ZERO,
-        test_viewport_world(),
-        true,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-    )
-    .unwrap();
+    let portrait =
+        import_path_sync(&library, portrait_path, eframe::egui::Pos2::ZERO, true).unwrap();
+    let landscape =
+        import_path_sync(&library, landscape_path, eframe::egui::Pos2::ZERO, true).unwrap();
+    let square = import_path_sync(&library, square_path, eframe::egui::Pos2::ZERO, true).unwrap();
+    let small = import_path_sync(&library, small_path, eframe::egui::Pos2::ZERO, true).unwrap();
 
     assert!((displayed_area(&portrait) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
     assert!((displayed_area(&landscape) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
@@ -123,25 +93,27 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
 
     let tall = match import(
         &library,
-        ImportRequest {
-            target_board_id: 1,
-            queue_id: 1,
-            placement_id: Some(library.allocate_document_id()),
-            source: ImportSource::Clipboard {
-                rgba: tall_rgba,
-                width: 390,
-                height: 844,
+        reserve_import_fixture(
+            &library,
+            ImportRequest {
+                target_board_id: 1,
+                queue_id: 1,
+                placement_id: 0,
+                source: ImportSource::Clipboard {
+                    rgba: tall_rgba,
+                    width: 390,
+                    height: 844,
+                },
+                reserved_world: eframe::egui::Pos2::ZERO,
+
+                max_texture_side: usize::MAX,
+                canvas_image_settings: CanvasImageSettings::default(),
+                auto_scale: true,
+                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+
+                trace: None,
             },
-            desired_world: eframe::egui::Pos2::ZERO,
-            reserved_world: None,
-            viewport_world: test_viewport_world(),
-            max_texture_side: usize::MAX,
-            canvas_image_settings: CanvasImageSettings::default(),
-            auto_scale: true,
-            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
-            trace: None,
-        },
+        ),
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -149,25 +121,27 @@ fn clipboard_import_respects_toggle_and_small_assets_stay_unchanged() {
     };
     let small = match import(
         &library,
-        ImportRequest {
-            target_board_id: 1,
-            queue_id: 2,
-            placement_id: Some(library.allocate_document_id()),
-            source: ImportSource::Clipboard {
-                rgba: small_rgba,
-                width: 160,
-                height: 200,
+        reserve_import_fixture(
+            &library,
+            ImportRequest {
+                target_board_id: 1,
+                queue_id: 2,
+                placement_id: 0,
+                source: ImportSource::Clipboard {
+                    rgba: small_rgba,
+                    width: 160,
+                    height: 200,
+                },
+                reserved_world: eframe::egui::Pos2::ZERO,
+
+                max_texture_side: usize::MAX,
+                canvas_image_settings: CanvasImageSettings::default(),
+                auto_scale: false,
+                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+
+                trace: None,
             },
-            desired_world: eframe::egui::Pos2::ZERO,
-            reserved_world: None,
-            viewport_world: test_viewport_world(),
-            max_texture_side: usize::MAX,
-            canvas_image_settings: CanvasImageSettings::default(),
-            auto_scale: false,
-            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
-            trace: None,
-        },
+        ),
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -186,25 +160,27 @@ fn clipboard_import_uses_configured_target_area() {
 
     let loaded = match import(
         &library,
-        ImportRequest {
-            target_board_id: 1,
-            queue_id: 1,
-            placement_id: Some(library.allocate_document_id()),
-            source: ImportSource::Clipboard {
-                rgba: solid_rgba(1000, 1500),
-                width: 1000,
-                height: 1500,
+        reserve_import_fixture(
+            &library,
+            ImportRequest {
+                target_board_id: 1,
+                queue_id: 1,
+                placement_id: 0,
+                source: ImportSource::Clipboard {
+                    rgba: solid_rgba(1000, 1500),
+                    width: 1000,
+                    height: 1500,
+                },
+                reserved_world: eframe::egui::Pos2::ZERO,
+
+                max_texture_side: usize::MAX,
+                canvas_image_settings: CanvasImageSettings::default(),
+                auto_scale: true,
+                placement_target_area: target_area,
+
+                trace: None,
             },
-            desired_world: eframe::egui::Pos2::ZERO,
-            reserved_world: None,
-            viewport_world: test_viewport_world(),
-            max_texture_side: usize::MAX,
-            canvas_image_settings: CanvasImageSettings::default(),
-            auto_scale: true,
-            placement_target_area: target_area,
-            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
-            trace: None,
-        },
+        ),
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -223,25 +199,27 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
 
     let loaded = match import(
         &library,
-        ImportRequest {
-            target_board_id: second.id,
-            queue_id: 1,
-            placement_id: Some(library.allocate_document_id()),
-            source: ImportSource::Clipboard {
-                rgba: solid_rgba(160, 120),
-                width: 160,
-                height: 120,
+        reserve_import_fixture(
+            &library,
+            ImportRequest {
+                target_board_id: second.id,
+                queue_id: 1,
+                placement_id: 0,
+                source: ImportSource::Clipboard {
+                    rgba: solid_rgba(160, 120),
+                    width: 160,
+                    height: 120,
+                },
+                reserved_world: eframe::egui::pos2(42.0, 24.0),
+
+                max_texture_side: usize::MAX,
+                canvas_image_settings: CanvasImageSettings::default(),
+                auto_scale: false,
+                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+
+                trace: None,
             },
-            desired_world: eframe::egui::pos2(42.0, 24.0),
-            reserved_world: None,
-            viewport_world: test_viewport_world(),
-            max_texture_side: usize::MAX,
-            canvas_image_settings: CanvasImageSettings::default(),
-            auto_scale: false,
-            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
-            trace: None,
-        },
+        ),
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -255,99 +233,126 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
 
 #[test]
 fn empty_board_placement_uses_requested_anchor() {
-    let root = TempRoot::new("empty-placement");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let existing = Vec::new();
     let anchor = eframe::egui::pos2(120.0, -48.0);
 
-    let arranged =
-        arrange_rect_world(&library, anchor, test_viewport_world(), 300.0, 200.0, 12.0).unwrap();
+    let arranged = arrange_rect_with_existing_layout(
+        &existing,
+        anchor,
+        test_viewport_world(),
+        300.0,
+        200.0,
+        12.0,
+    );
 
     assert_eq!(arranged, anchor);
 }
 
 #[test]
 fn deterministic_candidate_order_prefers_right_before_below_on_tie() {
-    let root = TempRoot::new("placement-order");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
+    let mut existing = Vec::new();
+    existing.push(
+        crate::placement::arrangement::PlacementArrangementInput::new(
+            existing.len() as i64,
+            eframe::egui::pos2(0.0, 0.0),
+            eframe::egui::vec2(100 as f32, 100 as f32),
+        ),
+    );
 
-    let arranged = arrange_rect_world(
-        &library,
+    let arranged = arrange_rect_with_existing_layout(
+        &existing,
         eframe::egui::pos2(106.0, 106.0),
         test_viewport_world(),
         100.0,
         100.0,
         12.0,
-    )
-    .unwrap();
+    );
 
     assert_eq!(arranged, eframe::egui::pos2(112.0, 0.0));
 }
 
 #[test]
 fn blocked_right_side_candidate_falls_through_to_valid_lower_slot() {
-    let root = TempRoot::new("placement-blocked-right");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
-    seed_placement(&library, 112.0, 0.0, 100, 100, 1.0);
+    let mut existing = Vec::new();
+    existing.push(
+        crate::placement::arrangement::PlacementArrangementInput::new(
+            existing.len() as i64,
+            eframe::egui::pos2(0.0, 0.0),
+            eframe::egui::vec2(100 as f32, 100 as f32),
+        ),
+    );
+    existing.push(
+        crate::placement::arrangement::PlacementArrangementInput::new(
+            existing.len() as i64,
+            eframe::egui::pos2(112.0, 0.0),
+            eframe::egui::vec2(100 as f32, 100 as f32),
+        ),
+    );
 
-    let arranged = arrange_rect_world(
-        &library,
+    let arranged = arrange_rect_with_existing_layout(
+        &existing,
         eframe::egui::pos2(112.0, 50.0),
         test_viewport_world(),
         100.0,
         100.0,
         12.0,
-    )
-    .unwrap();
+    );
 
     assert_eq!(arranged, eframe::egui::pos2(112.0, 112.0));
 }
 
 #[test]
 fn square_scoring_beats_anchor_distance_for_adjacent_imports() {
-    let root = TempRoot::new("placement-square-scoring");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    seed_placement(&library, 0.0, 0.0, 240, 80, 1.0);
+    let mut existing = Vec::new();
+    existing.push(
+        crate::placement::arrangement::PlacementArrangementInput::new(
+            existing.len() as i64,
+            eframe::egui::pos2(0.0, 0.0),
+            eframe::egui::vec2(240 as f32, 80 as f32),
+        ),
+    );
 
-    let arranged = arrange_rect_world(
-        &library,
+    let arranged = arrange_rect_with_existing_layout(
+        &existing,
         eframe::egui::pos2(172.0, 0.0),
         test_viewport_world(),
         80.0,
         80.0,
         12.0,
-    )
-    .unwrap();
+    );
 
     assert_eq!(arranged, eframe::egui::pos2(172.0, 0.0));
 }
 
 #[test]
 fn viewport_bounding_prefers_on_screen_candidate() {
-    let root = TempRoot::new("placement-viewport-bounded");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    seed_placement(&library, 0.0, 0.0, 240, 80, 1.0);
+    let mut existing = Vec::new();
+    existing.push(
+        crate::placement::arrangement::PlacementArrangementInput::new(
+            existing.len() as i64,
+            eframe::egui::pos2(0.0, 0.0),
+            eframe::egui::vec2(240 as f32, 80 as f32),
+        ),
+    );
     let viewport = eframe::egui::Rect::from_min_max(
         eframe::egui::pos2(100.0, -60.0),
         eframe::egui::pos2(260.0, 60.0),
     );
 
-    let arranged = arrange_rect_world(
-        &library,
+    let arranged = arrange_rect_with_existing_layout(
+        &existing,
         eframe::egui::pos2(172.0, 0.0),
         viewport,
         80.0,
         80.0,
         12.0,
-    )
-    .unwrap();
+    );
 
     assert_eq!(arranged, eframe::egui::pos2(172.0, 0.0));
 }
 
 #[test]
-fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
+fn reserved_import_preserves_custom_gap_in_displayed_bounds() {
     let root = TempRoot::new("placement-custom-gap");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let gap = 8.0;
@@ -355,25 +360,27 @@ fn sequential_imports_preserve_custom_gap_in_displayed_bounds() {
 
     let second = match import(
         &library,
-        ImportRequest {
-            target_board_id: 1,
-            queue_id: 2,
-            placement_id: Some(library.allocate_document_id()),
-            source: ImportSource::Clipboard {
-                rgba: solid_rgba(200, 200),
-                width: 200,
-                height: 200,
+        reserve_import_fixture(
+            &library,
+            ImportRequest {
+                target_board_id: 1,
+                queue_id: 2,
+                placement_id: 0,
+                source: ImportSource::Clipboard {
+                    rgba: solid_rgba(200, 200),
+                    width: 200,
+                    height: 200,
+                },
+                reserved_world: eframe::egui::pos2(200.0 + gap, 0.0),
+
+                max_texture_side: usize::MAX,
+                canvas_image_settings: CanvasImageSettings::default(),
+                auto_scale: false,
+                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+
+                trace: None,
             },
-            desired_world: eframe::egui::Pos2::ZERO,
-            reserved_world: None,
-            viewport_world: test_viewport_world(),
-            max_texture_side: usize::MAX,
-            canvas_image_settings: CanvasImageSettings::default(),
-            auto_scale: false,
-            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-            placement_gap: gap,
-            trace: None,
-        },
+        ),
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -405,25 +412,27 @@ fn reserved_world_is_persisted_without_worker_relayout() {
 
     let loaded = match import(
         &library,
-        ImportRequest {
-            target_board_id: 1,
-            queue_id: 2,
-            placement_id: Some(library.allocate_document_id()),
-            source: ImportSource::Clipboard {
-                rgba: solid_rgba(100, 100),
-                width: 100,
-                height: 100,
+        reserve_import_fixture(
+            &library,
+            ImportRequest {
+                target_board_id: 1,
+                queue_id: 2,
+                placement_id: 0,
+                source: ImportSource::Clipboard {
+                    rgba: solid_rgba(100, 100),
+                    width: 100,
+                    height: 100,
+                },
+                reserved_world: reserved_world,
+
+                max_texture_side: usize::MAX,
+                canvas_image_settings: CanvasImageSettings::default(),
+                auto_scale: false,
+                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+
+                trace: None,
             },
-            desired_world: eframe::egui::Pos2::ZERO,
-            reserved_world: Some(reserved_world),
-            viewport_world: test_viewport_world(),
-            max_texture_side: usize::MAX,
-            canvas_image_settings: CanvasImageSettings::default(),
-            auto_scale: false,
-            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
-            trace: None,
-        },
+        ),
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -443,25 +452,27 @@ fn overlapping_reserved_world_is_preserved_when_persisting() {
 
     let loaded = match import(
         &library,
-        ImportRequest {
-            target_board_id: 1,
-            queue_id: 2,
-            placement_id: Some(library.allocate_document_id()),
-            source: ImportSource::Clipboard {
-                rgba: solid_rgba(100, 100),
-                width: 100,
-                height: 100,
+        reserve_import_fixture(
+            &library,
+            ImportRequest {
+                target_board_id: 1,
+                queue_id: 2,
+                placement_id: 0,
+                source: ImportSource::Clipboard {
+                    rgba: solid_rgba(100, 100),
+                    width: 100,
+                    height: 100,
+                },
+                reserved_world: reserved_world,
+
+                max_texture_side: usize::MAX,
+                canvas_image_settings: CanvasImageSettings::default(),
+                auto_scale: false,
+                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+
+                trace: None,
             },
-            desired_world: reserved_world,
-            reserved_world: Some(reserved_world),
-            viewport_world: test_viewport_world(),
-            max_texture_side: usize::MAX,
-            canvas_image_settings: CanvasImageSettings::default(),
-            auto_scale: false,
-            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
-            trace: None,
-        },
+        ),
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -483,21 +494,23 @@ fn url_import_downloads_and_persists_original_bytes() {
 
     let loaded = import_sync(
         &library,
-        ImportRequest {
-            target_board_id: 1,
-            queue_id: 7,
-            placement_id: Some(library.allocate_document_id()),
-            source: ImportSource::Url(url.clone()),
-            desired_world: eframe::egui::Pos2::ZERO,
-            reserved_world: None,
-            viewport_world: test_viewport_world(),
-            max_texture_side: usize::MAX,
-            canvas_image_settings: CanvasImageSettings::default(),
-            auto_scale: false,
-            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
-            trace: None,
-        },
+        reserve_import_fixture(
+            &library,
+            ImportRequest {
+                target_board_id: 1,
+                queue_id: 7,
+                placement_id: 0,
+                source: ImportSource::Url(url.clone()),
+                reserved_world: eframe::egui::Pos2::ZERO,
+
+                max_texture_side: usize::MAX,
+                canvas_image_settings: CanvasImageSettings::default(),
+                auto_scale: false,
+                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+
+                trace: None,
+            },
+        ),
         None,
     )
     .unwrap();
@@ -540,24 +553,9 @@ fn path_import_reuses_existing_exact_asset_and_removes_duplicate_original() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let source = write_png(&root, "source.png", 64, 48);
 
-    let first = import_path_sync(
-        &library,
-        source.clone(),
-        eframe::egui::Pos2::ZERO,
-        test_viewport_world(),
-        false,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-    )
-    .unwrap();
-    let second = import_path_sync(
-        &library,
-        source,
-        eframe::egui::pos2(100.0, 0.0),
-        test_viewport_world(),
-        false,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-    )
-    .unwrap();
+    let first =
+        import_path_sync(&library, source.clone(), eframe::egui::Pos2::ZERO, false).unwrap();
+    let second = import_path_sync(&library, source, eframe::egui::pos2(100.0, 0.0), false).unwrap();
 
     assert_eq!(
         second.placement.require_loaded_asset().id,
@@ -596,21 +594,23 @@ fn url_import_preserves_svg_as_vector_source() {
 
     let loaded = import_sync(
         &library,
-        ImportRequest {
-            target_board_id: 1,
-            queue_id: 9,
-            placement_id: Some(library.allocate_document_id()),
-            source: ImportSource::Url(url.clone()),
-            desired_world: eframe::egui::Pos2::ZERO,
-            reserved_world: None,
-            viewport_world: test_viewport_world(),
-            max_texture_side: usize::MAX,
-            canvas_image_settings: CanvasImageSettings::default(),
-            auto_scale: false,
-            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
-            trace: None,
-        },
+        reserve_import_fixture(
+            &library,
+            ImportRequest {
+                target_board_id: 1,
+                queue_id: 9,
+                placement_id: 0,
+                source: ImportSource::Url(url.clone()),
+                reserved_world: eframe::egui::Pos2::ZERO,
+
+                max_texture_side: usize::MAX,
+                canvas_image_settings: CanvasImageSettings::default(),
+                auto_scale: false,
+                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+
+                trace: None,
+            },
+        ),
         None,
     )
     .unwrap();
@@ -646,15 +646,8 @@ fn svg_import_preserves_vector_source_and_skips_canvas_cache() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let svg_path = write_svg(&root, "icon.svg", 320, 180);
 
-    let loaded = import_path_sync(
-        &library,
-        svg_path.clone(),
-        eframe::egui::Pos2::ZERO,
-        test_viewport_world(),
-        false,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-    )
-    .unwrap();
+    let loaded =
+        import_path_sync(&library, svg_path.clone(), eframe::egui::Pos2::ZERO, false).unwrap();
 
     assert_eq!(
         loaded.placement.require_loaded_asset().mime_type,
@@ -695,15 +688,8 @@ static char * sample_xpm[] = {
     )
     .unwrap();
 
-    let loaded = import_path_sync(
-        &library,
-        source.clone(),
-        eframe::egui::Pos2::ZERO,
-        test_viewport_world(),
-        false,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-    )
-    .unwrap();
+    let loaded =
+        import_path_sync(&library, source.clone(), eframe::egui::Pos2::ZERO, false).unwrap();
 
     assert_eq!(
         loaded.placement.require_loaded_asset().mime_type,
@@ -728,15 +714,7 @@ fn crop_item_rejects_svg_with_clear_error() {
     let root = TempRoot::new("svg-crop");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let svg_path = write_svg(&root, "icon.svg", 100, 80);
-    let loaded = import_path_sync(
-        &library,
-        svg_path,
-        eframe::egui::Pos2::ZERO,
-        test_viewport_world(),
-        false,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-    )
-    .unwrap();
+    let loaded = import_path_sync(&library, svg_path, eframe::egui::Pos2::ZERO, false).unwrap();
 
     let result = crop_item(
         &library,
@@ -774,15 +752,7 @@ fn load_existing_svg_uses_original_vector_source() {
     let root = TempRoot::new("svg-existing-load");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let svg_path = write_svg(&root, "icon.svg", 240, 120);
-    let imported = import_path_sync(
-        &library,
-        svg_path,
-        eframe::egui::Pos2::ZERO,
-        test_viewport_world(),
-        false,
-        crate::data::DEFAULT_PLACEMENT_GAP,
-    )
-    .unwrap();
+    let imported = import_path_sync(&library, svg_path, eframe::egui::Pos2::ZERO, false).unwrap();
 
     let loaded = match load_existing(
         &library,
@@ -891,16 +861,17 @@ fn make_import_path_request(source_path: PathBuf) -> super::ImagePrepRequest {
     super::ImagePrepRequest::Import(ImportRequest {
         target_board_id: 1,
         queue_id: 0,
-        placement_id: None,
+        placement_id: crate::placement::content_resolution::PlacementCreation::new()
+            .reserve_placement(1, 1, eframe::egui::Pos2::ZERO)
+            .placement_id,
         source: ImportSource::Path(source_path),
-        desired_world: eframe::egui::Pos2::ZERO,
-        reserved_world: None,
-        viewport_world: test_viewport_world(),
+        reserved_world: eframe::egui::Pos2::ZERO,
+
         max_texture_side: usize::MAX,
         canvas_image_settings: CanvasImageSettings::default(),
         auto_scale: true,
         placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-        placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
+
         trace: None,
     })
 }
@@ -980,25 +951,27 @@ fn traced_clipboard_import_populates_non_negative_timings() {
 
     let loaded = match import(
         &library,
-        ImportRequest {
-            target_board_id: 1,
-            queue_id: 1,
-            placement_id: Some(library.allocate_document_id()),
-            source: ImportSource::Clipboard {
-                rgba: solid_rgba(64, 64),
-                width: 64,
-                height: 64,
+        reserve_import_fixture(
+            &library,
+            ImportRequest {
+                target_board_id: 1,
+                queue_id: 1,
+                placement_id: 0,
+                source: ImportSource::Clipboard {
+                    rgba: solid_rgba(64, 64),
+                    width: 64,
+                    height: 64,
+                },
+                reserved_world: eframe::egui::Pos2::ZERO,
+
+                max_texture_side: usize::MAX,
+                canvas_image_settings: CanvasImageSettings::default(),
+                auto_scale: false,
+                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+
+                trace: Some(trace),
             },
-            desired_world: eframe::egui::Pos2::ZERO,
-            reserved_world: None,
-            viewport_world: test_viewport_world(),
-            max_texture_side: usize::MAX,
-            canvas_image_settings: CanvasImageSettings::default(),
-            auto_scale: false,
-            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-            placement_gap: crate::data::DEFAULT_PLACEMENT_GAP,
-            trace: Some(trace),
-        },
+        ),
         None,
     ) {
         ImagePrepResult::Loaded(loaded) => loaded,
@@ -1480,4 +1453,37 @@ fn serve_bytes_once(
         stream.flush().unwrap();
     });
     (format!("http://{address}{path}"), handle)
+}
+
+/// Reserve a real Loading Placement before worker tests prepare its content.
+pub(super) fn reserve_import_fixture(
+    library: &Library,
+    mut request: ImportRequest,
+) -> ImportRequest {
+    let source = match &request.source {
+        ImportSource::Path(path) => crate::data::ContentResolutionSource::ExternalPath {
+            path: path.to_string_lossy().into_owned(),
+        },
+        ImportSource::Url(url) => {
+            crate::data::ContentResolutionSource::ExternalUrl { url: url.clone() }
+        }
+        ImportSource::Clipboard { .. } => crate::data::ContentResolutionSource::Clipboard,
+    };
+    let placement = library.new_committed_loading_placement(
+        request.reserved_world,
+        1.0,
+        eframe::egui::vec2(100.0, 100.0),
+        source,
+        None,
+    );
+    let mut creation = crate::placement::content_resolution::PlacementCreation::new();
+    let reservation = creation.reserve_placement(
+        request.target_board_id,
+        placement.id(),
+        placement.state.geometry.center,
+    );
+    request.queue_id = reservation.queue_id;
+    request.placement_id = reservation.placement_id;
+    request.reserved_world = reservation.reserved_world;
+    request
 }

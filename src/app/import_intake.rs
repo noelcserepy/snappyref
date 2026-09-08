@@ -303,7 +303,6 @@ impl SnappyRefApp {
         screen_rect: egui::Rect,
         desired_world: egui::Pos2,
     ) {
-        let viewport = self.import_viewport_world_rect(screen_rect);
         let config = self.import_request_config();
         let trace = self.import_trace();
         let result = self.placement_creation.accept_sources(
@@ -320,7 +319,6 @@ impl SnappyRefApp {
             &self.external_hover_provisional_placement_ids,
             screen_rect,
             desired_world,
-            viewport,
             config,
             trace,
         );
@@ -523,7 +521,6 @@ impl SnappyRefApp {
             canvas_image_max_side: self.settings.canvas_image_max_side,
             auto_image_scaling: true,
             placement_target_area: self.settings.placement_target_area,
-            placement_gap: self.settings.placement_gap,
         }
     }
 

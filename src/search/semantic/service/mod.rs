@@ -1,6 +1,6 @@
 mod helper;
+pub(crate) use helper::run_embed_image_server;
 use helper::{EmbeddingHelperClient, embed_image_in_helper, ensure_embedding_helper};
-pub(crate) use helper::{print_embed_image_output, run_embed_image_server};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};

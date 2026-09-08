@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
+#[cfg(target_os = "macos")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use image::{AnimationDecoder, DynamicImage, ImageDecoder, ImageFormat, RgbaImage};
 
@@ -474,12 +476,14 @@ fn decode_image_file_with_native_fallback(
     Err("native fallback is not available on this platform".to_owned())
 }
 
+#[cfg(any(target_os = "macos", test))]
 struct NativeFallbackMetadata {
     format_name: &'static str,
     mime_type: &'static str,
     extension: String,
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn native_fallback_metadata_for_path(path: &Path) -> Option<NativeFallbackMetadata> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
@@ -616,6 +620,7 @@ fn decoded_custom_image_from_rgba(
     }
 }
 
+#[cfg(target_os = "macos")]
 fn decoded_custom_image_from_rgba_with_source_dimensions(
     rgba: Vec<u8>,
     width: u32,
@@ -1909,6 +1914,14 @@ static unsigned char sample_bits[] = { 0x01 };
             let metadata = native_fallback_metadata_for_path(std::path::Path::new(file)).unwrap();
             assert_eq!(metadata.format_name, format_name, "{file}");
             assert_eq!(metadata.mime_type, mime_type, "{file}");
+            assert_eq!(
+                metadata.extension,
+                std::path::Path::new(file)
+                    .extension()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+            );
         }
     }
 

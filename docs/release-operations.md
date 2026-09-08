@@ -52,8 +52,32 @@ by a key they do not know.
 
 Run `Publish Semantic Search` only when the local search assets change or need
 to be republished. Ordinary app releases reuse the existing standalone asset.
-The app build embeds the Semantic Search descriptor values so install surfaces
-can verify URL, size, and sha256 before promoting the **Local Model Store**.
+[assets/semantic-search-descriptor.env](../assets/semantic-search-descriptor.env)
+is the canonical URL, SHA256 and size. Cargo and both build workflows read it.
+Workflow inputs and `SNAPPYREF_SEMANTIC_SEARCH_*` build variables override values
+when needed. Update the descriptor after publishing a replacement model package.
+Build workflows attach the resolved descriptor alongside the app archive.
+Packaging rejects invalid descriptors or differing descriptors across selected builds.
+
+## Reuse app builds
+
+Build Windows App and Build macOS App attach their app archive and descriptor to
+`handoff_release_tag` in a source-repo draft release. Package Release Zips accepts
+`windows_build_tag` and `macos_build_tag` to reuse those builds without compiling.
+Blank build tags use the target `release_tag`. Set `create_draft_release` to retain
+the final zips on that draft release. Full Release uses the same packaging action,
+then signs its manifest and removes its temporary build handoff assets.
+
+Local packaging verification needs no release or model download:
+
+```sh
+python3 -m unittest discover -s scripts -p test_release_packaging.py
+```
+
+The icon source is `assets/app-icon/snappyref.svg`. On macOS, install Pillow and
+CairoSVG in a Python environment, then run `python scripts/generate-app-icons.py`.
+It renders the SVG to the checked-in runtime PNG, Windows ICO and macOS ICNS.
+Conversion tools are not installed with the app.
 
 ## Update Smokes
 

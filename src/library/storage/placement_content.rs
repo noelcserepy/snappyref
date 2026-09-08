@@ -1,7 +1,7 @@
 //! Persisted form of `PlacementContent`.
 //!
 //! Loaded content stores only the Asset id; the Asset row is joined back on
-//! read. Older payloads named the resolution `source` field `intent`.
+//! read. Schema migration upgrades older source field names before normal reads.
 
 use crate::data::{Asset, ContentResolutionSource, PlacementContent};
 
@@ -11,12 +11,10 @@ pub(crate) enum StoredPlacementContent {
         asset_id: i64,
     },
     Loading {
-        #[serde(alias = "intent")]
         source: ContentResolutionSource,
         status_message: Option<String>,
     },
     Failed {
-        #[serde(alias = "intent")]
         source: Option<ContentResolutionSource>,
         message: String,
         recoverable: bool,

@@ -1201,6 +1201,7 @@ fn active_board_load_applies_viewport_without_reloading_global_settings() {
     library.save_user_session(&stored_session).unwrap();
 
     let mut app = test_app(Some(library.clone()));
+    app.apply_user_session(Ok(stored_session));
     app.settings.placement_gap = 24.0;
 
     app.load_active_board();

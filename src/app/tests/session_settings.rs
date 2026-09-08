@@ -2,24 +2,6 @@ use super::*;
 use crate::test_support::TempRoot;
 
 #[test]
-fn persist_settings_if_changed_true_calls_save_once() {
-    let mut calls = 0;
-    SnappyRefApp::persist_settings_if_changed_with(true, || {
-        calls += 1;
-    });
-    assert_eq!(calls, 1);
-}
-
-#[test]
-fn persist_settings_if_changed_false_skips_save() {
-    let mut calls = 0;
-    SnappyRefApp::persist_settings_if_changed_with(false, || {
-        calls += 1;
-    });
-    assert_eq!(calls, 0);
-}
-
-#[test]
 fn save_user_session_round_trips_placement_gap() {
     let root = TempRoot::new("snappyref-app-gap");
     let library = Library::initialize(root.to_path_buf()).unwrap();
@@ -65,9 +47,5 @@ fn app_config_restores_always_on_top_workspace_setting() {
         update_smoke_status_path: None,
     };
 
-    assert!(
-        config
-            .restored_workspace_settings()
-            .is_some_and(|settings| settings.always_on_top)
-    );
+    assert!(config.prepare_startup().always_on_top());
 }

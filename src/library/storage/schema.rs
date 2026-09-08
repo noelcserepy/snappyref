@@ -11,8 +11,7 @@ const DEFAULT_VIEWPORT_ZOOM_SQL: &str = "0.45";
 
 /// Columns added after the tables first shipped, as `(table, column,
 /// definition)`. New databases get them from `CREATE TABLE`; older ones are
-/// upgraded in this order on open. Superseded `user_session` columns stay so
-/// old rows keep loading through `legacy_user_session_from_row`.
+/// upgraded in this order on open. Session upgrades run transactionally below.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("board_items", "archived", "INTEGER NOT NULL DEFAULT 0"),
     (
@@ -31,6 +30,42 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("board_items", "board_id", "INTEGER NOT NULL DEFAULT 1"),
     ("assets", "archived", "INTEGER NOT NULL DEFAULT 0"),
     ("assets", "original_sha256", "TEXT"),
+    ("asset_embeddings", "failure_kind", "TEXT"),
+    (
+        "asset_embeddings",
+        "failure_count",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+    ("asset_embeddings", "next_retry_at", "INTEGER"),
+    (
+        "canvas_annotations",
+        "text_size",
+        "TEXT NOT NULL DEFAULT 'm'",
+    ),
+    (
+        "canvas_annotations",
+        "stroke_width",
+        "TEXT NOT NULL DEFAULT 'm'",
+    ),
+    (
+        "canvas_annotations",
+        "color",
+        "TEXT NOT NULL DEFAULT 'default'",
+    ),
+    (
+        "canvas_annotations",
+        "background_enabled",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+    (
+        "canvas_annotations",
+        "board_id",
+        "INTEGER NOT NULL DEFAULT 1",
+    ),
+];
+
+// Only read while upgrading a column-based session; never part of the current schema.
+const OLD_SESSION_COLUMNS: &[(&str, &str, &str)] = &[
     (
         "user_session",
         "auto_image_scaling",
@@ -84,38 +119,6 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
         "INTEGER NOT NULL DEFAULT 1",
     ),
     ("user_session", "session_payload", "TEXT"),
-    ("asset_embeddings", "failure_kind", "TEXT"),
-    (
-        "asset_embeddings",
-        "failure_count",
-        "INTEGER NOT NULL DEFAULT 0",
-    ),
-    ("asset_embeddings", "next_retry_at", "INTEGER"),
-    (
-        "canvas_annotations",
-        "text_size",
-        "TEXT NOT NULL DEFAULT 'm'",
-    ),
-    (
-        "canvas_annotations",
-        "stroke_width",
-        "TEXT NOT NULL DEFAULT 'm'",
-    ),
-    (
-        "canvas_annotations",
-        "color",
-        "TEXT NOT NULL DEFAULT 'default'",
-    ),
-    (
-        "canvas_annotations",
-        "background_enabled",
-        "INTEGER NOT NULL DEFAULT 0",
-    ),
-    (
-        "canvas_annotations",
-        "board_id",
-        "INTEGER NOT NULL DEFAULT 1",
-    ),
 ];
 
 fn ensure_added_columns(connection: &Connection) -> Result<(), String> {
@@ -153,28 +156,7 @@ fn ensure_board_items_asset_id_nullable(connection: &Connection) -> Result<(), S
         return Ok(());
     }
 
-    // Table rebuilds need foreign keys off outside the transaction; turn them
-    // back on whether or not the rebuild succeeded.
     connection
-        .execute_batch("PRAGMA foreign_keys = OFF")
-        .map_err(|error| {
-            format!("failed to disable foreign keys for board_items migration: {error}")
-        })?;
-    let migration = rebuild_board_items_with_nullable_asset_id(connection);
-    let foreign_keys = connection
-        .execute_batch("PRAGMA foreign_keys = ON")
-        .map_err(|error| {
-            format!("failed to re-enable foreign keys after board_items migration: {error}")
-        });
-    migration?;
-    foreign_keys
-}
-
-fn rebuild_board_items_with_nullable_asset_id(connection: &Connection) -> Result<(), String> {
-    let transaction = connection
-        .unchecked_transaction()
-        .map_err(|error| format!("failed to start board_items migration: {error}"))?;
-    transaction
         .execute_batch(
             "
         ALTER TABLE board_items RENAME TO board_items_asset_required_old;
@@ -209,9 +191,7 @@ fn rebuild_board_items_with_nullable_asset_id(connection: &Connection) -> Result
         ",
         )
         .map_err(|error| format!("failed to migrate board_items asset_id nullability: {error}"))?;
-    transaction
-        .commit()
-        .map_err(|error| format!("failed to commit board_items migration: {error}"))
+    Ok(())
 }
 
 fn ensure_asset_dedupe_index(connection: &Connection) -> Result<(), String> {
@@ -410,15 +390,122 @@ fn table_has_column(connection: &Connection, table: &str, column: &str) -> Resul
     Ok(columns.iter().any(|existing| existing == column))
 }
 
+// This database migration marker is unrelated to the unversioned settings payload.
+fn migrate_current_representations(
+    connection: &Connection,
+    migrate_viewport: bool,
+) -> Result<(), String> {
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|error| format!("failed to read schema migration marker: {error}"))?;
+    if version >= 1 {
+        return Ok(());
+    }
+    if table_has_column(connection, "user_session", "camera_pan_x")? {
+        for (table, column, definition) in OLD_SESSION_COLUMNS {
+            if !table_has_column(connection, table, column)? {
+                connection
+                    .execute(
+                        &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+                        [],
+                    )
+                    .map_err(|error| {
+                        format!("failed to prepare old session column {column}: {error}")
+                    })?;
+            }
+        }
+        backfill_user_session_payload(connection)?;
+        if migrate_viewport {
+            migrate_default_board_viewport(connection)?;
+        }
+        connection.execute_batch("CREATE TABLE current_user_session (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            session_payload TEXT,
+            active_board_id INTEGER NOT NULL DEFAULT 1
+        );
+        INSERT INTO current_user_session SELECT id, session_payload, active_board_id FROM user_session;
+        DROP TABLE user_session;
+        ALTER TABLE current_user_session RENAME TO user_session;")
+            .map_err(|error| format!("failed to replace old session schema: {error}"))?;
+    }
+    for (table, column) in [
+        ("board_items", "content_resolution_intent"),
+        ("board_document_history", "payload"),
+    ] {
+        let mut statement = connection
+            .prepare(&format!(
+                "SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL"
+            ))
+            .map_err(|error| format!("failed to read {table} for content upgrade: {error}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| format!("failed to query {table} content: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to collect {table} content: {error}"))?;
+        drop(statement);
+        for (id, payload) in rows {
+            let mut value: serde_json::Value = serde_json::from_str(&payload)
+                .map_err(|error| format!("cannot upgrade {table} record {id}: {error}"))?;
+            if upgrade_content_sources(&mut value) {
+                connection
+                    .execute(
+                        &format!("UPDATE {table} SET {column} = ?1 WHERE id = ?2"),
+                        params![value.to_string(), id],
+                    )
+                    .map_err(|error| format!("failed to upgrade {table} record {id}: {error}"))?;
+            }
+        }
+    }
+    connection
+        .execute_batch("PRAGMA user_version = 1;")
+        .map_err(|error| format!("failed to record stored representation upgrade: {error}"))?;
+    Ok(())
+}
+
+// History contains nested Board snapshots, including archived Boards. Walk the
+// serialized content variants so every retained undo/redo branch upgrades together.
+fn upgrade_content_sources(value: &mut serde_json::Value) -> bool {
+    let mut changed = false;
+    match value {
+        serde_json::Value::Object(object) => {
+            for variant in ["Loading", "Failed"] {
+                if let Some(serde_json::Value::Object(content)) = object.get_mut(variant) {
+                    if let Some(source) = content.remove("intent") {
+                        content.entry("source").or_insert(source);
+                        changed = true;
+                    }
+                }
+            }
+            for child in object.values_mut() {
+                changed |= upgrade_content_sources(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                changed |= upgrade_content_sources(child);
+            }
+        }
+        _ => {}
+    }
+    changed
+}
+
 impl Library {
     pub(super) fn initialize_schema(&self) -> Result<(), String> {
         let connection = self.connection()?;
-        let should_migrate_default_board_viewport = !table_exists(&connection, "boards")?;
         connection
+            .execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF;")
+            .map_err(|error| format!("failed to prepare schema upgrade: {error}"))?;
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|error| format!("failed to start schema upgrade: {error}"))?;
+        let should_migrate_default_board_viewport = !table_exists(&transaction, "boards")?;
+        transaction
             .execute_batch(&format!(
                 "
-                PRAGMA journal_mode = WAL;
-                PRAGMA foreign_keys = ON;
+
 
                 CREATE TABLE IF NOT EXISTS assets (
                     id            INTEGER PRIMARY KEY,
@@ -462,20 +549,6 @@ impl Library {
 
                 CREATE TABLE IF NOT EXISTS user_session (
                     id            INTEGER PRIMARY KEY CHECK (id = 1),
-                    camera_pan_x  REAL NOT NULL,
-                    camera_pan_y  REAL NOT NULL,
-                    camera_zoom   REAL NOT NULL,
-                    auto_image_scaling INTEGER NOT NULL DEFAULT 1,
-                    placement_gap    REAL NOT NULL DEFAULT 0.0,
-                    import_target_canvas_area REAL NOT NULL DEFAULT 90000.0,
-                    canvas_background TEXT NOT NULL DEFAULT 'none',
-                    semantic_search_enabled INTEGER NOT NULL DEFAULT 1,
-                    canvas_image_mode TEXT NOT NULL DEFAULT 'downscale',
-                    canvas_image_max_side INTEGER NOT NULL DEFAULT 2000,
-                    rotation_snap_degrees REAL NOT NULL DEFAULT 15.0,
-                    default_textbox_background INTEGER NOT NULL DEFAULT 0,
-                    sidebar_open INTEGER NOT NULL DEFAULT 0,
-                    sidebar_tab TEXT NOT NULL DEFAULT 'settings',
                     session_payload TEXT,
                     active_board_id INTEGER NOT NULL DEFAULT 1
                 );
@@ -541,15 +614,17 @@ impl Library {
             ))
             .map_err(|error| format!("failed to initialize database schema: {error}"))?;
 
-        ensure_added_columns(&connection)?;
-        ensure_asset_dedupe_index(&connection)?;
-        ensure_default_board(&connection)?;
-        ensure_board_items_asset_id_nullable(&connection)?;
-        backfill_user_session_payload(&connection)?;
-        ensure_canvas_stack_items_populated(&connection)?;
-        if should_migrate_default_board_viewport {
-            migrate_default_board_viewport(&connection)?;
-        }
-        Ok(())
+        ensure_added_columns(&transaction)?;
+        ensure_asset_dedupe_index(&transaction)?;
+        ensure_default_board(&transaction)?;
+        ensure_board_items_asset_id_nullable(&transaction)?;
+        ensure_canvas_stack_items_populated(&transaction)?;
+        migrate_current_representations(&transaction, should_migrate_default_board_viewport)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit schema upgrade: {error}"))?;
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON;")
+            .map_err(|error| format!("failed to enable foreign keys: {error}"))
     }
 }

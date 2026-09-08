@@ -13,8 +13,8 @@ use crate::image_preparation::{ExistingLoadDiagnostics, ImagePrepTrace, ImportOr
 pub(crate) struct ContentResolutionReservation {
     pub(crate) target_board_id: i64,
     pub(crate) queue_id: u64,
-    pub(crate) placement_id: Option<i64>,
-    pub(crate) reserved_world: Option<egui::Pos2>,
+    pub(crate) placement_id: i64,
+    pub(crate) reserved_world: egui::Pos2,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -23,7 +23,6 @@ pub(crate) struct ContentResolutionRequestConfig {
     pub(crate) canvas_image_max_side: u32,
     pub(crate) auto_image_scaling: bool,
     pub(crate) placement_target_area: f32,
-    pub(crate) placement_gap: f32,
 }
 
 #[derive(Default)]
@@ -119,8 +118,8 @@ impl PlacementCreation {
         ContentResolutionReservation {
             target_board_id,
             queue_id,
-            placement_id: Some(placement_id),
-            reserved_world: Some(reserved_world),
+            placement_id,
+            reserved_world,
         }
     }
 
@@ -231,8 +230,6 @@ impl PlacementCreation {
 pub(crate) fn import_request(
     source: crate::image_preparation::ImportSource,
     reservation: ContentResolutionReservation,
-    desired_world: egui::Pos2,
-    viewport_world: egui::Rect,
     config: ContentResolutionRequestConfig,
     trace: Option<crate::image_preparation::ImagePrepTrace>,
 ) -> crate::image_preparation::ImagePrepRequest {
@@ -241,16 +238,13 @@ pub(crate) fn import_request(
         queue_id: reservation.queue_id,
         placement_id: reservation.placement_id,
         source,
-        desired_world,
         reserved_world: reservation.reserved_world,
-        viewport_world,
         max_texture_side: config.max_texture_side,
         canvas_image_settings: crate::image_preparation::CanvasImageSettings {
             max_side: config.canvas_image_max_side,
         },
         auto_scale: config.auto_image_scaling,
         placement_target_area: config.placement_target_area,
-        placement_gap: config.placement_gap,
         trace,
     })
 }
@@ -266,7 +260,7 @@ mod tests {
 
         assert_eq!(reservation.target_board_id, 2);
         assert_eq!(reservation.queue_id, 1);
-        assert_eq!(reservation.placement_id, Some(41));
+        assert_eq!(reservation.placement_id, 41);
         assert_eq!(runtime.pending_len(), 1);
         let completion = runtime.resolve_completion(Some(1), None, None);
         assert_eq!(completion.target_board_id, Some(2));
@@ -303,22 +297,15 @@ mod tests {
     fn import_path_request_carries_resolution_correlation() {
         let mut runtime = super::PlacementCreation::new();
         let reservation = runtime.reserve_placement(2, 41, eframe::egui::pos2(10.0, 20.0));
-        let viewport_world = eframe::egui::Rect::from_min_size(
-            eframe::egui::Pos2::ZERO,
-            eframe::egui::vec2(100.0, 80.0),
-        );
 
         let request = super::import_request(
             crate::image_preparation::ImportSource::Path(std::path::PathBuf::from("image.png")),
             reservation,
-            eframe::egui::pos2(12.0, 24.0),
-            viewport_world,
             super::ContentResolutionRequestConfig {
                 max_texture_side: 512,
                 canvas_image_max_side: 1024,
                 auto_image_scaling: true,
                 placement_target_area: 14400.0,
-                placement_gap: 18.0,
             },
             None,
         );
@@ -328,12 +315,11 @@ mod tests {
         };
         assert_eq!(request.target_board_id, 2);
         assert_eq!(request.queue_id, 1);
-        assert_eq!(request.placement_id, Some(41));
-        assert_eq!(request.reserved_world, Some(eframe::egui::pos2(10.0, 20.0)));
+        assert_eq!(request.placement_id, 41);
+        assert_eq!(request.reserved_world, eframe::egui::pos2(10.0, 20.0));
         assert_eq!(request.max_texture_side, 512);
         assert_eq!(request.canvas_image_settings.max_side, 1024);
         assert!(request.auto_scale);
         assert_eq!(request.placement_target_area, 14400.0);
-        assert_eq!(request.placement_gap, 18.0);
     }
 }

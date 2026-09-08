@@ -19,27 +19,22 @@ on:
       semantic_search_url:
         description: Compiled Semantic Search asset URL
         required: false
-        default: https://github.com/noelcserepy/snappyref-dist/releases/download/semantic-search/snappyref-semantic-search.zip
+        default: ""
         type: string
       semantic_search_sha256:
         description: Compiled Semantic Search asset sha256
         required: false
-        default: 252bbd840e67c09041feaf2e127f791903dab31d50bffb4810a162f1f1999429
+        default: ""
         type: string
       semantic_search_size:
         description: Compiled Semantic Search asset byte size
         required: false
-        default: "253732373"
+        default: ""
         type: string
-      upload_actions_artifacts:
-        description: Upload app and descriptor through GitHub Actions artifacts
-        required: false
-        default: true
-        type: boolean
       handoff_release_tag:
-        description: Source-repo release tag used when Actions artifact handoff is disabled
+        description: Source-repo draft release tag for reusable app build handoff
         required: false
-        default: ''
+        default: v0.2.0
         type: string
   workflow_call:
     inputs:
@@ -53,23 +48,19 @@ on:
         type: string
       semantic_search_url:
         required: false
-        default: https://github.com/noelcserepy/snappyref-dist/releases/download/semantic-search/snappyref-semantic-search.zip
+        default: ""
         type: string
       semantic_search_sha256:
         required: false
-        default: 252bbd840e67c09041feaf2e127f791903dab31d50bffb4810a162f1f1999429
+        default: ""
         type: string
       semantic_search_size:
         required: false
-        default: "253732373"
+        default: ""
         type: string
-      upload_actions_artifacts:
-        required: false
-        default: true
-        type: boolean
       handoff_release_tag:
         required: false
-        default: ''
+        default: v0.2.0
         type: string
 
 permissions:
@@ -108,15 +99,20 @@ jobs:
           "TURBOJPEG_LIB_DIR=$vcpkgRoot\installed\$vcpkgTriplet\lib" | Out-File -FilePath $env:GITHUB_ENV -Append
           "TURBOJPEG_INCLUDE_DIR=$vcpkgRoot\installed\$vcpkgTriplet\include" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Resolve Semantic Search descriptor
+        shell: bash
+        env:
+          SNAPPYREF_SEMANTIC_SEARCH_URL: ${{ inputs.semantic_search_url }}
+          SNAPPYREF_SEMANTIC_SEARCH_SHA256: ${{ inputs.semantic_search_sha256 }}
+          SNAPPYREF_SEMANTIC_SEARCH_SIZE: ${{ inputs.semantic_search_size }}
+        run: |
+          python scripts/semantic-search-descriptor.py resolve \
+            --output "$RUNNER_TEMP/semantic-search-descriptor/semantic-search-descriptor.env" \
+            --github-env "$GITHUB_ENV"
+
       - name: Build app binary
         shell: pwsh
         run: |
-          if ([string]::IsNullOrWhiteSpace("${{ inputs.semantic_search_sha256 }}") -or [string]::IsNullOrWhiteSpace("${{ inputs.semantic_search_size }}")) {
-            throw "Semantic Search descriptor inputs are required for release app builds."
-          }
-          $env:SNAPPYREF_SEMANTIC_SEARCH_URL = "${{ inputs.semantic_search_url }}"
-          $env:SNAPPYREF_SEMANTIC_SEARCH_SHA256 = "${{ inputs.semantic_search_sha256 }}"
-          $env:SNAPPYREF_SEMANTIC_SEARCH_SIZE = "${{ inputs.semantic_search_size }}"
           if ("${{ inputs.build_profile }}" -eq "release") {
             cargo build --release --locked --bins
             "SNAPPYREF_TARGET_DIR=target\release" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -124,18 +120,6 @@ jobs:
             cargo build --profile release-fast --locked --no-default-features --bins
             "SNAPPYREF_TARGET_DIR=target\release-fast" | Out-File -FilePath $env:GITHUB_ENV -Append
           }
-
-      - name: Write Semantic Search descriptor artifact
-        shell: pwsh
-        run: |
-          $descriptorDir = Join-Path $env:RUNNER_TEMP "semantic-search-descriptor"
-          New-Item -ItemType Directory -Force -Path $descriptorDir | Out-Null
-          $descriptorPath = Join-Path $descriptorDir "semantic-search-descriptor.env"
-          @(
-            "semantic_search_url=${{ inputs.semantic_search_url }}"
-            "semantic_search_sha256=${{ inputs.semantic_search_sha256 }}"
-            "semantic_search_size=${{ inputs.semantic_search_size }}"
-          ) | Set-Content -Path $descriptorPath -NoNewline:$false
 
       - name: Verify Windows GUI subsystem
         shell: pwsh
@@ -162,22 +146,7 @@ jobs:
             -DestinationPath (Join-Path $env:RUNNER_TEMP "snappyref-windows-app.zip") `
             -Force
 
-      - uses: actions/upload-artifact@v4
-        if: ${{ inputs.upload_actions_artifacts }}
-        with:
-          name: snappyref-windows-app
-          path: ${{ runner.temp }}/snappyref-windows-app
-          retention-days: 7
-
-      - uses: actions/upload-artifact@v4
-        if: ${{ inputs.upload_actions_artifacts }}
-        with:
-          name: snappyref-windows-semantic-search-descriptor
-          path: ${{ runner.temp }}/semantic-search-descriptor/semantic-search-descriptor.env
-          retention-days: 7
-
       - name: Upload app handoff release assets
-        if: ${{ !inputs.upload_actions_artifacts }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -186,7 +155,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $false
           $tag = "${{ inputs.handoff_release_tag }}"
           if ([string]::IsNullOrWhiteSpace($tag)) {
-            throw "handoff_release_tag is required when upload_actions_artifacts=false"
+            throw "handoff_release_tag is required"
           }
 
           gh release view $tag *> $null

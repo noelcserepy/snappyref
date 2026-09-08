@@ -459,8 +459,7 @@ impl BoardLifecycle<'_> {
 
     pub(crate) fn restore(&mut self) -> Result<(), String> {
         let library = self.library.ok_or("Storage unavailable")?;
-        let (board_id, _) = library.load_session_viewport()?;
-        let document = self.accepted_board_document(library, board_id)?;
+        let document = self.accepted_board_document(library, *self.active_board_id)?;
         self.open_board_document_snapshot(None, &document)
     }
 

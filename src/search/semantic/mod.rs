@@ -19,4 +19,4 @@ pub use service::{
     SemanticSearchService,
 };
 
-pub(crate) use service::{print_embed_image_output, run_embed_image_server};
+pub(crate) use service::run_embed_image_server;

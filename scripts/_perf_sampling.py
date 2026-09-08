@@ -285,7 +285,7 @@ def phase_summary_from_events(events: list[dict[str, Any]]) -> dict[str, Any]:
 def per_format_groups_from_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group per-asset events by image format.
 
-    Returns the same row shape as `summarize-perf-by-format.py` so a
+    Returns the completed evaluator format breakdown so a
     saved `phase-summary.json` can be diffed directly against a previous
     run without re-running the script.
     """

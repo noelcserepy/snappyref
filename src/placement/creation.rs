@@ -32,7 +32,6 @@ pub(crate) struct PlacementCreationSettings {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CompletedPlacementCreationBatch {
     pub(crate) target_board_id: i64,
-    pub(crate) anchor_world: egui::Pos2,
     pub(crate) placement_ids: Vec<i64>,
 }
 
@@ -62,7 +61,6 @@ pub(crate) struct PlacementCreationBatchTracker {
 #[derive(Default)]
 struct PendingPlacementCreationBatch {
     target_board_id: i64,
-    anchor_world: egui::Pos2,
     pending_queue_ids: HashSet<u64>,
     loaded_placement_ids: Vec<i64>,
 }
@@ -453,18 +451,12 @@ impl PlacementCreationBatchTracker {
         self.batches.is_empty()
     }
 
-    pub(crate) fn register_multi_item_batch(
-        &mut self,
-        target_board_id: i64,
-        anchor_world: egui::Pos2,
-        queue_ids: Vec<u64>,
-    ) {
+    pub(crate) fn register_multi_item_batch(&mut self, target_board_id: i64, queue_ids: Vec<u64>) {
         if queue_ids.len() <= 1 {
             return;
         }
         self.batches.push(PendingPlacementCreationBatch {
             target_board_id,
-            anchor_world,
             pending_queue_ids: queue_ids.into_iter().collect(),
             loaded_placement_ids: Vec::new(),
         });
@@ -495,7 +487,6 @@ impl PlacementCreationBatchTracker {
             {
                 completed_batches.push(CompletedPlacementCreationBatch {
                     target_board_id: batch.target_board_id,
-                    anchor_world: batch.anchor_world,
                     placement_ids: std::mem::take(&mut batch.loaded_placement_ids),
                 });
             }

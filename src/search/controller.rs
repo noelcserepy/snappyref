@@ -277,7 +277,7 @@ impl SearchController {
     ) {
         self.local_model_store_status = Some(model_store_status.clone());
         match model_store_status {
-            LocalModelStoreStatus::Installed | LocalModelStoreStatus::InstalledViaMigration => {}
+            LocalModelStoreStatus::Installed => {}
             LocalModelStoreStatus::Missing => {
                 self.service = None;
                 if self.overlay.open {

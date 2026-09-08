@@ -129,29 +129,20 @@ impl AppConfig {
         !(self.no_startup_focus || self.perf_scenario_requested() || self.update_smoke_install)
     }
 
-    pub(crate) fn restored_window_state(&self) -> Option<crate::data::WindowState> {
-        if !self.persist_window_state_enabled() {
-            return None;
-        }
+    pub(crate) fn prepare_startup(&self) -> StartupState {
         let library = self
             .library_root()
             .map(std::path::Path::to_path_buf)
-            .and_then(crate::library::storage::Library::initialize)
-            .ok()?;
-        let window = library.load_user_session().ok()?.window;
-        window.is_restorable().then_some(window)
-    }
-
-    pub(crate) fn restored_workspace_settings(&self) -> Option<crate::data::WorkspaceSettings> {
-        if !self.persist_window_state_enabled() {
-            return None;
+            .and_then(crate::library::storage::Library::initialize);
+        let session = match &library {
+            Ok(library) => library.load_user_session(),
+            Err(error) => Err(error.clone()),
+        };
+        StartupState {
+            library,
+            session,
+            restore_window: self.persist_window_state_enabled(),
         }
-        let library = self
-            .library_root()
-            .map(std::path::Path::to_path_buf)
-            .and_then(crate::library::storage::Library::initialize)
-            .ok()?;
-        Some(library.load_user_session().ok()?.settings)
     }
 
     fn persist_window_state_enabled(&self) -> bool {
@@ -162,6 +153,31 @@ impl AppConfig {
         self.library_root
             .as_deref()
             .map_err(std::clone::Clone::clone)
+    }
+}
+
+/// Window setup and app construction consume one initialized Library and session snapshot.
+pub(crate) struct StartupState {
+    library: Result<crate::library::storage::Library, String>,
+    session: Result<crate::data::UserSession, String>,
+    restore_window: bool,
+}
+
+impl StartupState {
+    pub(crate) fn window(&self) -> Option<&crate::data::WindowState> {
+        self.restore_window
+            .then_some(&self.session)
+            .and_then(|session| session.as_ref().ok())
+            .map(|session| &session.window)
+            .filter(|window| window.is_restorable())
+    }
+
+    pub(crate) fn always_on_top(&self) -> bool {
+        self.restore_window
+            && self
+                .session
+                .as_ref()
+                .is_ok_and(|session| session.settings.always_on_top)
     }
 }
 
@@ -210,7 +226,11 @@ pub struct SnappyRefApp {
 }
 
 impl SnappyRefApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
+    pub(crate) fn new(
+        cc: &eframe::CreationContext<'_>,
+        config: AppConfig,
+        startup: StartupState,
+    ) -> Self {
         crate::platform::native_drop::install_url_drop_bridge(cc);
         let max_texture_side = cc.egui_ctx.input(|input| input.max_texture_side.max(1));
         let mut app = Self::detached(
@@ -226,11 +246,7 @@ impl SnappyRefApp {
         app.perf_scenario = PerfScenarioState::from_config(&config);
         app.update_smoke = UpdateSmokeState::from_config(&config);
 
-        let library = config
-            .library_root()
-            .map(std::path::Path::to_path_buf)
-            .and_then(crate::library::storage::Library::initialize);
-        let library = match library {
+        let library = match startup.library {
             Ok(library) => library,
             Err(error) => {
                 app.status = format!("Storage unavailable: {error}");
@@ -252,7 +268,7 @@ impl SnappyRefApp {
         ));
         app.board_editing.persistence = DocumentPersistence::queued(library.clone());
         app.library = Some(library);
-        app.load_user_session();
+        app.apply_user_session(startup.session);
         app.refresh_board_summaries();
         app.sync_semantic_search_service();
         if !config.skip_existing_items_on_start() {
@@ -418,7 +434,6 @@ impl SnappyRefApp {
 
     fn save_active_board_before_transition(&mut self) {
         self.persist_canvas_changes();
-        self.save_user_session();
         self.flush_persistence();
     }
 
@@ -553,12 +568,16 @@ impl SnappyRefApp {
         self.sidebar_open && self.modal_open()
     }
 
+    #[cfg(test)]
     fn load_user_session(&mut self) {
         let Some(library) = &self.library else {
             return;
         };
+        self.apply_user_session(library.load_user_session());
+    }
 
-        match library.load_user_session() {
+    fn apply_user_session(&mut self, session: Result<crate::data::UserSession, String>) {
+        match session {
             Ok(session) => {
                 self.canvas.apply_viewport_state(&session.viewport);
                 self.active_board_id = session.active_board_id;
@@ -1209,10 +1228,6 @@ impl SnappyRefApp {
         }
     }
 
-    fn persist_settings_if_changed(&mut self, settings_changed: bool) {
-        Self::persist_settings_if_changed_with(settings_changed, || self.save_user_session());
-    }
-
     fn set_always_on_top(&mut self, ctx: &egui::Context, enabled: bool) {
         if self.settings.always_on_top == enabled {
             return;
@@ -1229,15 +1244,6 @@ impl SnappyRefApp {
             egui::viewport::WindowLevel::Normal
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
-    }
-
-    fn persist_settings_if_changed_with<F>(settings_changed: bool, mut persist: F)
-    where
-        F: FnMut(),
-    {
-        if settings_changed {
-            persist();
-        }
     }
 }
 
@@ -1421,7 +1427,9 @@ impl eframe::App for SnappyRefApp {
         if self.sync_last_update_check_timestamp() {
             settings_changed = true;
         }
-        self.persist_settings_if_changed(settings_changed);
+        if settings_changed {
+            self.save_user_session();
+        }
         self.show_board_delete_confirmation(ui.ctx());
         self.show_library_remove_confirmation(ui.ctx());
         self.show_semantic_search_remove_confirmation(ui.ctx());

@@ -18,8 +18,7 @@ pub(super) fn semantic_search_settings_status(
     status: crate::search::semantic::LocalModelStoreStatus,
 ) -> SemanticSearchSettingsStatus {
     match status {
-        crate::search::semantic::LocalModelStoreStatus::Installed
-        | crate::search::semantic::LocalModelStoreStatus::InstalledViaMigration => {
+        crate::search::semantic::LocalModelStoreStatus::Installed => {
             SemanticSearchSettingsStatus::Installed
         }
         crate::search::semantic::LocalModelStoreStatus::Missing => {

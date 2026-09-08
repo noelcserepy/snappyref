@@ -65,10 +65,10 @@ When the user requests full, select `--suite full` and compare with a matching
 full reference. Existing explicit workload commands remain available:
 
 ```sh
-scripts/run-perf-scenario.sh import-1 trickle-import
-scripts/run-idle-board-size.sh
-scripts/run-existing-library-baseline.sh
-scripts/run-perf-format-suite.sh jpg png webp
+python3 scripts/perf_eval.py run import-1 trickle-import
+python3 scripts/perf_eval.py run --suite boards
+python3 scripts/perf_eval.py run --suite libraries
+python3 scripts/perf_eval.py run format:jpg format:png format:webp
 ```
 
 `import-1` uses the medium JPEG. `import-20` uses the mixed 20-file corpus.

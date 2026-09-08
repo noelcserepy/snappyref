@@ -1,0 +1,42 @@
+name: Package selected release builds
+description: Download reusable build releases, verify matching descriptors, and package app zips.
+inputs:
+  include_windows:
+    required: true
+  include_macos:
+    required: true
+  windows_build_tag:
+    required: true
+  macos_build_tag:
+    required: true
+  release_tag:
+    required: true
+  token:
+    required: true
+outputs:
+  version:
+    value: ${{ steps.package.outputs.version }}
+    description: Release version without the leading v
+  released_at:
+    value: ${{ steps.package.outputs.released_at }}
+    description: UTC packaging timestamp
+runs:
+  using: composite
+  steps:
+    - id: package
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        INCLUDE_WINDOWS: ${{ inputs.include_windows }}
+        INCLUDE_MACOS: ${{ inputs.include_macos }}
+        WINDOWS_BUILD_TAG: ${{ inputs.windows_build_tag }}
+        MACOS_BUILD_TAG: ${{ inputs.macos_build_tag }}
+        RELEASE_TAG: ${{ inputs.release_tag }}
+      run: |
+        args=()
+        if [[ "$INCLUDE_WINDOWS" == true ]]; then args+=(--windows-tag "$WINDOWS_BUILD_TAG"); fi
+        if [[ "$INCLUDE_MACOS" == true ]]; then args+=(--macos-tag "$MACOS_BUILD_TAG"); fi
+        python3 scripts/package-selected-release.py "${args[@]}" \
+          --release-tag "$RELEASE_TAG" --output "$RUNNER_TEMP/release-assets"
+        echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+        echo "released_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"

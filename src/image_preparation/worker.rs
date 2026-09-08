@@ -290,7 +290,7 @@ impl RequestQueue {
 impl ImagePrepWorkerConfig {
     pub(super) fn for_parallelism(parallelism: usize) -> Self {
         if parallelism <= 1 {
-            return Self::legacy_single_worker();
+            return Self::single_worker();
         }
 
         Self {
@@ -300,7 +300,7 @@ impl ImagePrepWorkerConfig {
         }
     }
 
-    pub(super) fn legacy_single_worker() -> Self {
+    pub(super) fn single_worker() -> Self {
         Self {
             general_workers: 1,
             interactive_workers: 0,
