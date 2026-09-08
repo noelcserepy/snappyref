@@ -64,8 +64,9 @@ Packaging rejects invalid descriptors or differing descriptors across selected b
 Build Windows App and Build macOS App attach their app archive and descriptor to
 `handoff_release_tag` in a source-repo draft release. Package Release Zips accepts
 `windows_build_tag` and `macos_build_tag` to reuse those builds without compiling.
-Blank build tags use the target `release_tag`. Set `create_draft_release` to retain
-the final zips on that draft release. Full Release uses the same packaging action,
+Blank build tags use the target `release_tag`. Every successful packaging run
+attaches its final zips to that release, creating a draft if the tag has no release.
+Existing releases keep their publication state. Full Release uses the same packaging action,
 then signs its manifest and removes its temporary build handoff assets.
 
 Local packaging verification needs no release or model download:

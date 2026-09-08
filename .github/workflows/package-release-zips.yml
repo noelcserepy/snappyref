@@ -23,13 +23,8 @@ on:
         required: false
         default: ""
         type: string
-      create_draft_release:
-        description: Attach final zips to a draft GitHub Release
-        required: false
-        default: false
-        type: boolean
       release_tag:
-        description: Release tag used when create_draft_release is true
+        description: Release tag for final zip assets; created as a draft if missing
         required: false
         default: v0.2.0
         type: string
@@ -51,10 +46,6 @@ on:
         required: false
         default: ""
         type: string
-      create_draft_release:
-        required: false
-        default: false
-        type: boolean
       release_tag:
         required: false
         default: v0.2.0
@@ -81,8 +72,7 @@ jobs:
           release_tag: ${{ inputs.release_tag }}
           token: ${{ github.token }}
 
-      - name: Create draft release
-        if: ${{ inputs.create_draft_release }}
+      - name: Retain final zips on GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
