@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 import subprocess
 import tempfile
+from release_archive import package_archive
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -63,9 +64,9 @@ def main():
         args.output.mkdir(parents=True, exist_ok=True)
         for platform, _ in selected:
             output_name = 'mac' if platform == 'macos' else platform
-            subprocess.run([str(ROOT / 'scripts/package-release-assets.sh'), '--platform', platform,
-                            '--app-archive', str(handoff / f'snappyref-{platform}-app.zip'),
-                            '--output', str(args.output.resolve() / f'snappyref-{output_name}-{args.release_tag}.zip')], cwd=ROOT, check=True)
+            package_archive(handoff / f'snappyref-{platform}-app.zip', platform,
+                            args.output / f'snappyref-{output_name}-{args.release_tag}.zip')
+
 
 
 if __name__ == '__main__':

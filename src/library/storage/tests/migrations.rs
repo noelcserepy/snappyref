@@ -8,15 +8,17 @@ fn content_upgrade_preserves_placements_undo_redo_and_archived_board_snapshots()
     let root = TempRoot::new("stored-content-upgrade");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let loading = library
-        .persist_committed_loading_placement(
-            egui::pos2(31.0, 42.0),
-            2.0,
-            90.0,
-            70.0,
-            ContentResolutionSource::ExternalPath {
-                path: "/tmp/original.png".into(),
-            },
-            Some("Queued".into()),
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            library.new_committed_loading_placement(
+                egui::pos2(31.0, 42.0),
+                2.0,
+                eframe::egui::vec2(90.0, 70.0),
+                ContentResolutionSource::ExternalPath {
+                    path: "/tmp/original.png".into(),
+                },
+                Some("Queued".into()),
+            ),
         )
         .unwrap();
     let mut failed = loading.clone();
@@ -51,7 +53,7 @@ fn content_upgrade_preserves_placements_undo_redo_and_archived_board_snapshots()
         ),
     );
     history.undo(1).unwrap();
-    let board = library.create_board("Archived").unwrap();
+    let board = library.fixture_board("Archived").unwrap();
     let mut snapshot = library.load_board_document(board.id).unwrap();
     snapshot.placements = vec![failed.clone()];
     history.record_applied(
@@ -62,7 +64,17 @@ fn content_upgrade_preserves_placements_undo_redo_and_archived_board_snapshots()
             active_after: 1,
         }),
     );
-    library.archive_board(board.id, 1).unwrap();
+    library
+        .persist_board_unit(
+            &crate::library::storage::BoardDurabilityOperation::Lifecycle(
+                crate::active_board::persistence::BoardLifecyclePersistence::Archive {
+                    board_id: board.id,
+                    active_board_id: 1,
+                },
+            ),
+            &Default::default(),
+        )
+        .unwrap();
     library
         .persist_board_unit(
             &crate::library::storage::BoardDurabilityOperation::Document {
@@ -76,6 +88,13 @@ fn content_upgrade_preserves_placements_undo_redo_and_archived_board_snapshots()
         serde_json::from_str(&history.encode().unwrap()).unwrap();
     drop(library);
     let connection = Connection::open(root.join("library.db")).unwrap();
+    connection.execute_batch("CREATE TABLE board_document_history (id INTEGER PRIMARY KEY, payload TEXT NOT NULL); DROP TABLE board_history;").unwrap();
+    connection
+        .execute(
+            "INSERT INTO board_document_history VALUES (1, ?1)",
+            [expected_history.to_string()],
+        )
+        .unwrap();
     connection.execute_batch("PRAGMA user_version = 0;
         UPDATE board_items SET content_resolution_intent = replace(content_resolution_intent, '\"source\":', '\"intent\":');
         UPDATE board_document_history SET payload = replace(payload, '\"source\":', '\"intent\":');").unwrap();

@@ -1,3 +1,4 @@
+use eframe::egui;
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -8,8 +9,7 @@ use crate::image_preparation::{
     ImagePrepWorker,
 };
 
-/// Image LOD loads themselves are tracked on the canvas
-/// (`CanvasState::image_lod_loads`); this only owns cache backfills.
+/// Schedules image loads and tracks cache backfills. CanvasState tracks LOD load progress.
 #[derive(Default)]
 pub(crate) struct ImageResidencyCoordinator {
     pending_cache_backfills: HashSet<(i64, CanvasImageLod)>,
@@ -27,10 +27,7 @@ impl ImageResidencyCoordinator {
         max_texture_side: usize,
         trace_enabled: bool,
     ) -> Result<(), String> {
-        crate::image_preparation::sort_records_by_viewport_proximity(
-            &mut placements,
-            viewport_world,
-        );
+        sort_placements_by_viewport_proximity(&mut placements, viewport_world);
         let (canvas_image_settings, target_lod) = startup_existing_image_load_settings(settings);
         for placement in placements {
             let placement_id = placement.state.id;
@@ -56,24 +53,8 @@ impl ImageResidencyCoordinator {
         !self.pending_cache_backfills.is_empty()
     }
 
-    pub(crate) fn note_failed_placement(
-        &mut self,
-        canvas: &mut CanvasState,
-        placement_id: Option<i64>,
-    ) {
-        if let Some(placement_id) = placement_id {
-            canvas.clear_image_lod_load(placement_id);
-        }
-    }
-
-    pub(crate) fn note_backfill_completed(
-        &mut self,
-        asset_id: i64,
-        lod: CanvasImageLod,
-        error: Option<String>,
-    ) -> Option<String> {
+    pub(crate) fn note_backfill_completed(&mut self, asset_id: i64, lod: CanvasImageLod) {
         self.pending_cache_backfills.remove(&(asset_id, lod));
-        error
     }
 
     pub(crate) fn queue_backfill(
@@ -179,22 +160,55 @@ pub(crate) fn asset_mime_type_supports_raster_derivatives(mime_type: &str) -> bo
         .eq_ignore_ascii_case("image/svg+xml")
 }
 
+fn sort_placements_by_viewport_proximity(placements: &mut [Placement], viewport_world: egui::Rect) {
+    placements.sort_by(|left, right| {
+        placement_viewport_distance_sq(left, viewport_world)
+            .total_cmp(&placement_viewport_distance_sq(right, viewport_world))
+            .then_with(|| {
+                left.state
+                    .geometry
+                    .z_index
+                    .cmp(&right.state.geometry.z_index)
+                    .then_with(|| left.state.id.cmp(&right.state.id))
+            })
+    });
+}
+
+fn placement_viewport_distance_sq(placement: &Placement, viewport_world: egui::Rect) -> f32 {
+    let rect = placement_world_rect(placement);
+    if rect.intersects(viewport_world) {
+        return 0.0;
+    }
+    let center = rect.center();
+    let clamped = egui::pos2(
+        center
+            .x
+            .clamp(viewport_world.left(), viewport_world.right()),
+        center
+            .y
+            .clamp(viewport_world.top(), viewport_world.bottom()),
+    );
+    center.distance_sq(clamped)
+}
+
+fn placement_world_rect(placement: &Placement) -> egui::Rect {
+    let size = egui::vec2(
+        placement.require_loaded_asset().width as f32,
+        placement.require_loaded_asset().height as f32,
+    ) * placement.state.geometry.scale.max(0.01);
+    egui::Rect::from_center_size(
+        egui::pos2(
+            placement.state.geometry.center.x,
+            placement.state.geometry.center.y,
+        ),
+        size,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ImageResidencyCoordinator, startup_existing_image_load_settings};
-    use crate::canvas::CanvasState;
     use crate::data::CanvasImageLod;
-
-    #[test]
-    fn failed_item_clears_its_image_lod_load() {
-        let mut residency = ImageResidencyCoordinator::default();
-        let mut canvas = CanvasState::default();
-        canvas.note_image_lod_load_dispatched(7, CanvasImageLod::Detail);
-
-        residency.note_failed_placement(&mut canvas, Some(7));
-
-        assert!(!canvas.has_pending_image_loads());
-    }
 
     #[test]
     fn completed_backfill_removes_pending_entry() {
@@ -203,9 +217,8 @@ mod tests {
             .pending_cache_backfills
             .insert((42, CanvasImageLod::Overview));
 
-        let error = residency.note_backfill_completed(42, CanvasImageLod::Overview, None);
+        residency.note_backfill_completed(42, CanvasImageLod::Overview);
 
-        assert_eq!(error, None);
         assert!(!residency.has_pending_backfill(42, CanvasImageLod::Overview));
     }
 

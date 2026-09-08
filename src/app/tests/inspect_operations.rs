@@ -1,6 +1,6 @@
 //! Inspect scenarios for the main user operations: canvas editing, navigation
 //! and Board switching, session restore across a restart, and recovery from a
-//! dropped durable write.
+//! failed durable write.
 
 use super::support::INSPECT_DELETE_KEY;
 use super::*;
@@ -28,16 +28,36 @@ fn seed_loaded_placement(
         .store_rgba_image(name, &solid_rgba(color, size.0, size.1), size.0, size.1)
         .unwrap();
     let placement = library
-        .persist_imported_image(
-            &path,
-            "image/png",
-            size.0,
-            size.1,
-            size.0 as u64 * size.1 as u64 * 4,
-            center,
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    center,
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(
+                        &path,
+                        "image/png",
+                        size.0,
+                        size.1,
+                        size.0 as u64 * size.1 as u64 * 4,
+                        None,
+                    )
+                    .unwrap(),
+            ),
         )
         .unwrap();
+    let board_id = harness.state().active_board_id;
+    harness
+        .state_mut()
+        .board_editing
+        .documents
+        .restore_document(&library.load_board_document(board_id).unwrap());
     let ctx = harness.ctx.clone();
     harness.state_mut().canvas.add_prepared_placement_image(
         &ctx,
@@ -695,17 +715,17 @@ fn inspect_session_restart_restore_writes_artifact() {
 }
 
 #[test]
-fn inspect_persistence_dropped_write_writes_artifact() {
-    let mut scenario = InspectScenario::new("persistence-dropped-write");
+fn inspect_persistence_write_retry_writes_artifact() {
+    let mut scenario = InspectScenario::new("persistence-write-retry");
     scenario.event(
         "seed",
         serde_json::json!({
             "seed": "loaded-placement-with-failing-history-table",
-            "purpose": "a durable write that keeps failing is dropped after bounded retries, the status reports it, and the next write lands once storage recovers",
+            "purpose": "a failed durable write remains queued after bounded retries, status reports it, and retry persists it once storage recovers",
         }),
     );
 
-    let root = TempRoot::new("snappyref-inspect-dropped-write");
+    let root = TempRoot::new("snappyref-inspect-write-retry");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.board_editing.persistence =
@@ -714,7 +734,7 @@ fn inspect_persistence_dropped_write_writes_artifact() {
     let blue = seed_loaded_placement(
         &library,
         &mut harness,
-        "dropped-blue",
+        "retry-blue",
         [78, 126, 226, 255],
         (140, 100),
         egui::pos2(0.0, 0.0),
@@ -724,9 +744,9 @@ fn inspect_persistence_dropped_write_writes_artifact() {
     let trigger_connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
     trigger_connection
         .execute_batch(
-            "CREATE TRIGGER fail_history_insert BEFORE INSERT ON board_document_history
+            "CREATE TRIGGER fail_history_insert BEFORE INSERT ON board_history
              BEGIN SELECT RAISE(ABORT, 'injected history failure'); END;
-             CREATE TRIGGER fail_history_update BEFORE UPDATE ON board_document_history
+             CREATE TRIGGER fail_history_update BEFORE UPDATE ON board_history
              BEGIN SELECT RAISE(ABORT, 'injected history failure'); END;",
         )
         .unwrap();
@@ -746,25 +766,25 @@ fn inspect_persistence_dropped_write_writes_artifact() {
     scenario.capture_screen("screen-000-moved-while-storage-fails", &mut harness);
 
     let started = Instant::now();
-    let mut dropped_status = None;
+    let mut failure_status = None;
     while started.elapsed() < Duration::from_secs(15) {
         harness.step();
-        if harness.state().status.starts_with("dropped durable write") {
-            dropped_status = Some(harness.state().status.clone());
+        if harness.state().status.starts_with("durable write failed") {
+            failure_status = Some(harness.state().status.clone());
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
     scenario.fact(
-        "dropped",
-        serde_json::json!({"status": dropped_status, "elapsed_ms": started.elapsed().as_millis()}),
+        "failure",
+        serde_json::json!({"status": failure_status, "elapsed_ms": started.elapsed().as_millis()}),
     );
     scenario.assertion(
-        "bounded retries end in a dropped-write status within 15s",
-        dropped_status.is_some(),
+        "bounded retries report write failure within 15s",
+        failure_status.is_some(),
     );
     scenario.assertion(
-        "the canvas keeps the accepted move while the write is dropped",
+        "the canvas keeps the accepted move while the write waits for retry",
         approx(center_of(&harness, blue.state.id), first_move, 0.1),
     );
     // Let the status pill finish its entrance before capturing it.
@@ -772,11 +792,18 @@ fn inspect_persistence_dropped_write_writes_artifact() {
         std::thread::sleep(Duration::from_millis(50));
         harness.step();
     }
-    scenario.capture_screen("screen-001-dropped-write-status", &mut harness);
+    scenario.capture_screen("screen-001-write-failure-status", &mut harness);
 
     trigger_connection
         .execute_batch("DROP TRIGGER fail_history_insert; DROP TRIGGER fail_history_update;")
         .unwrap();
+    harness.state_mut().flush_persistence();
+    scenario.assertion(
+        "the original failed write becomes durable without a replacement edit",
+        library.load_placements().unwrap().iter().any(|placement| {
+            placement.id() == blue.id() && approx(placement.state.geometry.center, first_move, 0.1)
+        }),
+    );
     let blue_screen = inspect_world_to_screen(first_move, screen);
     inspect_click_at(&harness, blue_screen, egui::Modifiers::NONE);
     harness.step();

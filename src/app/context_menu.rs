@@ -198,7 +198,14 @@ impl SnappyRefApp {
             }
             ContextMenuAction::MoveToFront => self.move_selected_canvas_items_to_front(),
             ContextMenuAction::MoveToBack => self.move_selected_canvas_items_to_back(),
-            ContextMenuAction::SearchUsingImage => self.search_using_selected_image(),
+            ContextMenuAction::SearchUsingImage => {
+                self.search.search_using_selected_image(
+                    self.library.as_ref(),
+                    &mut self.canvas,
+                    &mut self.status,
+                    self.settings.canvas_image_max_side,
+                );
+            }
             ContextMenuAction::RemoveFromLibrary => self.request_selected_assets_library_remove(),
         }
     }
@@ -263,29 +270,16 @@ impl SnappyRefApp {
         ctx: &egui::Context,
         screen_rect: egui::Rect,
     ) {
-        let paste_text = self.context_clipboard_text(ctx);
-        let desired_world = self
-            .context_menu_pos
-            .map(|pos| self.canvas.screen_to_world(pos, screen_rect))
-            .unwrap_or_else(|| self.preferred_import_world(ctx, screen_rect));
-        self.handle_clipboard_paste_at(screen_rect, desired_world, paste_text);
-    }
-
-    pub(super) fn context_clipboard_text(&mut self, ctx: &egui::Context) -> Option<String> {
         let paste_text = ctx.input(|input| {
             input.events.iter().find_map(|event| match event {
                 egui::Event::Paste(text) => Some(text.clone()),
                 _ => None,
             })
         });
-        if paste_text.is_some() {
-            return paste_text;
-        }
-
-        let mut clipboard = match arboard::Clipboard::new() {
-            Ok(clipboard) => clipboard,
-            Err(_) => return None,
-        };
-        clipboard.get_text().ok()
+        let desired_world = self
+            .context_menu_pos
+            .map(|pos| self.canvas.screen_to_world(pos, screen_rect))
+            .unwrap_or_else(|| self.preferred_import_world(ctx, screen_rect));
+        self.handle_clipboard_paste_at(screen_rect, desired_world, paste_text);
     }
 }

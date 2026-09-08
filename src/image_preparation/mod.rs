@@ -4,10 +4,9 @@ pub use image_formats::decode_image_file_perf_report;
 pub(crate) use image_formats::{AnimatedPreview, AnimatedPreviewFrame};
 use std::path::Path;
 
-use crate::data::Placement;
 use crate::image_preparation::image_formats::{PreviewImage, preview_image_from_rgba};
-use eframe::egui;
 
+pub(crate) mod cache_encoding;
 mod crop;
 mod decode;
 mod existing_load;
@@ -15,8 +14,6 @@ mod prepare_source;
 mod preview_texture;
 mod request;
 
-#[cfg(test)]
-use crate::placement::{DEFAULT_PLACEMENT_TARGET_AREA, display_scale_for_placement_target_area};
 use crop::crop_item;
 pub(crate) use decode::print_imageprep_output_from_args;
 use existing_load::backfill_cache_lod;
@@ -42,54 +39,6 @@ mod worker;
 pub use worker::ImagePrepWorker;
 #[cfg(test)]
 pub(super) use worker::{ImagePrepWorkerConfig, RequestQueue, WorkerKind};
-
-pub fn sort_records_by_viewport_proximity(
-    placements: &mut [Placement],
-    viewport_world: egui::Rect,
-) {
-    placements.sort_by(|left, right| {
-        placement_viewport_distance_sq(left, viewport_world)
-            .total_cmp(&placement_viewport_distance_sq(right, viewport_world))
-            .then_with(|| {
-                left.state
-                    .geometry
-                    .z_index
-                    .cmp(&right.state.geometry.z_index)
-                    .then_with(|| left.state.id.cmp(&right.state.id))
-            })
-    });
-}
-
-fn placement_viewport_distance_sq(placement: &Placement, viewport_world: egui::Rect) -> f32 {
-    let rect = placement_world_rect(placement);
-    if rect.intersects(viewport_world) {
-        return 0.0;
-    }
-    let center = rect.center();
-    let clamped = egui::pos2(
-        center
-            .x
-            .clamp(viewport_world.left(), viewport_world.right()),
-        center
-            .y
-            .clamp(viewport_world.top(), viewport_world.bottom()),
-    );
-    center.distance_sq(clamped)
-}
-
-fn placement_world_rect(placement: &Placement) -> egui::Rect {
-    let size = egui::vec2(
-        placement.require_loaded_asset().width as f32,
-        placement.require_loaded_asset().height as f32,
-    ) * placement.state.geometry.scale.max(0.01);
-    egui::Rect::from_center_size(
-        egui::pos2(
-            placement.state.geometry.center.x,
-            placement.state.geometry.center.y,
-        ),
-        size,
-    )
-}
 
 pub(super) fn original_mime_type_supports_animation(mime_type: &str) -> bool {
     mime_type == image::ImageFormat::Gif.to_mime_type()
@@ -161,7 +110,5 @@ pub(super) fn animated_preview_max_side(
     (canvas_image_settings.max_side as usize).min(max_texture_side)
 }
 
-#[cfg(test)]
-use crate::placement::initial_layout::rects_overlap_with_gap;
 #[cfg(test)]
 mod tests;

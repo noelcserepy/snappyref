@@ -18,11 +18,11 @@ user demand. Do not automatically run full for releases, omitted workloads, or
 inconclusive fast results. A fast pass covers only fast workloads and latency
 metrics. This adds no push or merge gate.
 
-Run behavior checks first, then performance alone. Concurrent builds, tests,
+Run [refactor behavior checks](../inspect/SKILL.md#refactor-behavior-evidence)
+first, then performance alone. Concurrent builds, tests,
 or other heavy work invalidate timing comparisons.
 
 ```sh
-python3 scripts/check-refactor-behavior.py
 python3 scripts/perf_eval.py run --output perf-assets/runs/before
 # Make the change, repeat behavior checks, then:
 python3 scripts/perf_eval.py run --output perf-assets/runs/after

@@ -432,8 +432,8 @@ pub fn show(
     }
     let toolbar_rect = state
         .show_group_controls(ui, rect)
-        .or_else(|| editing_textbox_toolbar_rect(ui, state, rect))
-        .or_else(|| annotation_style_toolbar_rect(ui, state, rect));
+        .or_else(|| editing_textbox_toolbar_rect(state, rect))
+        .or_else(|| annotation_style_toolbar_rect(state, rect));
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
     match input_policy {
         CanvasInputPolicy::Full => {

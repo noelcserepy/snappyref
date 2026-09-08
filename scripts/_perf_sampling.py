@@ -3,10 +3,8 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import pathlib
-import sys
 from collections import defaultdict
 from typing import Any
 
@@ -101,43 +99,12 @@ def classify_helper(command: str, main_pid: int, pid: int) -> str:
     return "other_helper"
 
 
-def tree_rss_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Aggregate per-pid samples into a process-tree summary.
-
-    Input rows have fields ``elapsed_ms``, ``role``, ``rss_bytes``,
-    ``cpu_percent``. The same elapsed timestamp may appear once per pid
-    for one sampling tick. The peak-tree RSS is the maximum, across
-    sampling ticks, of the **sum** of RSS bytes for all pids in that
-    tick. This is the meaningful "whole-process working set" peak that
-    main-process-only sampling misses when helpers do work the main
-    process never paged in.
-    """
-
-    if not rows:
-        return {
-            "samples": 0,
-            "tick_count": 0,
-            "peak_tree_rss_bytes": None,
-            "peak_tree_cpu_percent": None,
-        }
-
-    by_tick: dict[float, dict[str, float]] = defaultdict(
-        lambda: {"rss": 0.0, "cpu": 0.0, "pids": 0}
-    )
+def peak_tree_rss_bytes(rows: list[dict[str, Any]]) -> int | None:
+    """Maximum per-tick sum of main and helper RSS, unchanged by helper exits."""
+    by_tick: dict[float, int] = defaultdict(int)
     for row in rows:
-        tick = float(row["elapsed_ms"])
-        by_tick[tick]["rss"] += int(row["rss_bytes"])
-        by_tick[tick]["cpu"] += float(row["cpu_percent"])
-        by_tick[tick]["pids"] += 1
-
-    rss_totals = [entry["rss"] for entry in by_tick.values()]
-    cpu_totals = [entry["cpu"] for entry in by_tick.values()]
-    return {
-        "samples": len(rows),
-        "tick_count": len(by_tick),
-        "peak_tree_rss_bytes": int(max(rss_totals)),
-        "peak_tree_cpu_percent": max(cpu_totals),
-    }
+        by_tick[float(row["elapsed_ms"])] += int(row["rss_bytes"])
+    return max(by_tick.values(), default=None)
 
 
 def per_helper_peaks(
@@ -284,9 +251,7 @@ def phase_summary_from_events(events: list[dict[str, Any]]) -> dict[str, Any]:
 def per_format_groups_from_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group per-asset events by image format.
 
-    Returns the completed evaluator format breakdown so a
-    saved `phase-summary.json` can be diffed directly against a previous
-    run without re-running the script.
+    Included in each trial result alongside phase timing.
     """
 
     rows = {}
@@ -373,29 +338,3 @@ def load_events_ndjson(path: pathlib.Path) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
     return out
-
-
-# ---------------------------------------------------------------------------
-# command line
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--phase-summary",
-        type=pathlib.Path,
-        help="path to events.ndjson; prints the phase summary JSON",
-    )
-    args = parser.parse_args(argv)
-    if args.phase_summary:
-        events = load_events_ndjson(args.phase_summary)
-        out = {
-            "phase_summary": phase_summary_from_events(events),
-            "per_format": per_format_groups_from_events(events),
-        }
-        sys.stdout.write(json.dumps(out, indent=2) + "\n")
-        return 0
-    parser.print_help()
-    return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())

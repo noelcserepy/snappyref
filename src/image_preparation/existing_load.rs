@@ -441,16 +441,14 @@ fn backfill_canvas_image_cache(
         &decoded.rgba,
         canvas_image_settings,
     )?;
-    let source_path = library
-        .store_canvas_image_cache_for_lod(
-            placement.require_loaded_asset().id,
-            canvas_image_settings.max_side,
-            lod,
-            &canvas_source.rgba,
-            canvas_source.width,
-            canvas_source.height,
-        )?
-        .unwrap_or_else(|| placement.require_loaded_asset().original_path.clone());
+    let source_path = library.store_canvas_image_cache_for_lod(
+        placement.require_loaded_asset().id,
+        canvas_image_settings.max_side,
+        lod,
+        &canvas_source.rgba,
+        canvas_source.width,
+        canvas_source.height,
+    )?;
     let source_file_size = std::fs::metadata(&source_path)
         .map(|metadata| metadata.len())
         .unwrap_or(0);

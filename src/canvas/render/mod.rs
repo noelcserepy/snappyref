@@ -101,8 +101,8 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(!image_pass::selection_border_visible(&state, 11.0));
-        assert!(image_pass::selection_border_visible(&state, 12.6));
+        assert!(!state.selection_border_visible(11.0));
+        assert!(state.selection_border_visible(12.6));
     }
 
     #[test]

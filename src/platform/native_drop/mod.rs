@@ -33,11 +33,3 @@ pub fn take_drop() -> NativeDropPayload {
 pub fn cursor_screen_pos() -> Option<eframe::egui::Pos2> {
     platform::cursor_screen_pos()
 }
-
-pub fn clipboard_paths() -> Vec<std::path::PathBuf> {
-    platform::clipboard_paths()
-}
-
-pub fn clipboard_pureref_binary() -> Option<Vec<u8>> {
-    platform::clipboard_pureref_binary()
-}

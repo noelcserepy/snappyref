@@ -1,12 +1,12 @@
 use super::{
-    CanvasImageSettings, DEFAULT_PLACEMENT_TARGET_AREA, ImagePrepPreviewTexture, ImagePrepResult,
-    ImagePrepTimings, ImagePrepTrace, ImagePrepWorker, ImagePrepWorkerConfig, ImportRequest,
-    ImportSource, build_preview_texture, crop_item, display_scale_for_placement_target_area,
-    import, import_path_sync, import_sync, load_existing, rects_overlap_with_gap,
+    CanvasImageSettings, ImagePrepPreviewTexture, ImagePrepResult, ImagePrepTimings,
+    ImagePrepTrace, ImagePrepWorker, ImagePrepWorkerConfig, ImportRequest, ImportSource,
+    build_preview_texture, crop_item, import, import_path_sync, import_sync, load_existing,
 };
 use crate::data::CanvasImageLod;
 use crate::library::storage::Library;
-use crate::placement::initial_layout::arrange_rect_with_existing_layout;
+use crate::placement::DEFAULT_PLACEMENT_TARGET_AREA;
+use crate::placement::initial_layout::rects_overlap_with_gap;
 use crate::test_support::TempRoot;
 use image::{ColorType, ImageFormat};
 use pollster::block_on;
@@ -20,34 +20,6 @@ use std::time::{Duration, Instant};
 
 fn downscaled_canvas_settings(max_side: u32) -> CanvasImageSettings {
     CanvasImageSettings { max_side }
-}
-
-#[test]
-fn scales_down_large_portrait_images_to_target_area() {
-    let scale = display_scale_for_placement_target_area(1000, 1500, DEFAULT_PLACEMENT_TARGET_AREA);
-    assert!((scale - (DEFAULT_PLACEMENT_TARGET_AREA / 1_500_000.0).sqrt()).abs() < f32::EPSILON);
-}
-
-#[test]
-fn scales_down_large_landscape_images_by_area_cap() {
-    let scale = display_scale_for_placement_target_area(1920, 1080, DEFAULT_PLACEMENT_TARGET_AREA);
-    assert!((scale - (DEFAULT_PLACEMENT_TARGET_AREA / 2_073_600.0).sqrt()).abs() < f32::EPSILON);
-}
-
-#[test]
-fn scales_down_large_images_to_configured_target_area() {
-    let target_area = 40_000.0;
-    let scale = display_scale_for_placement_target_area(1000, 1500, target_area);
-
-    assert!((scale - (target_area / 1_500_000.0).sqrt()).abs() < f32::EPSILON);
-}
-
-#[test]
-fn keeps_smaller_images_at_full_scale() {
-    assert_eq!(
-        display_scale_for_placement_target_area(180, 240, DEFAULT_PLACEMENT_TARGET_AREA),
-        1.0
-    );
 }
 
 #[test]
@@ -180,7 +152,7 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
     let root = TempRoot::new("clipboard-import-target-board");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     seed_placement(&library, 42.0, 24.0, 160, 120, 1.0);
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
 
     let loaded = match import(
         &library,
@@ -213,126 +185,6 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
     assert_eq!(loaded.target_board_id, second.id);
     assert_eq!(loaded.placement.state.geometry.center.x, 42.0);
     assert_eq!(loaded.placement.state.geometry.center.y, 24.0);
-}
-
-#[test]
-fn empty_board_placement_uses_requested_anchor() {
-    let existing = Vec::new();
-    let anchor = eframe::egui::pos2(120.0, -48.0);
-
-    let arranged = arrange_rect_with_existing_layout(
-        &existing,
-        anchor,
-        test_viewport_world(),
-        300.0,
-        200.0,
-        12.0,
-    );
-
-    assert_eq!(arranged, anchor);
-}
-
-#[test]
-fn deterministic_candidate_order_prefers_right_before_below_on_tie() {
-    let mut existing = Vec::new();
-    existing.push(
-        crate::placement::arrangement::PlacementArrangementInput::new(
-            existing.len() as i64,
-            eframe::egui::pos2(0.0, 0.0),
-            eframe::egui::vec2(100 as f32, 100 as f32),
-        ),
-    );
-
-    let arranged = arrange_rect_with_existing_layout(
-        &existing,
-        eframe::egui::pos2(106.0, 106.0),
-        test_viewport_world(),
-        100.0,
-        100.0,
-        12.0,
-    );
-
-    assert_eq!(arranged, eframe::egui::pos2(112.0, 0.0));
-}
-
-#[test]
-fn blocked_right_side_candidate_falls_through_to_valid_lower_slot() {
-    let mut existing = Vec::new();
-    existing.push(
-        crate::placement::arrangement::PlacementArrangementInput::new(
-            existing.len() as i64,
-            eframe::egui::pos2(0.0, 0.0),
-            eframe::egui::vec2(100 as f32, 100 as f32),
-        ),
-    );
-    existing.push(
-        crate::placement::arrangement::PlacementArrangementInput::new(
-            existing.len() as i64,
-            eframe::egui::pos2(112.0, 0.0),
-            eframe::egui::vec2(100 as f32, 100 as f32),
-        ),
-    );
-
-    let arranged = arrange_rect_with_existing_layout(
-        &existing,
-        eframe::egui::pos2(112.0, 50.0),
-        test_viewport_world(),
-        100.0,
-        100.0,
-        12.0,
-    );
-
-    assert_eq!(arranged, eframe::egui::pos2(112.0, 112.0));
-}
-
-#[test]
-fn square_scoring_beats_anchor_distance_for_adjacent_imports() {
-    let mut existing = Vec::new();
-    existing.push(
-        crate::placement::arrangement::PlacementArrangementInput::new(
-            existing.len() as i64,
-            eframe::egui::pos2(0.0, 0.0),
-            eframe::egui::vec2(240 as f32, 80 as f32),
-        ),
-    );
-
-    let arranged = arrange_rect_with_existing_layout(
-        &existing,
-        eframe::egui::pos2(172.0, 0.0),
-        test_viewport_world(),
-        80.0,
-        80.0,
-        12.0,
-    );
-
-    assert_eq!(arranged, eframe::egui::pos2(172.0, 0.0));
-}
-
-#[test]
-fn viewport_bounding_prefers_on_screen_candidate() {
-    let mut existing = Vec::new();
-    existing.push(
-        crate::placement::arrangement::PlacementArrangementInput::new(
-            existing.len() as i64,
-            eframe::egui::pos2(0.0, 0.0),
-            eframe::egui::vec2(240 as f32, 80 as f32),
-        ),
-    );
-    let viewport = eframe::egui::Rect::from_min_max(
-        eframe::egui::pos2(100.0, -60.0),
-        eframe::egui::pos2(260.0, 60.0),
-    );
-
-    let arranged = arrange_rect_with_existing_layout(
-        &existing,
-        eframe::egui::pos2(172.0, 0.0),
-        viewport,
-        80.0,
-        80.0,
-        12.0,
-    );
-
-    assert_eq!(arranged, eframe::egui::pos2(172.0, 0.0));
 }
 
 #[test]
@@ -999,14 +851,21 @@ fn load_existing_backfills_versioned_canvas_cache_and_prefers_it_on_second_load(
     let original_path = write_png(&root, "source.png", 4000, 3000);
     let file_size = fs::metadata(&original_path).unwrap().len();
     let placement = library
-        .persist_imported_image(
-            &original_path,
-            "image/png",
-            4000,
-            3000,
-            file_size,
-            eframe::egui::Pos2::ZERO,
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    eframe::egui::Pos2::ZERO,
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&original_path, "image/png", 4000, 3000, file_size, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
 
@@ -1072,14 +931,28 @@ fn load_existing_preserves_animated_webp_in_downscale_mode() {
     fs::write(&original_path, ANIMATED_WEBP_2X2_2_FRAMES).unwrap();
     let file_size = fs::metadata(&original_path).unwrap().len();
     let placement = library
-        .persist_imported_image(
-            &original_path,
-            image::ImageFormat::WebP.to_mime_type(),
-            2,
-            2,
-            file_size,
-            eframe::egui::Pos2::ZERO,
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    eframe::egui::Pos2::ZERO,
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(
+                        &original_path,
+                        image::ImageFormat::WebP.to_mime_type(),
+                        2,
+                        2,
+                        file_size,
+                        None,
+                    )
+                    .unwrap(),
+            ),
         )
         .unwrap();
 
@@ -1113,14 +986,21 @@ fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
     let original_path = write_png(&root, "source.png", 4000, 3000);
     let file_size = fs::metadata(&original_path).unwrap().len();
     let placement = library
-        .persist_imported_image(
-            &original_path,
-            "image/png",
-            4000,
-            3000,
-            file_size,
-            eframe::egui::Pos2::ZERO,
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    eframe::egui::Pos2::ZERO,
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&original_path, "image/png", 4000, 3000, file_size, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
 
@@ -1200,14 +1080,21 @@ fn downscale_mode_ignores_legacy_thumb_cache_paths() {
     let original_path = write_png(&root, "source.png", 4000, 3000);
     let file_size = fs::metadata(&original_path).unwrap().len();
     let placement = library
-        .persist_imported_image(
-            &original_path,
-            "image/png",
-            4000,
-            3000,
-            file_size,
-            eframe::egui::Pos2::ZERO,
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    eframe::egui::Pos2::ZERO,
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&original_path, "image/png", 4000, 3000, file_size, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
 
@@ -1358,13 +1245,6 @@ fn displayed_area(loaded: &super::PreparedPlacementImage) -> f32 {
         * loaded.placement.state.geometry.scale
 }
 
-fn test_viewport_world() -> eframe::egui::Rect {
-    eframe::egui::Rect::from_min_max(
-        eframe::egui::pos2(-10_000.0, -10_000.0),
-        eframe::egui::pos2(10_000.0, 10_000.0),
-    )
-}
-
 fn seed_placement(library: &Library, x: f32, y: f32, width: u32, height: u32, scale: f32) {
     let stored_path = library
         .store_rgba_image(
@@ -1376,14 +1256,28 @@ fn seed_placement(library: &Library, x: f32, y: f32, width: u32, height: u32, sc
         .unwrap();
     let file_size = fs::metadata(&stored_path).unwrap().len();
     library
-        .persist_imported_image(
-            &stored_path,
-            image::ImageFormat::Png.to_mime_type(),
-            width,
-            height,
-            file_size,
-            eframe::egui::pos2(x, y),
-            scale,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    eframe::egui::pos2(x, y),
+                    scale,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(
+                        &stored_path,
+                        image::ImageFormat::Png.to_mime_type(),
+                        width,
+                        height,
+                        file_size,
+                        None,
+                    )
+                    .unwrap(),
+            ),
         )
         .unwrap();
 }

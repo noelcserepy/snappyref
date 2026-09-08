@@ -1,3 +1,24 @@
+mod read;
+pub(crate) use read::{ClipboardContent, read};
+
+#[cfg(target_os = "macos")]
+pub(crate) mod macos;
+#[cfg(target_os = "windows")]
+pub(crate) mod windows;
+#[cfg(target_os = "macos")]
+use macos as native;
+#[cfg(target_os = "windows")]
+use windows as native;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+mod native {
+    pub(super) fn clipboard_paths() -> Vec<std::path::PathBuf> {
+        Vec::new()
+    }
+    pub(super) fn clipboard_pureref_binary() -> Option<Vec<u8>> {
+        None
+    }
+}
+
 use std::borrow::Cow;
 
 use crate::canvas::CanvasState;
@@ -55,10 +76,12 @@ fn external_image_for_selection(
     let placement = canvas
         .placement_for_id(selected_placement_ids[0])
         .ok_or_else(|| "missing selected placement".to_owned())?;
-    let byte_len = external_image_byte_len(
+    let Ok(byte_len) = external_image_byte_len(
         placement.require_loaded_asset().width,
         placement.require_loaded_asset().height,
-    )?;
+    ) else {
+        return Ok(None);
+    };
     if byte_len > MAX_EXTERNAL_CLIPBOARD_IMAGE_BYTES {
         return Ok(None);
     }
@@ -109,7 +132,7 @@ fn write_image_payload_with_text(image: &ExternalClipboardImage, text: &str) -> 
             bytes: Cow::Borrowed(&image.rgba),
         })
         .map_err(|error| format!("Failed to copy image: {error}"))?;
-    append_internal_text(text)
+    native::append_internal_text(text)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -122,71 +145,6 @@ fn write_image_payload_with_text(
     clipboard
         .set_text(text.to_owned())
         .map_err(|error| format!("Failed to copy selection: {error}"))
-}
-
-#[cfg(target_os = "macos")]
-fn append_internal_text(text: &str) -> Result<(), String> {
-    use objc2::msg_send;
-    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
-    use objc2_foundation::NSString;
-
-    let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
-    let text = NSString::from_str(text);
-    let success: bool =
-        unsafe { msg_send![&pasteboard, setString: &*text, forType: NSPasteboardTypeString] };
-    if success {
-        Ok(())
-    } else {
-        Err("Failed to add SnappyRef clipboard metadata".to_owned())
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn append_internal_text(text: &str) -> Result<(), String> {
-    use std::ptr;
-
-    use windows_sys::Win32::Foundation::{GlobalFree, HGLOBAL};
-    use windows_sys::Win32::System::DataExchange::{
-        CloseClipboard, OpenClipboard, SetClipboardData,
-    };
-    use windows_sys::Win32::System::Memory::{
-        GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock,
-    };
-    use windows_sys::Win32::System::Ole::CF_UNICODETEXT;
-
-    unsafe {
-        if OpenClipboard(ptr::null_mut()) == 0 {
-            return Err("Clipboard unavailable".to_owned());
-        }
-
-        let result = (|| {
-            let mut wide = text.encode_utf16().collect::<Vec<_>>();
-            wide.push(0);
-            let byte_len = wide
-                .len()
-                .checked_mul(std::mem::size_of::<u16>())
-                .ok_or_else(|| "clipboard text dimensions overflowed".to_owned())?;
-            let handle: HGLOBAL = GlobalAlloc(GMEM_MOVEABLE, byte_len);
-            if handle.is_null() {
-                return Err("Failed to allocate clipboard text".to_owned());
-            }
-            let pointer = GlobalLock(handle);
-            if pointer.is_null() {
-                let _ = GlobalFree(handle);
-                return Err("Failed to lock clipboard text".to_owned());
-            }
-            std::ptr::copy_nonoverlapping(wide.as_ptr().cast::<u8>(), pointer.cast(), byte_len);
-            let _ = GlobalUnlock(handle);
-            if SetClipboardData(CF_UNICODETEXT as u32, handle).is_null() {
-                let _ = GlobalFree(handle);
-                return Err("Failed to add SnappyRef clipboard metadata".to_owned());
-            }
-            Ok(())
-        })();
-
-        let _ = CloseClipboard();
-        result
-    }
 }
 
 #[cfg(test)]
@@ -205,14 +163,28 @@ mod tests {
             .store_rgba_image("copy-source", &rgba, 2, 1)
             .unwrap();
         let placement = library
-            .persist_imported_image(
-                &source,
-                "image/png",
-                2,
-                1,
-                std::fs::metadata(&source).unwrap().len(),
-                eframe::egui::pos2(0.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        eframe::egui::pos2(0.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(
+                            &source,
+                            "image/png",
+                            2,
+                            1,
+                            std::fs::metadata(&source).unwrap().len(),
+                            None,
+                        )
+                        .unwrap(),
+                ),
             )
             .unwrap();
         let placement_id = placement.state.id;
@@ -275,23 +247,30 @@ mod tests {
         let ctx = eframe::egui::Context::default();
         let root = TempRoot::new("snappyref-copy-oversized-image");
         let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
-        let mut canvas = crate::canvas::CanvasState::default();
-        let mut placement = test_record(1, 1);
-        placement.require_loaded_asset_mut().width = 20_000;
-        placement.require_loaded_asset_mut().height = 20_000;
-        placement.state.geometry.size = eframe::egui::vec2(20_000.0, 20_000.0);
-        canvas.add_prepared_placement_image(
-            &ctx,
-            loaded_item(placement, vec![255, 255, 255, 255], 1, 1),
-        );
-        canvas.select_placements(&[1]);
+        for side in [20_000, u32::MAX] {
+            let mut canvas = crate::canvas::CanvasState::default();
+            let mut placement = test_record(1, 1);
+            placement.require_loaded_asset_mut().width = side;
+            placement.require_loaded_asset_mut().height = side;
+            placement.state.geometry.size = eframe::egui::vec2(side as f32, side as f32);
+            canvas.add_prepared_placement_image(
+                &ctx,
+                loaded_item(placement, vec![255, 255, 255, 255], 1, 1),
+            );
+            canvas.select_placements(&[1]);
 
-        let payload = build_selection_copy_payload(&canvas, Some(&library))
-            .unwrap()
-            .unwrap();
+            let payload = build_selection_copy_payload(&canvas, Some(&library))
+                .unwrap()
+                .unwrap();
 
-        assert_eq!(payload.item_count, 1);
-        assert!(payload.external_image.is_none());
+            assert_eq!(payload.item_count, 1);
+            assert!(payload.external_image.is_none());
+            assert!(
+                super::decode_board_selection(&payload.internal_json)
+                    .unwrap()
+                    .is_some()
+            );
+        }
     }
 
     #[test]

@@ -126,7 +126,9 @@ impl SnappyRefApp {
                     status,
                 )
             }
-            UpdateState::Available { version, .. } => (
+            UpdateState::Available {
+                release: crate::updater::manifest::Manifest { version, .. },
+            } => (
                 "Update".to_owned(),
                 true,
                 true,
@@ -150,11 +152,14 @@ impl SnappyRefApp {
                 true,
                 Some("Update ready. Restart to finish.".to_owned()),
             ),
-            UpdateState::Failed => (
+            UpdateState::Failed { reason, version } => (
                 "Check for updates".to_owned(),
                 check_now_enabled,
                 false,
-                Some("Update check failed.".to_owned()),
+                Some(match version {
+                    Some(version) => format!("Update to {version} failed. {reason}"),
+                    None => "Update check failed.".to_owned(),
+                }),
             ),
         }
     }
@@ -184,7 +189,7 @@ impl SnappyRefApp {
                 self.trigger_restart_into_update(ctx);
             }
             UpdateState::Downloading { .. } => {}
-            UpdateState::Hidden | UpdateState::Failed => {
+            UpdateState::Hidden | UpdateState::Failed { .. } => {
                 self.request_manual_update_check(ctx);
             }
         }
@@ -212,7 +217,7 @@ impl SnappyRefApp {
         }
         match self.update_service.state().clone() {
             UpdateState::Ready { .. } => self.trigger_restart_into_update(ctx),
-            UpdateState::Failed => self.user_update_flow_active = false,
+            UpdateState::Failed { .. } => self.user_update_flow_active = false,
             UpdateState::Downloading { .. } => {
                 ctx.request_repaint_after(Duration::from_millis(250))
             }
@@ -266,7 +271,9 @@ impl SnappyRefApp {
                 ctx.request_repaint_after(Duration::from_millis(250));
             }
             UpdateSmokePhase::WaitingForAvailable => match self.update_service.state().clone() {
-                UpdateState::Available { version, .. } => {
+                UpdateState::Available {
+                    release: crate::updater::manifest::Manifest { version, .. },
+                } => {
                     self.write_update_smoke_status(&format!("available:{version}"));
                     self.update_service.start_install();
                     if let Some(smoke) = &mut self.update_smoke {
@@ -281,7 +288,7 @@ impl SnappyRefApp {
                     }
                     self.trigger_restart_into_update(ctx);
                 }
-                UpdateState::Failed => {
+                UpdateState::Failed { .. } => {
                     self.fail_update_smoke(ctx, "update service failed");
                 }
                 _ => {
@@ -296,7 +303,7 @@ impl SnappyRefApp {
                     }
                     self.trigger_restart_into_update(ctx);
                 }
-                UpdateState::Failed => {
+                UpdateState::Failed { .. } => {
                     self.fail_update_smoke(ctx, "update service failed");
                 }
                 _ => {

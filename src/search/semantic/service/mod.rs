@@ -78,7 +78,22 @@ pub enum IndexResult {
     },
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum SearchQueryError {
+    ModelPending,
+    Failed(String),
+}
+
+impl From<String> for SearchQueryError {
+    fn from(error: String) -> Self {
+        Self::Failed(error)
+    }
+}
+
 pub enum SearchQueryResult {
+    ModelPending {
+        request_id: u64,
+    },
     Completed {
         request_id: u64,
         results: Vec<SearchResultAssetEntry>,
@@ -189,7 +204,10 @@ impl SemanticSearchService {
                         request_id,
                         results,
                     }),
-                    Err(error) => {
+                    Err(SearchQueryError::ModelPending) => {
+                        search_result_tx.send(SearchQueryResult::ModelPending { request_id })
+                    }
+                    Err(SearchQueryError::Failed(error)) => {
                         search_result_tx.send(SearchQueryResult::Failed { request_id, error })
                     }
                 };
@@ -273,7 +291,7 @@ impl SemanticSearchService {
         source_asset_id: i64,
         text_query: Option<&str>,
         limit: usize,
-    ) -> Result<Vec<SearchResultAssetEntry>, String> {
+    ) -> Result<Vec<SearchResultAssetEntry>, SearchQueryError> {
         search_with_image_pivot_with_limit_for(
             &self.library,
             &self.model_state,
@@ -291,7 +309,7 @@ impl SemanticSearchService {
         &self,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<SearchResultAssetEntry>, String> {
+    ) -> Result<Vec<SearchResultAssetEntry>, SearchQueryError> {
         let query = query.trim();
         if query.is_empty() {
             return Ok(Vec::new());
@@ -379,7 +397,7 @@ fn search_with_image_pivot_with_limit_for(
     source_asset_id: i64,
     text_query: Option<&str>,
     limit: usize,
-) -> Result<Vec<SearchResultAssetEntry>, String> {
+) -> Result<Vec<SearchResultAssetEntry>, SearchQueryError> {
     let source_embedding = asset_index.pivot_embedding(source_asset_id)?;
     let mut hits = asset_index.search(&source_embedding, IMAGE_PIVOT_CANDIDATE_LIMIT)?;
     hits.retain(|hit| hit.asset_id != source_asset_id);
@@ -404,7 +422,7 @@ fn search_with_limit_for(
     asset_index: &AssetIndex,
     query: &str,
     limit: usize,
-) -> Result<Vec<SearchResultAssetEntry>, String> {
+) -> Result<Vec<SearchResultAssetEntry>, SearchQueryError> {
     let query = query.trim();
     if query.is_empty() {
         return Ok(Vec::new());
@@ -412,7 +430,7 @@ fn search_with_limit_for(
 
     let query_embedding = text_embedding(query, model_state, index_tx, text_embedding_cache)?;
     let hits = asset_index.search(&query_embedding, limit)?;
-    group_hits(library, hits)
+    Ok(group_hits(library, hits)?)
 }
 
 fn process_index_request(
@@ -525,7 +543,7 @@ fn text_embedding(
     model_state: &Arc<Mutex<ModelState>>,
     index_tx: &mpsc::Sender<IndexRequest>,
     text_embedding_cache: &Arc<Mutex<HashMap<String, Vec<f32>>>>,
-) -> Result<Vec<f32>, String> {
+) -> Result<Vec<f32>, SearchQueryError> {
     let query = query.trim();
     if let Some(embedding) = text_embedding_cache
         .lock()
@@ -537,7 +555,7 @@ fn text_embedding(
     }
 
     let model = ready_model(model_state).map_err(|error| {
-        if error == "Loading model…" {
+        if error == SearchQueryError::ModelPending {
             let _ = index_tx.send(IndexRequest::Init);
         }
         error
@@ -550,14 +568,16 @@ fn text_embedding(
     Ok(embedding)
 }
 
-fn ready_model(model_state: &Arc<Mutex<ModelState>>) -> Result<Arc<OrtTextEncoderModel>, String> {
+fn ready_model(
+    model_state: &Arc<Mutex<ModelState>>,
+) -> Result<Arc<OrtTextEncoderModel>, SearchQueryError> {
     let state = model_state
         .lock()
         .map_err(|_| "semantic-search model state poisoned".to_owned())?;
     match &*state {
-        ModelState::Uninitialized | ModelState::Loading => Err("Loading model…".to_owned()),
+        ModelState::Uninitialized | ModelState::Loading => Err(SearchQueryError::ModelPending),
         ModelState::Ready(model) => Ok(model.clone()),
-        ModelState::Failed(error) => Err(error.clone()),
+        ModelState::Failed(error) => Err(SearchQueryError::Failed(error.clone())),
     }
 }
 
@@ -705,27 +725,16 @@ fn ensure_model(
     model_state: &Arc<Mutex<ModelState>>,
     model_spec: &ModelSpec,
     result_tx: &mpsc::Sender<IndexResult>,
-) -> Result<Arc<OrtTextEncoderModel>, String> {
-    {
-        let state = model_state
-            .lock()
-            .map_err(|_| "semantic-search model state poisoned".to_owned())?;
-        match &*state {
-            ModelState::Ready(model) => return Ok(model.clone()),
-            ModelState::Failed(error) => return Err(error.clone()),
-            ModelState::Loading | ModelState::Uninitialized => {}
-        }
-    }
-
+) -> Result<(), String> {
     {
         let mut state = model_state
             .lock()
             .map_err(|_| "semantic-search model state poisoned".to_owned())?;
         match &*state {
-            ModelState::Ready(model) => return Ok(model.clone()),
+            ModelState::Ready(_) => return Ok(()),
             ModelState::Failed(error) => return Err(error.clone()),
             ModelState::Uninitialized => *state = ModelState::Loading,
-            ModelState::Loading => return Err("Loading model…".to_owned()),
+            ModelState::Loading => return Ok(()),
         }
     }
 
@@ -741,9 +750,9 @@ fn ensure_model(
             let mut state = model_state
                 .lock()
                 .map_err(|_| "semantic-search model state poisoned".to_owned())?;
-            *state = ModelState::Ready(model.clone());
+            *state = ModelState::Ready(model);
             let _ = result_tx.send(IndexResult::ModelReady);
-            Ok(model)
+            Ok(())
         }
         Err(error) => {
             let mut state = model_state
@@ -777,6 +786,24 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     #[test]
+    fn pending_model_requests_initialization_without_classifying_failure_text() {
+        let (index_tx, index_rx) = mpsc::channel();
+        let state = Arc::new(Mutex::new(super::ModelState::Uninitialized));
+        let cache = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        assert_eq!(
+            super::text_embedding("cat", &state, &index_tx, &cache),
+            Err(super::SearchQueryError::ModelPending)
+        );
+        assert!(matches!(index_rx.try_recv(), Ok(super::IndexRequest::Init)));
+        *state.lock().unwrap() = super::ModelState::Failed("Loading model…".to_owned());
+        assert_eq!(
+            super::text_embedding("cat", &state, &index_tx, &cache),
+            Err(super::SearchQueryError::Failed("Loading model…".to_owned()))
+        );
+        assert!(index_rx.try_recv().is_err());
+    }
+
+    #[test]
     fn image_pivot_returns_unplaced_asset_without_creating_placement() {
         let root = TempRoot::new("snappyref-library-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
@@ -788,28 +815,42 @@ mod tests {
             .unwrap();
 
         let source = library
-            .persist_imported_image(
-                &source_path,
-                "image/png",
-                1,
-                1,
-                4,
-                egui::pos2(0.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(0.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&source_path, "image/png", 1, 1, 4, None)
+                        .unwrap(),
+                ),
             )
             .unwrap();
         let unplaced = library
-            .persist_imported_image(
-                &unplaced_path,
-                "image/png",
-                1,
-                1,
-                4,
-                egui::pos2(10.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(10.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&unplaced_path, "image/png", 1, 1, 4, None)
+                        .unwrap(),
+                ),
             )
             .unwrap();
-        library.archive_placements(&[unplaced.state.id]).unwrap();
+        library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[unplaced.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[unplaced.state.id]).contains(id))).collect()), ..Default::default()}).unwrap();
         library
             .upsert_asset_embedding_blob(
                 source.require_loaded_asset().id,
@@ -832,7 +873,6 @@ mod tests {
                 1,
                 1,
             )
-            .unwrap()
             .unwrap();
 
         let service = SemanticSearchService::new(
@@ -861,7 +901,7 @@ mod tests {
     fn image_pivot_searches_assets_across_boards() {
         let root = TempRoot::new("snappyref-library-wide-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
-        let second_board = library.create_board("Second").unwrap();
+        let second_board = library.fixture_board("Second").unwrap();
         let source_path = library
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
             .unwrap();
@@ -873,37 +913,57 @@ mod tests {
             .unwrap();
 
         let source = library
-            .persist_imported_image(
-                &source_path,
-                "image/png",
-                1,
-                1,
-                4,
-                egui::pos2(0.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(0.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&source_path, "image/png", 1, 1, 4, None)
+                        .unwrap(),
+                ),
             )
             .unwrap();
         let active = library
-            .persist_imported_image(
-                &active_path,
-                "image/png",
-                1,
-                1,
-                4,
-                egui::pos2(10.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(10.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&active_path, "image/png", 1, 1, 4, None)
+                        .unwrap(),
+                ),
             )
             .unwrap();
         let inactive = library
-            .persist_imported_image_to_board(
+            .fixture_placement(
                 second_board.id,
-                &inactive_path,
-                "image/png",
-                1,
-                1,
-                4,
-                egui::pos2(20.0, 0.0),
-                1.0,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(20.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&inactive_path, "image/png", 1, 1, 4, None)
+                        .unwrap(),
+                ),
             )
             .unwrap();
         library
@@ -957,25 +1017,39 @@ mod tests {
             .unwrap();
 
         let source = library
-            .persist_imported_image(
-                &source_path,
-                "image/png",
-                1,
-                1,
-                4,
-                egui::pos2(0.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(0.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&source_path, "image/png", 1, 1, 4, None)
+                        .unwrap(),
+                ),
             )
             .unwrap();
         let result = library
-            .persist_imported_image(
-                &result_path,
-                "image/png",
-                1,
-                1,
-                4,
-                egui::pos2(10.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(10.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&result_path, "image/png", 1, 1, 4, None)
+                        .unwrap(),
+                ),
             )
             .unwrap();
         library
@@ -1028,14 +1102,21 @@ mod tests {
             .store_rgba_image("ready", &[255, 0, 0, 255], 1, 1)
             .unwrap();
         let record = library
-            .persist_imported_image(
-                &source_path,
-                "image/png",
-                1,
-                1,
-                4,
-                egui::pos2(0.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(0.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&source_path, "image/png", 1, 1, 4, None)
+                        .unwrap(),
+                ),
             )
             .unwrap();
         library
@@ -1118,14 +1199,21 @@ mod tests {
             .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
             .unwrap();
         let record = library
-            .persist_imported_image(
-                &original_path,
-                "image/png",
-                1,
-                1,
-                4,
-                egui::pos2(0.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(0.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&original_path, "image/png", 1, 1, 4, None)
+                        .unwrap(),
+                ),
             )
             .unwrap();
 
@@ -1145,7 +1233,6 @@ mod tests {
                 1,
                 1,
             )
-            .unwrap()
             .unwrap();
 
         let with_lod = embedding_source_path(
@@ -1220,14 +1307,28 @@ mod tests {
         let (width, height) = image::image_dimensions(&stored_path).unwrap();
         let file_size = fs::metadata(&stored_path).unwrap().len();
         let record = library
-            .persist_imported_image(
-                &stored_path,
-                "image/jpeg",
-                width,
-                height,
-                file_size,
-                egui::pos2(0.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(0.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(
+                            &stored_path,
+                            "image/jpeg",
+                            width,
+                            height,
+                            file_size,
+                            None,
+                        )
+                        .unwrap(),
+                ),
             )
             .unwrap();
 

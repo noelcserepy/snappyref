@@ -10,7 +10,7 @@ from pathlib import Path
 
 from perf_eval import aggregate, compare, cpu_percent, cpu_seconds, validate_run, run_case, BUDGETS, FAST_CASES, FAST_METRICS, PROFILES, cleanup_process_group
 from typing import Any
-from _perf_sampling import per_format_groups_from_events, classify_helper, parse_ps_axwo_output, select_descendants, tree_rss_stats, per_helper_peaks, phase_summary_from_events
+from _perf_sampling import per_format_groups_from_events, classify_helper, parse_ps_axwo_output, select_descendants, peak_tree_rss_bytes, per_helper_peaks, phase_summary_from_events
 
 
 class EvaluationTests(unittest.TestCase):
@@ -258,7 +258,7 @@ class SamplingTests(unittest.TestCase):
             "command": command,
         }
 
-    def test_tree_rss_stats_sums_pids_per_tick(self) -> None:
+    def test_peak_tree_rss_bytes_sums_pids_per_tick(self) -> None:
         rows = [
             self._sample(
                 elapsed_ms=100.0,
@@ -284,16 +284,10 @@ class SamplingTests(unittest.TestCase):
             # Helper exits before tick 200, so its row is absent. Peak
             # must still account for tick 100's 500 MB.
         ]
-        stats = tree_rss_stats(rows)
-        self.assertEqual(stats["tick_count"], 2)
-        self.assertEqual(stats["peak_tree_rss_bytes"], 500_000_000)
-        self.assertAlmostEqual(stats["peak_tree_cpu_percent"], 85.0)
+        self.assertEqual(peak_tree_rss_bytes(rows), 500_000_000)
 
-    def test_tree_rss_stats_handles_empty(self) -> None:
-        stats = tree_rss_stats([])
-        self.assertEqual(stats["samples"], 0)
-        self.assertEqual(stats["tick_count"], 0)
-        self.assertIsNone(stats["peak_tree_rss_bytes"])
+    def test_peak_tree_rss_bytes_handles_empty(self) -> None:
+        self.assertIsNone(peak_tree_rss_bytes([]))
 
     def test_per_helper_peaks_picks_per_role(self) -> None:
         rows = [

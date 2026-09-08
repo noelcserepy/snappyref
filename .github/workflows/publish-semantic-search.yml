@@ -25,7 +25,6 @@ permissions:
 env:
   DIST_REPO: noelcserepy/snappyref-dist
   SEMANTIC_SEARCH_ASSET: snappyref-semantic-search.zip
-  SEMANTIC_SEARCH_MODEL_KEY: siglip2_base_patch16_224_int8
 
 jobs:
   publish:
@@ -42,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           zip_path="${RUNNER_TEMP}/${SEMANTIC_SEARCH_ASSET}"
-          scripts/create-model-bundle.sh "$zip_path"
+          python3 scripts/semantic_model.py bundle "$zip_path"
           sha256=$(sha256sum "$zip_path" | awk '{print $1}')
           size=$(wc -c < "$zip_path" | tr -d ' ')
           echo "zip_path=$zip_path" >> "$GITHUB_OUTPUT"
@@ -98,6 +97,5 @@ jobs:
             echo "semantic_search_url=$url"
             echo "semantic_search_sha256=${{ steps.package.outputs.sha256 }}"
             echo "semantic_search_size=${{ steps.package.outputs.size }}"
-            echo "semantic_search_model_key=${SEMANTIC_SEARCH_MODEL_KEY}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

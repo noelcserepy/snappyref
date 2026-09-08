@@ -14,8 +14,6 @@ use crate::image_preparation::image_formats::{
 };
 use crate::library::storage::{Library, sha256_bytes, sha256_file};
 
-#[cfg(test)]
-use super::DEFAULT_PLACEMENT_TARGET_AREA;
 use super::decode::{PreparedImage, install_prepared_canvas_cache, prepare_image_with_helper};
 use super::preview_texture::build_preview_texture;
 use super::{
@@ -24,6 +22,8 @@ use super::{
     canvas_source_image_from_rgba, is_svg_path, original_mime_type_is_svg, parse_svg_document,
     read_svg_document, stable_svg_uri_key,
 };
+#[cfg(test)]
+use crate::placement::DEFAULT_PLACEMENT_TARGET_AREA;
 
 const URL_IMPORT_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const URL_IMPORT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -113,18 +113,26 @@ pub(crate) fn import_sync(
 
     let store_started_at = Instant::now();
     let stored = store_original(library, &decoded)?;
-    let placement = library.register_imported_asset_for_placement(
-        target_board_id,
-        placement_id,
+    let asset = library.register_original(
         &stored.path,
         &decoded.mime_type,
         decoded.source_width,
         decoded.source_height,
         stored.file_size,
         Some(&stored.sha256),
-        reserved_world,
-        initial_scale,
     )?;
+    let placement = crate::data::Placement::loaded(
+        crate::data::PlacementState::with_display_size(
+            placement_id,
+            reserved_world,
+            eframe::egui::vec2(decoded.source_width as f32, decoded.source_height as f32),
+            initial_scale,
+            0.0,
+            0,
+            false,
+        ),
+        asset,
+    );
     let store_and_persist = store_started_at.elapsed();
 
     let preview_started_at = Instant::now();

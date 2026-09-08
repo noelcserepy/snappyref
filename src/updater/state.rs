@@ -18,7 +18,7 @@
 pub(crate) enum CheckOutcome {
     /// Manifest was fetched and verified; the version is greater than the
     /// running app.
-    NewerAvailable { version: String },
+    NewerAvailable { release: super::manifest::Manifest },
     /// Manifest was fetched and verified, but its version does not outrank
     /// the running app.
     UpToDate,
@@ -32,7 +32,7 @@ pub(crate) enum UpdateState {
     #[default]
     Hidden,
     Available {
-        version: String,
+        release: super::manifest::Manifest,
     },
     /// User has clicked Update and the download is in flight. Percent is
     /// in `0..=100`; the version is captured so a manifest swap mid-flight
@@ -46,7 +46,10 @@ pub(crate) enum UpdateState {
     Ready {
         version: String,
     },
-    Failed,
+    Failed {
+        reason: String,
+        version: Option<String>,
+    },
 }
 
 /// Progress events fired by the install worker; the service translates
@@ -64,20 +67,24 @@ pub(crate) enum InstallProgress {
 impl UpdateState {
     pub(crate) fn apply(&mut self, outcome: CheckOutcome) {
         match outcome {
-            CheckOutcome::NewerAvailable { version } => {
+            CheckOutcome::NewerAvailable { release } => {
+                let version = &release.version;
                 // Discovery should never overwrite an in-flight download
                 // or a ready bundle for the same or newer version — the
                 // user is mid-install and the update UI must keep showing the
                 // current progress/ready state.
                 match self {
-                    UpdateState::Downloading { version: v, .. }
+                    UpdateState::Available {
+                        release: super::manifest::Manifest { version: v, .. },
+                    }
+                    | UpdateState::Downloading { version: v, .. }
                     | UpdateState::Ready { version: v }
                         if !crate::updater::version::is_newer_than(&version, v) =>
                     {
                         // Ignore: we already know about this version.
                     }
                     _ => {
-                        *self = UpdateState::Available { version };
+                        *self = UpdateState::Available { release };
                     }
                 }
             }
@@ -87,7 +94,7 @@ impl UpdateState {
                 // version must not retract the update UI mid-session. It also
                 // never retracts Downloading or Ready. The update UI clears
                 // Failed when we recover.
-                if matches!(self, UpdateState::Failed) {
+                if matches!(self, UpdateState::Failed { .. }) {
                     *self = UpdateState::Hidden;
                 }
             }
@@ -97,7 +104,10 @@ impl UpdateState {
                 // UI stays in its last known actionable state. Otherwise
                 // surface Failed.
                 if matches!(self, UpdateState::Hidden) {
-                    *self = UpdateState::Failed;
+                    *self = UpdateState::Failed {
+                        reason: "Release discovery failed".to_owned(),
+                        version: None,
+                    };
                 }
             }
         }
@@ -136,9 +146,12 @@ impl UpdateState {
                     *self = UpdateState::Ready { version };
                 }
             }
-            InstallProgress::Failed { reason: _ } => {
-                if matches!(self, UpdateState::Downloading { .. }) {
-                    *self = UpdateState::Failed;
+            InstallProgress::Failed { reason } => {
+                if let UpdateState::Downloading { version, .. } = self {
+                    *self = UpdateState::Failed {
+                        reason,
+                        version: Some(version.clone()),
+                    };
                 }
             }
         }
@@ -186,7 +199,7 @@ mod tests {
 
     fn newer(version: &str) -> CheckOutcome {
         CheckOutcome::NewerAvailable {
-            version: version.to_owned(),
+            release: super::super::tests::manifest_with(version),
         }
     }
 
@@ -213,7 +226,7 @@ mod tests {
     fn hidden_to_failed_on_failure() {
         let mut state = UpdateState::Hidden;
         state.apply(CheckOutcome::Failed);
-        assert_eq!(state, UpdateState::Failed);
+        assert!(matches!(state, UpdateState::Failed { .. }));
     }
 
     #[test]
@@ -229,7 +242,10 @@ mod tests {
 
     #[test]
     fn up_to_date_clears_failed() {
-        let mut state = UpdateState::Failed;
+        let mut state = UpdateState::Failed {
+            reason: "discovery".into(),
+            version: None,
+        };
         state.apply(CheckOutcome::UpToDate);
         assert_eq!(state, UpdateState::Hidden);
     }
@@ -248,7 +264,7 @@ mod tests {
         state.apply(newer("1.2.3"));
         state.apply(newer("1.2.4"));
         match state {
-            UpdateState::Available { version, .. } => assert_eq!(version, "1.2.4"),
+            UpdateState::Available { release } => assert_eq!(release.version, "1.2.4"),
             _ => panic!("expected Available"),
         }
     }
@@ -344,7 +360,7 @@ mod tests {
         state.apply_progress(InstallProgress::Failed {
             reason: "boom".to_owned(),
         });
-        assert_eq!(state, UpdateState::Failed);
+        assert!(matches!(state, UpdateState::Failed { .. }));
     }
 
     #[test]
@@ -364,9 +380,7 @@ mod tests {
             version: "1.0.0".to_owned(),
             percent: 30,
         };
-        state.apply(CheckOutcome::NewerAvailable {
-            version: "1.0.0".to_owned(),
-        });
+        state.apply(newer("1.0.0"));
         assert!(state.is_downloading());
     }
 
@@ -375,9 +389,7 @@ mod tests {
         let mut state = UpdateState::Ready {
             version: "1.0.0".to_owned(),
         };
-        state.apply(CheckOutcome::NewerAvailable {
-            version: "1.0.0".to_owned(),
-        });
+        state.apply(newer("1.0.0"));
         assert!(state.is_ready());
     }
 
@@ -386,9 +398,7 @@ mod tests {
         let mut state = UpdateState::Ready {
             version: "1.0.0".to_owned(),
         };
-        state.apply(CheckOutcome::NewerAvailable {
-            version: "1.1.0".to_owned(),
-        });
+        state.apply(newer("1.1.0"));
         assert!(state.is_available());
     }
 

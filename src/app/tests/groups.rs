@@ -78,14 +78,21 @@ fn inspect_group_operations_writes_artifact() {
             .store_rgba_image(&format!("group-{i}"), &solid_rgba(color, 120, 90), 120, 90)
             .unwrap();
         let placement = library
-            .persist_imported_image(
-                &path,
-                "image/png",
-                120,
-                90,
-                43200,
-                egui::pos2(-180.0 + i as f32 * 180.0, 100.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(-180.0 + i as f32 * 180.0, 100.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&path, "image/png", 120, 90, 43200, None)
+                        .unwrap(),
+                ),
             )
             .unwrap();
         ids.push(placement.id());
@@ -383,7 +390,7 @@ fn inspect_group_operations_writes_artifact() {
 fn group_document_history_survives_transfer_delete_restart_and_board_archive() {
     let root = TempRoot::new("snappyref-group-document-history");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let other_board = library.create_board("Other").unwrap();
+    let other_board = library.fixture_board("Other").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.board_editing.persistence =
         crate::active_board::persistence::DocumentPersistence::queued(library.clone());
@@ -399,14 +406,21 @@ fn group_document_history_survives_transfer_delete_restart_and_board_archive() {
             )
             .unwrap();
         let placement = library
-            .persist_imported_image(
-                &path,
-                "image/png",
-                40,
-                30,
-                4800,
-                egui::pos2(i as f32 * 60.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(i as f32 * 60.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&path, "image/png", 40, 30, 4800, None)
+                        .unwrap(),
+                ),
             )
             .unwrap();
         ids.push(placement.id());

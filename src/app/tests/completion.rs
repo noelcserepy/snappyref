@@ -65,7 +65,7 @@ fn batch_completion_persists_empty_textbox_cleanup_without_an_extra_history_entr
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let ctx = egui::Context::default();
     let annotation = library
-        .create_canvas_annotation(
+        .fixture_annotation(
             CanvasAnnotationKind::Textbox,
             egui::pos2(40.0, 60.0),
             egui::pos2(140.0, 100.0),
@@ -100,7 +100,22 @@ fn batch_completion_persists_empty_textbox_cleanup_without_an_extra_history_entr
             .store_rgba_image(&format!("batch-{id}"), &[id as u8, 0, 0, 255], 1, 1)
             .unwrap();
         let placement = library
-            .persist_imported_image(&path, "image/png", 1, 1, 4, egui::Pos2::ZERO, 1.0)
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::Pos2::ZERO,
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(&path, "image/png", 1, 1, 4, None)
+                        .unwrap(),
+                ),
+            )
             .unwrap();
         let mut loaded = loaded_record(placement);
         loaded.queue_id = Some(id as u64);
@@ -143,7 +158,7 @@ fn batch_completion_persists_empty_textbox_cleanup_without_an_extra_history_entr
             .contains(&crate::data::CanvasStackItem::Annotation(annotation.id))
     );
     let board_id = app.active_board_id;
-    let other = library.create_board("Other").unwrap();
+    let other = library.fixture_board("Other").unwrap();
     app.switch_to_board(other.id);
     app.switch_to_board(board_id);
     assert!(
@@ -188,5 +203,66 @@ fn batch_completion_persists_empty_textbox_cleanup_without_an_extra_history_entr
     assert!(
         history.undo(app.active_board_id).is_none(),
         "completion must retain one batch entry"
+    );
+}
+
+#[test]
+fn first_load_fits_latest_placeholder_area_and_rejects_deleted_placement() {
+    let root = TempRoot::new("snappyref-first-load-latest-geometry");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let ctx = egui::Context::default();
+    let mut app = test_app(Some(library.clone()));
+    let reservation = app
+        .reserve_import(
+            Some((640, 480)),
+            egui::pos2(12.0, 24.0),
+            crate::data::ContentResolutionSource::Clipboard,
+        )
+        .unwrap();
+    let id = reservation.placement_id;
+    let mut loaded = persisted_loaded_item(&library, id, app.active_board_id);
+    loaded.placement.require_loaded_asset_mut().width = 640;
+    loaded.placement.require_loaded_asset_mut().height = 480;
+    loaded.queue_id = Some(reservation.queue_id);
+    app.canvas.select_placements(&[id]);
+    app.canvas.move_selected_placement_group_to_center(
+        egui::pos2(120.0, 80.0),
+        test_viewport_world(),
+        0.0,
+    );
+    let mut edited = app.canvas.placement_for_id(id).unwrap();
+    edited.state.geometry.size = egui::vec2(320.0, 180.0);
+    edited.state.geometry.scale = 1.5;
+    edited.state.geometry.rotation = 0.2;
+    let current = edited.state.geometry;
+    app.canvas.add_unresolved_placement(edited);
+    app.accept_preparation_result(
+        &ctx,
+        crate::image_preparation::ImagePrepResult::Loaded(loaded),
+    );
+    let resolved = app.canvas.placement_for_id(id).unwrap().state.geometry;
+    assert_eq!(resolved.center, current.center);
+    assert_eq!(resolved.scale, current.scale);
+    assert!((resolved.size.x * resolved.size.y - current.size.x * current.size.y).abs() < 0.1);
+    assert!((resolved.size.x / resolved.size.y - 640.0 / 480.0).abs() < 0.001);
+
+    let reservation = app
+        .reserve_import(
+            Some((1, 1)),
+            egui::Pos2::ZERO,
+            crate::data::ContentResolutionSource::Clipboard,
+        )
+        .unwrap();
+    let mut late = persisted_loaded_item(&library, reservation.placement_id, app.active_board_id);
+    late.queue_id = Some(reservation.queue_id);
+    app.canvas.delete_placements(&[reservation.placement_id]);
+    app.accept_preparation_result(
+        &ctx,
+        crate::image_preparation::ImagePrepResult::Loaded(late),
+    );
+    assert!(
+        app.canvas
+            .placement_for_id(reservation.placement_id)
+            .is_none()
     );
 }

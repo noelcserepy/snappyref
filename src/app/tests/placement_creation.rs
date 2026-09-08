@@ -6,10 +6,11 @@ fn rapid_board_switches_ignore_stale_import_completions_and_last_switch_wins() {
     let root = TempRoot::new("snappyref-rapid-switch-stale-imports");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
-    let second = library.create_board("Second").unwrap();
-    let third = library.create_board("Third").unwrap();
+    let second = library.fixture_board("Second").unwrap();
+    let third = library.fixture_board("Third").unwrap();
     let mut app = test_app(Some(library));
     app.active_board_id = first.id;
+    app.refresh_board_summaries();
 
     app.switch_to_board(second.id);
     app.install_test_prepared_image(&ctx, test_loaded_item(41, first.id));
@@ -39,23 +40,30 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
         )
         .unwrap();
     let library_item = library
-        .persist_imported_image(
-            &first_path,
-            "image/png",
-            width,
-            height,
-            4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&first_path, "image/png", width, height, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
-    library
-        .archive_placements(&[library_item.state.id])
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[library_item.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[library_item.state.id]).contains(id))).collect()), ..Default::default()})
         .unwrap();
-    let empty_board = library.create_board("Empty").unwrap();
+    let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
+    app.refresh_board_summaries();
     app.search.overlay.open = true;
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item.require_loaded_asset().id,
@@ -95,12 +103,26 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
         .store_rgba_image("library-only", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let library_item = library
-        .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&first_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
-    library
-        .archive_placements(&[library_item.state.id])
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[library_item.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[library_item.state.id]).contains(id))).collect()), ..Default::default()})
         .unwrap();
-    let empty_board = library.create_board("Empty").unwrap();
+    let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
@@ -109,6 +131,7 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
         None,
     ));
     app.active_board_id = empty_board.id;
+    app.refresh_board_summaries();
     app.search.overlay.open = true;
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item.require_loaded_asset().id,
@@ -251,6 +274,7 @@ fn completed_inactive_board_import_batch_does_not_mutate_active_canvas() {
         .batches
         .register_multi_item_batch(1, vec![1, 2]);
     app.active_board_id = 2;
+    app.refresh_board_summaries();
 
     app.install_test_prepared_image(&ctx, test_loaded_item(1, 1));
     app.install_test_prepared_image(&ctx, test_loaded_item(2, 1));
@@ -264,9 +288,10 @@ fn completed_inactive_board_import_batch_does_not_mutate_active_canvas() {
 fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensions() {
     let root = TempRoot::new("snappyref-import-reservation");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library));
     app.active_board_id = second.id;
+    app.refresh_board_summaries();
 
     let known = app
         .reserve_import(
@@ -354,9 +379,10 @@ fn completed_import_for_inactive_board_does_not_enter_active_canvas() {
     let ctx = egui::Context::default();
     let root = TempRoot::new("snappyref-inactive-import-completion");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library));
     app.active_board_id = 1;
+    app.refresh_board_summaries();
     let loaded = test_loaded_item(41, second.id);
 
     app.install_test_prepared_image(&ctx, loaded);
@@ -371,7 +397,7 @@ fn accepted_import_for_inactive_board_keeps_history_on_target_board() {
     let root = TempRoot::new("snappyref-inactive-import-history");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap().remove(0);
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.board_editing.persistence = crate::app::DocumentPersistence::queued(library.clone());
     let reservation = app
@@ -455,6 +481,7 @@ fn completed_import_for_active_board_enters_active_canvas() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
     app.active_board_id = 1;
+    app.refresh_board_summaries();
     let loaded = test_loaded_item(42, 1);
 
     app.install_test_prepared_image(&ctx, loaded);

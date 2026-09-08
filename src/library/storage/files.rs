@@ -1,17 +1,15 @@
 use super::connection::Library;
 use crate::data::CanvasImageLod;
+use crate::image_preparation::cache_encoding::CanvasImageCacheEncoding;
 use image::ColorType;
 use image::ExtendedColorType;
 use image::ImageEncoder;
 use image::ImageFormat;
-use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::CompressionType;
 use image::codecs::png::FilterType;
 use image::codecs::png::PngEncoder;
-use image::codecs::webp::WebPEncoder;
 use std::fs;
 use std::fs::File;
-use std::io::BufWriter;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
@@ -43,45 +41,6 @@ pub(super) fn sanitize_filename(input: &str) -> String {
     } else {
         sanitized.to_owned()
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CanvasImageCacheEncoding {
-    Jpeg,
-    WebpLossless,
-}
-
-impl CanvasImageCacheEncoding {
-    fn extension(self) -> &'static str {
-        match self {
-            Self::Jpeg => "jpg",
-            Self::WebpLossless => "webp",
-        }
-    }
-}
-
-fn choose_canvas_image_cache_encoding(rgba: &[u8]) -> CanvasImageCacheEncoding {
-    if rgba.chunks_exact(4).all(|pixel| pixel[3] == u8::MAX) {
-        CanvasImageCacheEncoding::Jpeg
-    } else {
-        CanvasImageCacheEncoding::WebpLossless
-    }
-}
-
-fn canvas_image_cache_quality(lod: CanvasImageLod) -> u8 {
-    match lod {
-        CanvasImageLod::Overview => 72,
-        CanvasImageLod::Working => 82,
-        CanvasImageLod::Detail => 88,
-    }
-}
-
-fn rgba_to_rgb(rgba: &[u8]) -> Vec<u8> {
-    let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
-    for pixel in rgba.chunks_exact(4) {
-        rgb.extend_from_slice(&pixel[..3]);
-    }
-    rgb
 }
 
 impl Library {
@@ -183,15 +142,12 @@ impl Library {
         max_side: u32,
         lod: CanvasImageLod,
     ) -> Option<PathBuf> {
-        [
-            CanvasImageCacheEncoding::Jpeg,
-            CanvasImageCacheEncoding::WebpLossless,
-        ]
-        .into_iter()
-        .map(|encoding| {
-            self.canvas_image_cache_destination_for_lod(asset_id, max_side, lod, encoding)
-        })
-        .find(|path| path.is_file())
+        CanvasImageCacheEncoding::ALL
+            .into_iter()
+            .map(|encoding| {
+                self.canvas_image_cache_destination_for_lod(asset_id, max_side, lod, encoding)
+            })
+            .find(|path| path.is_file())
     }
 
     pub fn asset_search_preview_paths_for_assets(
@@ -225,15 +181,8 @@ impl Library {
         lod: CanvasImageLod,
         extension: &str,
     ) -> Result<PathBuf, String> {
-        let encoding = match extension {
-            "jpg" => CanvasImageCacheEncoding::Jpeg,
-            "webp" => CanvasImageCacheEncoding::WebpLossless,
-            _ => {
-                return Err(format!(
-                    "unsupported canvas image cache extension {extension:?}"
-                ));
-            }
-        };
+        let encoding = CanvasImageCacheEncoding::from_extension(extension)
+            .ok_or_else(|| format!("unsupported canvas image cache extension {extension:?}"))?;
         Ok(self.canvas_image_cache_destination_for_lod(asset_id, max_side, lod, encoding))
     }
 
@@ -244,7 +193,7 @@ impl Library {
         rgba: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<Option<PathBuf>, String> {
+    ) -> Result<PathBuf, String> {
         self.store_canvas_image_cache_for_lod(
             asset_id,
             max_side,
@@ -263,30 +212,12 @@ impl Library {
         rgba: &[u8],
         width: u32,
         height: u32,
-    ) -> Result<Option<PathBuf>, String> {
-        let encoding = choose_canvas_image_cache_encoding(rgba);
+    ) -> Result<PathBuf, String> {
+        let encoding = CanvasImageCacheEncoding::for_pixels(rgba);
         let destination =
             self.canvas_image_cache_destination_for_lod(asset_id, max_side, lod, encoding);
-        let file = File::create(&destination)
-            .map_err(|error| format!("failed to create asset preview: {error}"))?;
-        let writer = BufWriter::new(file);
-        match encoding {
-            CanvasImageCacheEncoding::Jpeg => {
-                let rgb = rgba_to_rgb(rgba);
-                let encoder =
-                    JpegEncoder::new_with_quality(writer, canvas_image_cache_quality(lod));
-                encoder
-                    .write_image(&rgb, width, height, ExtendedColorType::Rgb8)
-                    .map_err(|error| format!("failed to write asset preview: {error}"))?;
-            }
-            CanvasImageCacheEncoding::WebpLossless => {
-                let encoder = WebPEncoder::new_lossless(writer);
-                encoder
-                    .write_image(rgba, width, height, ExtendedColorType::Rgba8)
-                    .map_err(|error| format!("failed to write asset preview: {error}"))?;
-            }
-        }
-        Ok(Some(destination))
+        encoding.write(&destination, rgba, width, height, lod)?;
+        Ok(destination)
     }
 
     pub fn remove_asset_canvas_caches(&self, asset_id: i64) -> Result<(), String> {

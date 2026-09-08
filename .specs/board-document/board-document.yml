@@ -248,6 +248,7 @@ interface:
     persistence-off-interaction-path: Durable writes must not block canvas interaction frames.
     latest-document-eventually-durable: After an accepted Board change returns, queued persistence must start automatically in the background and may complete before a flush. A flush must only wait for already queued writes. Coalescing must preserve the semantic order of changes.
     accepted-state-survives-write-failure: A failed durable write must leave the accepted in-memory document, Canvas identity, and history visible while persistence retries.
+    accepted-document-coherent: Board lookup, catalog summaries, edit application, and content resolution must observe the same latest accepted Board state, including changes whose durable writes are pending or have failed.
     durable-write-atomic: A durable write must commit the complete document change, including Placements, Groups, ordered membership, layout configuration, shared stack order, identities, and history, or leave the prior durable state unchanged.
     durable-retry-idempotent: Retrying a failed durable write must not duplicate Placements, Groups, memberships, stack entries, identities, or history entries.
     complete-edit-ownership: Board Document must own accepted edit application, history recording or replay, required content reload scheduling, and ordered persistence submission. Callers must not coordinate these steps separately for an edit to be complete.

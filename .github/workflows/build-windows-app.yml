@@ -123,9 +123,11 @@ jobs:
           if ("${{ inputs.build_profile }}" -eq "release") {
             cargo build --release --locked --bin snappyref
             "SNAPPYREF_TARGET_DIR=target\release" | Out-File -FilePath $env:GITHUB_ENV -Append
-          } else {
+          } elseif ("${{ inputs.build_profile }}" -eq "release-fast") {
             cargo build --profile release-fast --locked --no-default-features --bin snappyref
             "SNAPPYREF_TARGET_DIR=target\release-fast" | Out-File -FilePath $env:GITHUB_ENV -Append
+          } else {
+            throw "unsupported build profile"
           }
 
       - name: Verify Windows GUI subsystem

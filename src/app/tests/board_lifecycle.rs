@@ -26,7 +26,7 @@ fn board_summaries_are_served_from_cache_until_refreshed() {
     app.refresh_board_summaries();
     assert_eq!(app.board_summaries().len(), 1);
 
-    library.create_board("Second").unwrap();
+    library.fixture_board("Second").unwrap();
     assert_eq!(
         app.board_summaries().len(),
         1,
@@ -119,23 +119,30 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
     let root = TempRoot::new("snappyref-cross-board-paste");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let image_path = library
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let source_item = library
-        .persist_imported_image(
-            &image_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(10.0, 20.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(10.0, 20.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&image_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let source_annotation = library
-        .create_canvas_annotation(
+        .fixture_annotation(
             CanvasAnnotationKind::Textbox,
             egui::pos2(40.0, 60.0),
             egui::pos2(140.0, 100.0),
@@ -162,7 +169,13 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
     app.canvas
         .set_canvas_stack_order(source_stack_order.clone());
     library
-        .save_canvas_stack_order(&source_stack_order)
+        .fixture_board_document(
+            library.load_user_session().unwrap().active_board_id,
+            crate::canvas::CanvasDocumentChanges {
+                stack_order: Some(source_stack_order.to_vec()),
+                ..Default::default()
+            },
+        )
         .unwrap();
     app.canvas
         .select_content(&[source_item.state.id], &[source_annotation.id]);
@@ -170,6 +183,7 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
     let payload = app.copy_selected_board_payload().unwrap();
     library.set_active_board(second.id).unwrap();
     app.active_board_id = second.id;
+    app.refresh_board_summaries();
     app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
         .unwrap();
 
@@ -224,7 +238,7 @@ fn undo_delete_annotation_patches_active_canvas_without_board_reload() {
     let root = TempRoot::new("snappyref-undo-no-board-reload");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let annotation = library
-        .create_canvas_annotation(
+        .fixture_annotation(
             CanvasAnnotationKind::Textbox,
             egui::pos2(40.0, 60.0),
             egui::pos2(140.0, 100.0),
@@ -263,18 +277,25 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let source_item = library
-        .persist_imported_image(
-            &image_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(10.0, 20.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(10.0, 20.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&image_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let source_annotation = library
-        .create_canvas_annotation(
+        .fixture_annotation(
             CanvasAnnotationKind::Line,
             egui::pos2(40.0, 60.0),
             egui::pos2(80.0, 90.0),
@@ -416,18 +437,25 @@ fn delete_from_board_archives_image_placements_and_annotations() {
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let source_item = library
-        .persist_imported_image(
-            &image_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(10.0, 20.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(10.0, 20.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&image_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let annotation = library
-        .create_canvas_annotation(
+        .fixture_annotation(
             CanvasAnnotationKind::Line,
             egui::pos2(0.0, 0.0),
             egui::pos2(20.0, 20.0),
@@ -499,7 +527,7 @@ fn board_create_undo_and_redo_restore_the_same_identity_once() {
     let root = TempRoot::new("snappyref-create-board-history");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let original_id = library.list_boards().unwrap()[0].id;
-    let other = library.create_board("Other").unwrap();
+    let other = library.fixture_board("Other").unwrap();
     let mut app = test_app(Some(library.clone()));
 
     app.create_and_switch_board(false);
@@ -648,22 +676,24 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
     let root = TempRoot::new("snappyref-delete-after-queued-resolution");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     library.set_active_board(second.id).unwrap();
     let source = library
         .store_rgba_image("resolved", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let asset = library.create_asset(&source, "image/png", 1, 1, 4).unwrap();
     let loading = library
-        .persist_committed_loading_placement(
-            egui::Pos2::ZERO,
-            1.0,
-            1.0,
-            1.0,
-            crate::data::ContentResolutionSource::ExternalPath {
-                path: source.to_string_lossy().into_owned(),
-            },
-            Some("Loading".to_owned()),
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            library.new_committed_loading_placement(
+                egui::Pos2::ZERO,
+                1.0,
+                eframe::egui::vec2(1.0, 1.0),
+                crate::data::ContentResolutionSource::ExternalPath {
+                    path: source.to_string_lossy().into_owned(),
+                },
+                Some("Loading".to_owned()),
+            ),
         )
         .unwrap();
     library.set_active_board(first.id).unwrap();
@@ -671,6 +701,9 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = first.id;
     app.refresh_board_summaries();
+    app.board_editing
+        .accepted_board_document(&library, second.id)
+        .unwrap();
     app.board_editing.history.record_applied(
         second.id,
         crate::app::HistoryAction::document(
@@ -701,7 +734,7 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
     trigger_connection
         .execute_batch(
             "CREATE TRIGGER fail_resolution_history
-             BEFORE UPDATE ON board_document_history
+             BEFORE UPDATE ON board_history
              BEGIN
                  SELECT RAISE(ABORT, 'injected resolution-history failure');
              END;",
@@ -714,20 +747,9 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
     };
     assert!(
         app.board_editing
-            .history
-            .update_accepted_placement(second.id, resolved.clone())
+            .resolve_placements(second.id, vec![resolved.clone()])
+            .unwrap()
     );
-    app.board_editing
-        .persistence
-        .enqueue_document_unit(
-            second.id,
-            crate::canvas::CanvasDocumentChanges {
-                updated_placements: vec![resolved.clone()],
-                ..Default::default()
-            },
-            &app.board_editing.history,
-        )
-        .unwrap();
     std::thread::sleep(Duration::from_millis(100));
 
     app.request_board_delete(second.id, second.name.clone());
@@ -754,7 +776,7 @@ fn queued_board_identities_remain_visible_while_persistence_retries() {
     trigger_connection
         .execute_batch(
             "CREATE TRIGGER fail_board_history
-             BEFORE INSERT ON board_document_history
+             BEFORE INSERT ON board_history
              BEGIN
                  SELECT RAISE(ABORT, 'injected Board-history failure');
              END;",
@@ -789,7 +811,7 @@ fn deleting_active_queued_board_uses_accepted_queued_fallback() {
     trigger_connection
         .execute_batch(
             "CREATE TRIGGER fail_board_history
-             BEFORE INSERT ON board_document_history
+             BEFORE INSERT ON board_history
              BEGIN
                  SELECT RAISE(ABORT, 'injected Board-history failure');
              END;",
@@ -836,7 +858,7 @@ fn deleting_active_board_restores_accepted_fallback_content_while_persistence_re
     trigger_connection
         .execute_batch(
             "CREATE TRIGGER fail_board_history
-             BEFORE INSERT ON board_document_history
+             BEFORE INSERT ON board_history
              BEGIN
                  SELECT RAISE(ABORT, 'injected Board-history failure');
              END;",
@@ -912,7 +934,7 @@ fn undoing_board_create_reopens_accepted_previous_board_while_persistence_retrie
     trigger_connection
         .execute_batch(
             "CREATE TRIGGER fail_board_history
-             BEFORE INSERT ON board_document_history
+             BEFORE INSERT ON board_history
              BEGIN
                  SELECT RAISE(ABORT, 'injected Board-history failure');
              END;",
@@ -981,8 +1003,8 @@ fn undoing_board_create_reopens_accepted_previous_board_while_persistence_retrie
 fn generated_board_names_fill_smallest_visible_gap() {
     let root = TempRoot::new("snappyref-board-name-gap");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let board_2 = library.create_board("Board 2").unwrap();
-    library.create_board("Board 3").unwrap();
+    let board_2 = library.fixture_board("Board 2").unwrap();
+    library.fixture_board("Board 3").unwrap();
     {
         let connection = rusqlite::Connection::open(root.join("library.db")).unwrap();
         connection
@@ -1042,10 +1064,11 @@ fn command_number_switches_visible_board() {
     let ctx = egui::Context::default();
     let root = TempRoot::new("snappyref-cmd-number-board");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let second = library.create_board("Second").unwrap();
-    let third = library.create_board("Third").unwrap();
+    let second = library.fixture_board("Second").unwrap();
+    let third = library.fixture_board("Third").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = second.id;
+    app.refresh_board_summaries();
     library.set_active_board(second.id).unwrap();
 
     let _ = ctx.run_ui(
@@ -1084,7 +1107,7 @@ fn command_zero_switches_tenth_visible_board() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut tenth = None;
     for index in 2..=10 {
-        let board = library.create_board(&format!("Board {index}")).unwrap();
+        let board = library.fixture_board(&format!("Board {index}")).unwrap();
         if index == 10 {
             tenth = Some(board);
         }
@@ -1121,7 +1144,7 @@ fn board_shortcuts_are_suppressed_while_search_is_open() {
     let ctx = egui::Context::default();
     let root = TempRoot::new("snappyref-board-shortcut-search");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    library.create_board("Second").unwrap();
+    library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.search.overlay.open = true;
 
@@ -1154,7 +1177,7 @@ fn switching_boards_saves_previous_viewport_and_loads_target_viewport() {
     let root = TempRoot::new("snappyref-board-switch-viewport");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     library.set_active_board(second.id).unwrap();
     let mut second_session = library.load_user_session().unwrap();
     second_session.viewport.camera_pan_x = 75.0;
@@ -1163,6 +1186,7 @@ fn switching_boards_saves_previous_viewport_and_loads_target_viewport() {
     library.set_active_board(first.id).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = first.id;
+    app.refresh_board_summaries();
     app.canvas
         .apply_viewport_state(&crate::data::ViewportState {
             camera_pan_x: 22.0,
@@ -1192,7 +1216,7 @@ fn switching_boards_saves_previous_viewport_and_loads_target_viewport() {
 fn active_board_load_applies_viewport_without_reloading_global_settings() {
     let root = TempRoot::new("snappyref-active-load-settings-scope");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     library.set_active_board(second.id).unwrap();
     let mut stored_session = library.load_user_session().unwrap();
     stored_session.settings.placement_gap = 99.0;
@@ -1218,10 +1242,11 @@ fn board_delete_requires_confirmation_before_archiving_active_board() {
     let root = TempRoot::new("snappyref-confirm-delete-board");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     library.set_active_board(second.id).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = second.id;
+    app.refresh_board_summaries();
     app.sidebar_open = true;
 
     app.request_board_delete(second.id, second.name.clone());
@@ -1253,9 +1278,10 @@ fn board_delete_confirmation_keeps_sidebar_open_and_removes_inactive_board() {
     let root = TempRoot::new("snappyref-delete-inactive-board");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = first.id;
+    app.refresh_board_summaries();
     app.sidebar_open = true;
 
     app.request_board_delete(second.id, second.name.clone());
@@ -1282,24 +1308,31 @@ fn board_delete_undo_restores_document_view_history_and_active_fallback() {
     let root = TempRoot::new("snappyref-delete-board-history");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
-    let second = library.create_board("Reference").unwrap();
+    let second = library.fixture_board("Reference").unwrap();
     library.set_active_board(second.id).unwrap();
     let image_path = library
         .store_rgba_image("board-history", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let placement = library
-        .persist_imported_image(
-            &image_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(40.0, 60.0),
-            1.5,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(40.0, 60.0),
+                    1.5,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&image_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let annotation = library
-        .create_canvas_annotation(
+        .fixture_annotation(
             CanvasAnnotationKind::Textbox,
             egui::pos2(10.0, 20.0),
             egui::pos2(110.0, 80.0),
@@ -1314,7 +1347,15 @@ fn board_delete_undo_restores_document_view_history_and_active_fallback() {
         CanvasStackItem::Annotation(annotation.id),
         CanvasStackItem::Placement(placement.state.id),
     ];
-    library.save_canvas_stack_order(&mixed_stack).unwrap();
+    library
+        .fixture_board_document(
+            library.load_user_session().unwrap().active_board_id,
+            crate::canvas::CanvasDocumentChanges {
+                stack_order: Some(mixed_stack.to_vec()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
     let mut session = library.load_user_session().unwrap();
     session.viewport = crate::data::ViewportState {
         camera_pan_x: 125.0,
@@ -1326,9 +1367,13 @@ fn board_delete_undo_restores_document_view_history_and_active_fallback() {
 
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = second.id;
+    app.refresh_board_summaries();
     app.canvas.apply_viewport_state(&session.viewport);
     app.sidebar_open = true;
     app.context_menu_pos = Some(egui::pos2(12.0, 18.0));
+    app.board_editing
+        .accepted_board_document(&library, second.id)
+        .unwrap();
     app.board_editing.history.record_applied(
         second.id,
         crate::active_board::history::HistoryAction::document(
@@ -1425,9 +1470,10 @@ fn board_delete_modal_click_routes_through_egui_layers() {
     let root = TempRoot::new("snappyref-delete-modal-click-routing");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = second.id;
+    app.refresh_board_summaries();
     app.sidebar_open = true;
     app.request_board_delete(second.id, second.name.clone());
     let mut harness = app_harness(app, |ctx, app| {
@@ -1463,9 +1509,10 @@ fn board_delete_modal_click_routes_through_egui_layers() {
 fn board_sidebar_stays_clickable_after_delete_modal_confirms() {
     let root = TempRoot::new("snappyref-sidebar-click-after-delete");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = second.id;
+    app.refresh_board_summaries();
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Boards;
     app.request_board_delete(second.id, second.name.clone());
@@ -1498,9 +1545,10 @@ fn board_sidebar_name_click_switches_board_immediately() {
     let root = TempRoot::new("snappyref-sidebar-name-click-switch");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = first.id;
+    app.refresh_board_summaries();
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Boards;
     let mut harness = app_harness(app, |ctx, app| {
@@ -1518,10 +1566,11 @@ fn rapid_sidebar_board_name_clicks_keep_last_requested_board_active() {
     let root = TempRoot::new("snappyref-rapid-sidebar-board-clicks");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
-    let second = library.create_board("Second").unwrap();
-    let _third = library.create_board("Third").unwrap();
+    let second = library.fixture_board("Second").unwrap();
+    let _third = library.fixture_board("Third").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = first.id;
+    app.refresh_board_summaries();
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Boards;
     let mut harness = app_harness(app, |ctx, app| {
@@ -1551,9 +1600,10 @@ fn board_delete_modal_blocks_sidebar_board_switches_until_closed() {
     let root = TempRoot::new("snappyref-delete-modal-blocks-sidebar");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library.list_boards().unwrap()[0].clone();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = first.id;
+    app.refresh_board_summaries();
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Boards;
     app.request_board_delete(second.id, second.name.clone());
@@ -1587,7 +1637,7 @@ fn board_delete_modal_blocks_sidebar_board_switches_until_closed() {
 fn board_delete_modal_blocks_sidebar_tabs_and_settings() {
     let root = TempRoot::new("snappyref-delete-modal-blocks-sidebar-state");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Boards;
@@ -1633,6 +1683,7 @@ fn sidebar_board_lifecycle_clicks_create_switch_and_persist_active_board() {
     let first = library.list_boards().unwrap()[0].clone();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = first.id;
+    app.refresh_board_summaries();
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Boards;
     let mut harness = app_harness(app, |ctx, app| {
@@ -1665,7 +1716,7 @@ fn switching_boards_clears_selection_and_search() {
     let ctx = egui::Context::default();
     let root = TempRoot::new("snappyref-board-switch-cleanup");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     let asset = Asset {
         id: 1,
@@ -1698,13 +1749,19 @@ fn switching_boards_clears_selection_and_search() {
 fn search_keyboard_flow_owns_escape_through_app_render_path() {
     let root = TempRoot::new("snappyref-search-keyboard-routing");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.search
         .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
     let mut harness = app_harness(app, |ctx, app| {
         let screen_rect = test_screen_rect();
-        app.handle_search_shortcut(ctx);
+        app.search.handle_shortcut(
+            ctx,
+            app.library.as_ref(),
+            &mut app.canvas,
+            &mut app.status,
+            app.settings.canvas_image_max_side,
+        );
         app.handle_board_shortcuts(ctx);
         app.show_search_overlay(ctx, screen_rect);
     });
@@ -1754,12 +1811,28 @@ fn enter_places_unplaced_library_search_result_on_empty_active_board() {
         .store_rgba_image("library-only", &[255, 0, 0, 255], 1, 1)
         .unwrap();
     let library_item = library
-        .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&first_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
         .unwrap();
-    let empty_board = library.create_board("Empty").unwrap();
+    let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
+    app.refresh_board_summaries();
     app.search.overlay.open = true;
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: library_item.require_loaded_asset().id,
@@ -1802,23 +1875,46 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
         .store_rgba_image("second", &[0, 255, 0, 255], 1, 1)
         .unwrap();
     let first = library
-        .persist_imported_image(&first_path, "image/png", 1, 1, 4, egui::pos2(0.0, 0.0), 1.0)
-        .unwrap();
-    let second = library
-        .persist_imported_image(
-            &second_path,
-            "image/png",
-            1,
-            1,
-            4,
-            egui::pos2(20.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&first_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
-    let empty_board = library.create_board("Empty").unwrap();
+    let second = library
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(20.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&second_path, "image/png", 1, 1, 4, None)
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+    let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
+    app.refresh_board_summaries();
     app.search.overlay.open = true;
     app.search.overlay.results = vec![
         SearchResultAssetEntry {

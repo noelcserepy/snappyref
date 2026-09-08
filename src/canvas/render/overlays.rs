@@ -1,6 +1,5 @@
 use eframe::egui;
 
-use super::image_pass::selection_border_visible;
 use crate::canvas::geometry::{clamped_crop_screen_rect, screen_corners_for_placement};
 use crate::canvas::interaction::{
     hit_test_placement, placement_screen_rect, selected_placement_rotation_handle_screen_pos,
@@ -23,7 +22,6 @@ pub(crate) fn paint_provisional_placement_previews(
     state: &CanvasState,
 ) {
     let stroke = egui::Stroke::new(SELECTION_BORDER_WIDTH, IMAGE_SELECTION_BORDER_COLOR);
-    let mut painted = Vec::new();
     for image in state
         .document
         .placements
@@ -34,19 +32,12 @@ pub(crate) fn paint_provisional_placement_previews(
             continue;
         }
         let image_rect = placement_screen_rect(state, rect, image);
-        painted.push((image.state.id, image_rect));
         painter.rect_stroke(
             image_rect,
             crate::ui::theme::RADIUS_NONE,
             stroke,
             egui::StrokeKind::Outside,
         );
-    }
-    if !painted.is_empty() {
-        crate::diagnostics::search_drag_debug(format!(
-            "paint_provisional_placement_previews count={} rects={painted:?}",
-            painted.len()
-        ));
     }
 }
 
@@ -195,7 +186,7 @@ pub(super) fn selected_placement_border_paint_ids(
             state.is_selected(*placement_id)
                 && placement_screen_rect(state, rect, image).intersects(cull_rect)
                 && (image.lifecycle == PlacementLifecycle::Provisional
-                    || selection_border_visible(state, now_seconds))
+                    || state.selection_border_visible(now_seconds))
         })
         .collect()
 }
@@ -205,7 +196,7 @@ pub(crate) fn paint_selection_bounds(
     rect: egui::Rect,
     state: &CanvasState,
 ) {
-    if !selection_border_visible(state, painter.ctx().input(|input| input.time)) {
+    if !state.selection_border_visible(painter.ctx().input(|input| input.time)) {
         return;
     }
 
@@ -241,12 +232,8 @@ pub(crate) fn paint_guide_snap_indicators(
     rect: egui::Rect,
     state: &CanvasState,
 ) {
-    let pulse = crate::ui::motion::pulse_decay(
-        painter.ctx(),
-        egui::Id::new("guide_snap_pulse"),
-        state.guide_snap_pulse_started_at(),
-    )
-    .unwrap_or(0.0);
+    let pulse = crate::ui::motion::pulse_decay(painter.ctx(), state.guide_snap_pulse_started_at())
+        .unwrap_or(0.0);
     let stroke = egui::Stroke::new(
         1.0 + pulse,
         GUIDE_SNAP_COLOR.lerp_to_gamma(crate::ui::theme::TEXT, 0.35 * pulse),

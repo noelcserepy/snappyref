@@ -21,26 +21,21 @@ See [data locations and releases](docs/release-operations.md).
 semantic embedding subprocess/server, and Windows update replacement mode.
 [The macOS updater](src/bin/snappyref-updater.rs) is a separate binary.
 
-```sh
-cargo check --locked
-python3 scripts/check-refactor-behavior.py
-docs/skills/inspect/scripts/run-scenario.sh --list
-docs/skills/inspect/scripts/run-scenario.sh sample-image-import
-```
-
 Use [inspect](docs/skills/inspect/SKILL.md) for app behavior and rendered
-artifacts. Use [Windows checks](docs/skills/use-windows/SKILL.md) after syncing
-Mac changes. Configure the local pre-push gate once with
-`git config core.hooksPath .githooks`.
+artifacts, [perf-profiling](docs/skills/perf-profiling/SKILL.md) for measurement
+and refactor sequencing, and [Windows checks](docs/skills/use-windows/SKILL.md)
+for native Windows verification.
 
-Run performance alone, after behavior checks. Fast is the default and needs the local
-corpus and model assets described in [perf-profiling](docs/skills/perf-profiling/SKILL.md):
+## Development checks
+
+Configure the local [pre-push gate](.githooks/pre-push) once per clone:
 
 ```sh
-python3 scripts/perf_eval.py run --output perf-assets/runs/my-change
+git config core.hooksPath .githooks
 ```
 
-Use `--suite full` only when full profiling is explicitly requested.
+The hook owns the checks and runs them on push. Use `git push --no-verify` only
+for a deliberate bypass, such as a debugging branch that will not merge.
 
 ## Follow an operation
 

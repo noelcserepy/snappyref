@@ -40,20 +40,18 @@ impl PlacementCreation {
                 Err(error) => PreparationOutcome::Status(Some(error)),
             },
             ImagePrepResult::Cropped(cropped) => PreparationOutcome::Cropped(cropped),
-            ImagePrepResult::CacheLodBackfilled { asset_id, lod } => PreparationOutcome::Status(
-                context
-                    .residency
-                    .note_backfill_completed(asset_id, lod, None),
-            ),
+            ImagePrepResult::CacheLodBackfilled { asset_id, lod } => {
+                context.residency.note_backfill_completed(asset_id, lod);
+                PreparationOutcome::Status(None)
+            }
             ImagePrepResult::CacheLodBackfillFailed {
                 asset_id,
                 lod,
                 error,
-            } => PreparationOutcome::Status(context.residency.note_backfill_completed(
-                asset_id,
-                lod,
-                Some(error),
-            )),
+            } => {
+                context.residency.note_backfill_completed(asset_id, lod);
+                PreparationOutcome::Status(Some(error))
+            }
             ImagePrepResult::Failed {
                 target_board_id,
                 queue_id,
@@ -67,10 +65,8 @@ impl PlacementCreation {
                     .target_board_id
                     .is_none_or(|id| id == context.board_id)
                 {
-                    context
-                        .residency
-                        .note_failed_placement(context.canvas, placement_id);
                     if let Some(id) = placement_id {
+                        context.canvas.clear_image_lod_load(id);
                         context.canvas.clear_crop_pending(id);
                     }
                 }
@@ -135,9 +131,7 @@ impl PlacementCreation {
             None,
         );
         if board_id == context.board_id {
-            context
-                .residency
-                .note_failed_placement(context.canvas, Some(id));
+            context.canvas.clear_image_lod_load(id);
         }
         true
     }

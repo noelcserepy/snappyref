@@ -152,6 +152,7 @@ interface:
 
   guarantees:
     verified-updates-only: SnappyRef must apply only a signed manifest and integrity-verified app package.
+    actionable-release-coherent: The release reported as available, selected for preparation, and used for package verification must have the same verified identity. A later check reporting an older or installed release must not replace the package behind a retained available release.
     consistent-staged-layout-validation: Fresh preparation and recovery of staged updates after restart must enforce the same platform package layout, including the macOS updater helper. An incomplete staged package must not become ready to apply.
     app-package-only: App release packages must not contain the Library, workspace session, or Semantic Search Local Model Store.
     data-lifecycles-preserved: Update discovery, staging, apply, and recovery must preserve the Library, workspace session, and app-managed Local Model Store.

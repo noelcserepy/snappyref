@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use crate::data::{Asset, CanvasAnnotation, CanvasStackItem, Group, Placement};
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub(crate) struct DocumentHistory {
     histories_by_board: HashMap<i64, BoardHistory>,
+    changed_owners: std::cell::RefCell<std::collections::HashSet<i64>>,
 }
 
 #[derive(Clone, Default)]
@@ -152,21 +153,84 @@ pub(crate) struct HistoryApplied {
 }
 
 impl DocumentHistory {
+    pub(crate) fn remap_assets(&mut self, assets: &HashMap<i64, Asset>) {
+        for history in self.histories_by_board.values_mut() {
+            for action in history.undo_stack.iter_mut().chain(&mut history.redo_stack) {
+                match action {
+                    HistoryAction::Document(action) => {
+                        for change in &mut action.placements {
+                            for placement in change.before.iter_mut().chain(&mut change.after) {
+                                super::editing::remap_placement_asset(placement, assets);
+                            }
+                        }
+                    }
+                    HistoryAction::Board(
+                        BoardLifecycleHistoryAction::Created { document, .. }
+                        | BoardLifecycleHistoryAction::Deleted { document, .. },
+                    ) => {
+                        for placement in &mut document.placements {
+                            super::editing::remap_placement_asset(placement, assets);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    pub(crate) fn pending_snapshot(&self) -> Self {
+        Self {
+            histories_by_board: self
+                .changed_owners
+                .borrow_mut()
+                .drain()
+                .filter_map(|id| {
+                    self.histories_by_board
+                        .get(&id)
+                        .map(|history| (id, history.clone()))
+                })
+                .collect(),
+            changed_owners: Default::default(),
+        }
+    }
+
+    pub(crate) fn encode_owners(&self) -> Result<Vec<(i64, String)>, String> {
+        StoredDocumentHistory::from(self)
+            .histories_by_board
+            .into_iter()
+            .map(|(id, history)| {
+                serde_json::to_string(&history)
+                    .map(|payload| (id, payload))
+                    .map_err(|error| format!("failed to encode Board history: {error}"))
+            })
+            .collect()
+    }
+
+    pub(crate) fn decode_owners(
+        rows: Vec<(i64, String)>,
+        library: &crate::library::storage::Library,
+    ) -> Result<Self, String> {
+        let stored = StoredDocumentHistory {
+            histories_by_board: rows
+                .into_iter()
+                .map(|(id, payload)| {
+                    serde_json::from_str(&payload)
+                        .map(|history| (id, history))
+                        .map_err(|error| format!("failed to decode Board {id} history: {error}"))
+                })
+                .collect::<Result<_, _>>()?,
+        };
+        let assets = library.load_assets(&stored.loaded_asset_ids())?;
+        stored.into_history(&assets)
+    }
+
+    #[cfg(test)]
     pub(crate) fn encode(&self) -> Result<String, String> {
         serde_json::to_string(&StoredDocumentHistory::from(self))
             .map_err(|error| format!("failed to encode Board history: {error}"))
     }
 
-    pub(crate) fn decode(
-        payload: &str,
-        library: &crate::library::storage::Library,
-    ) -> Result<Self, String> {
-        let stored: StoredDocumentHistory = serde_json::from_str(payload)
-            .map_err(|error| format!("failed to decode Board history: {error}"))?;
-        let assets = library.load_assets(&stored.loaded_asset_ids())?;
-        stored.into_history(&assets)
-    }
-
+    #[cfg(test)]
     pub(crate) fn accepted_placement(&self, board_id: i64, placement_id: i64) -> Option<Placement> {
         let history = self.histories_by_board.get(&board_id)?;
         if let Some(change) = history
@@ -190,6 +254,7 @@ impl DocumentHistory {
         board_id: i64,
         placement: Placement,
     ) -> bool {
+        self.changed_owners.get_mut().insert(board_id);
         let Some(history) = self.histories_by_board.get_mut(&board_id) else {
             return false;
         };
@@ -222,6 +287,7 @@ impl DocumentHistory {
         for placement in &changes.updated_placements {
             changed |= self.update_accepted_placement(board_id, placement.clone());
         }
+        self.changed_owners.get_mut().insert(board_id);
         let Some(history) = self.histories_by_board.get_mut(&board_id) else {
             return changed;
         };
@@ -282,6 +348,7 @@ impl DocumentHistory {
         changed
     }
 
+    #[cfg(test)]
     pub(crate) fn fail_accepted_placement(
         &mut self,
         board_id: i64,
@@ -303,110 +370,15 @@ impl DocumentHistory {
             .then_some(placement)
     }
 
-    pub(crate) fn accepted_annotation(
-        &self,
-        board_id: i64,
-        annotation_id: i64,
-    ) -> Option<CanvasAnnotation> {
-        self.histories_by_board
-            .get(&board_id)?
-            .undo_stack
-            .iter()
-            .rev()
-            .filter_map(|action| match action {
-                HistoryAction::Document(action) => Some(&action.annotations),
-                HistoryAction::Board(_) => None,
-            })
-            .flatten()
-            .find(|change| {
-                change
-                    .after
-                    .as_ref()
-                    .or(change.before.as_ref())
-                    .is_some_and(|annotation| annotation.id == annotation_id)
-            })
-            .and_then(|change| change.after.clone())
-    }
-
-    pub(crate) fn accepted_groups(&self, board_id: i64) -> Option<Vec<Group>> {
-        let history = self.histories_by_board.get(&board_id)?;
-        let change = |action: &HistoryAction, direction| match action {
-            HistoryAction::Document(action) => action
-                .groups
-                .as_ref()
-                .and_then(|change| change.target(direction)),
-            _ => None,
-        };
-        // Reverted actions override earlier accepted state, just as snapshot replay does.
-        history
-            .redo_stack
-            .iter()
-            .rev()
-            .find_map(|action| change(action, HistoryDirection::Backward))
-            .or_else(|| {
-                history
-                    .undo_stack
-                    .iter()
-                    .rev()
-                    .find_map(|action| change(action, HistoryDirection::Forward))
-            })
-    }
-
-    pub(crate) fn accepted_stack_order(&self, board_id: i64) -> Option<Vec<CanvasStackItem>> {
-        self.histories_by_board
-            .get(&board_id)?
-            .undo_stack
-            .iter()
-            .rev()
-            .find_map(|action| match action {
-                HistoryAction::Document(action) => action
-                    .stack_order
-                    .as_ref()
-                    .and_then(|change| change.after.clone()),
-                HistoryAction::Board(_) => None,
-            })
-    }
-
-    pub(crate) fn apply_accepted_document_state(
-        &self,
-        board_id: i64,
-        document: &mut crate::data::BoardDocumentSnapshot,
-    ) {
-        let Some(history) = self.histories_by_board.get(&board_id) else {
-            return;
-        };
-        for action in &history.undo_stack {
-            apply_document_action(document, action, HistoryDirection::Forward);
-        }
-        for action in &history.redo_stack {
-            apply_document_action(document, action, HistoryDirection::Backward);
-        }
-    }
-
-    pub(crate) fn accepted_document_for_created_board(
-        &self,
-        board_id: i64,
-    ) -> Option<crate::data::BoardDocumentSnapshot> {
-        let history = self.histories_by_board.get(&board_id)?;
-        let mut document = history.undo_stack.iter().find_map(|action| match action {
-            HistoryAction::Board(BoardLifecycleHistoryAction::Created { document, .. })
-                if document.board.id == board_id =>
-            {
-                Some(document.clone())
-            }
-            _ => None,
-        })?;
-        self.apply_accepted_document_state(board_id, &mut document);
-        Some(document)
-    }
-
     pub(crate) fn record_applied(&mut self, board_id: i64, action: HistoryAction) {
+        self.changed_owners.get_mut().insert(board_id);
         let history = self.histories_by_board.entry(board_id).or_default();
         history.undo_stack.push(action);
         history.redo_stack.clear();
     }
 
     pub(crate) fn undo(&mut self, board_id: i64) -> Option<HistoryApplied> {
+        self.changed_owners.get_mut().insert(board_id);
         let history = self.histories_by_board.get_mut(&board_id)?;
         let action = history.undo_stack.pop()?;
         history.redo_stack.push(action.clone());
@@ -417,6 +389,7 @@ impl DocumentHistory {
     }
 
     pub(crate) fn redo(&mut self, board_id: i64) -> Option<HistoryApplied> {
+        self.changed_owners.get_mut().insert(board_id);
         let history = self.histories_by_board.get_mut(&board_id)?;
         let action = history.redo_stack.pop()?;
         history.undo_stack.push(action.clone());
@@ -435,6 +408,9 @@ impl DocumentHistory {
         if from_board_id == to_board_id {
             return;
         }
+        self.changed_owners
+            .get_mut()
+            .extend([from_board_id, to_board_id]);
         let action = {
             let source = self
                 .histories_by_board
@@ -454,6 +430,7 @@ impl DocumentHistory {
     }
 }
 
+#[cfg(test)]
 fn placement_change(
     action: &HistoryAction,
     placement_id: i64,
@@ -468,52 +445,6 @@ fn placement_change(
             .or(change.before.as_ref())
             .is_some_and(|placement| placement.state.id == placement_id)
     })
-}
-
-fn apply_document_action(
-    document: &mut crate::data::BoardDocumentSnapshot,
-    action: &HistoryAction,
-    direction: HistoryDirection,
-) {
-    let HistoryAction::Document(action) = action else {
-        return;
-    };
-    for change in &action.placements {
-        let Some(target) = change.placement_target(direction) else {
-            continue;
-        };
-        document
-            .placements
-            .retain(|placement| placement.state.id != target.state.id);
-        if !target.state.archived {
-            document.placements.push(target);
-        }
-    }
-    for change in &action.annotations {
-        let Some(target) = change.annotation_target(direction) else {
-            continue;
-        };
-        document
-            .annotations
-            .retain(|annotation| annotation.id != target.id);
-        if !target.archived {
-            document.annotations.push(target);
-        }
-    }
-    if let Some(groups) = action
-        .groups
-        .as_ref()
-        .and_then(|change| change.target(direction))
-    {
-        document.groups = groups;
-    }
-    if let Some(stack_order) = action
-        .stack_order
-        .as_ref()
-        .and_then(|change| change.target(direction))
-    {
-        document.stack_order = stack_order;
-    }
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -650,6 +581,7 @@ impl StoredDocumentHistory {
     /// whose Asset is missing degrades instead of failing the whole history.
     fn into_history(self, assets: &HashMap<i64, Asset>) -> Result<DocumentHistory, String> {
         Ok(DocumentHistory {
+            changed_owners: Default::default(),
             histories_by_board: self
                 .histories_by_board
                 .into_iter()

@@ -518,15 +518,6 @@ fn paint_image_overlay(
     }
 }
 
-pub(crate) fn selection_border_visible(state: &CanvasState, now_seconds: f64) -> bool {
-    let Some(drag_state) = state.interaction.placement_drag() else {
-        return true;
-    };
-    !drag_state.moved
-        || now_seconds - drag_state.last_movement_seconds
-            >= crate::canvas::SELECTION_BORDER_REAPPEAR_SECONDS
-}
-
 fn paint_image_mesh(
     painter: &egui::Painter,
     state: &CanvasState,

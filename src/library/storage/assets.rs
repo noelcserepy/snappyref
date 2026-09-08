@@ -422,6 +422,7 @@ impl Library {
             )
             .map_err(|error| format!("failed to delete duplicate embeddings: {error}"))?;
 
+        super::durability::remap_board_history_assets(&transaction, &remaps)?;
         let delete_sql = format!("DELETE FROM assets WHERE id IN ({placeholders})");
         let duplicate_assets_removed = transaction
             .execute(&delete_sql, params_from_iter(duplicate_ids.iter().copied()))
@@ -538,5 +539,69 @@ impl Library {
             .map_err(|error| format!("failed to commit asset archive transaction: {error}"))?;
 
         Ok(())
+    }
+}
+
+fn load_or_insert_exact_asset(
+    transaction: &Transaction<'_>,
+    stored_path: &Path,
+    mime_type: &str,
+    width: u32,
+    height: u32,
+    file_size: u64,
+    original_sha256: Option<&str>,
+) -> Result<Asset, String> {
+    if let Some(original_sha256) = original_sha256
+        && let Some(asset) = load_exact_asset_for_original(transaction, file_size, original_sha256)?
+    {
+        return Ok(asset);
+    }
+
+    let asset = insert_asset_row(
+        transaction,
+        stored_path,
+        mime_type,
+        width,
+        height,
+        file_size,
+        original_sha256,
+    )?;
+    Ok(asset)
+}
+
+impl Library {
+    /// Registers reusable Asset content independently of Board membership and geometry.
+    /// Exact reuse removes the redundant managed original.
+    pub fn register_original(
+        &self,
+        stored_path: &Path,
+        mime_type: &str,
+        width: u32,
+        height: u32,
+        file_size: u64,
+        original_sha256: Option<&str>,
+    ) -> Result<Asset, String> {
+        let mut connection = self.connection()?;
+        let transaction = write_transaction(&mut connection, "asset registration")?;
+        let asset = load_or_insert_exact_asset(
+            &transaction,
+            stored_path,
+            mime_type,
+            width,
+            height,
+            file_size,
+            original_sha256,
+        )?;
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit imported asset: {error}"))?;
+        if asset.original_path != stored_path {
+            match std::fs::remove_file(stored_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("failed to remove duplicate original: {error}")),
+            }
+        }
+        Ok(asset)
     }
 }

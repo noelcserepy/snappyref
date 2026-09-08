@@ -431,6 +431,9 @@ fn migrate_current_representations(
         ("board_items", "content_resolution_intent"),
         ("board_document_history", "payload"),
     ] {
+        if !table_exists(connection, table)? {
+            continue;
+        }
         let mut statement = connection
             .prepare(&format!(
                 "SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL"
@@ -586,8 +589,8 @@ impl Library {
                     payload TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS board_document_history (
-                    id      INTEGER PRIMARY KEY CHECK (id = 1),
+                CREATE TABLE IF NOT EXISTS board_history (
+                    board_id INTEGER PRIMARY KEY,
                     payload TEXT NOT NULL
                 );
 
@@ -619,6 +622,7 @@ impl Library {
         ensure_board_items_asset_id_nullable(&transaction)?;
         ensure_canvas_stack_items_populated(&transaction)?;
         migrate_current_representations(&transaction, should_migrate_default_board_viewport)?;
+        migrate_board_history_owners(&transaction)?;
         transaction
             .commit()
             .map_err(|error| format!("failed to commit schema upgrade: {error}"))?;
@@ -626,4 +630,44 @@ impl Library {
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(|error| format!("failed to enable foreign keys: {error}"))
     }
+}
+
+// Split the supported single history payload once, inside the schema transaction.
+fn migrate_board_history_owners(connection: &Connection) -> Result<(), String> {
+    if !table_exists(connection, "board_document_history")? {
+        return Ok(());
+    }
+    let mut statement = connection
+        .prepare("SELECT payload FROM board_document_history")
+        .map_err(|error| format!("failed to read legacy Board history: {error}"))?;
+    let payloads = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("failed to query legacy Board history: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect legacy Board history: {error}"))?;
+    drop(statement);
+    for payload in payloads {
+        let value: serde_json::Value = serde_json::from_str(&payload)
+            .map_err(|error| format!("cannot upgrade Board history: {error}"))?;
+        let owners = value
+            .get("histories_by_board")
+            .and_then(serde_json::Value::as_object)
+            .ok_or("cannot upgrade Board history: missing owners")?;
+        for (owner, history) in owners {
+            let owner: i64 = owner
+                .parse()
+                .map_err(|error| format!("invalid history owner: {error}"))?;
+            connection
+                .execute(
+                    "INSERT INTO board_history (board_id, payload) VALUES (?1, ?2)",
+                    params![owner, history.to_string()],
+                )
+                .map_err(|error| {
+                    format!("failed to upgrade Board history owner {owner}: {error}")
+                })?;
+        }
+    }
+    connection
+        .execute_batch("DROP TABLE board_document_history;")
+        .map_err(|error| format!("failed to finish Board history upgrade: {error}"))
 }

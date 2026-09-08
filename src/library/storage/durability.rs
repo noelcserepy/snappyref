@@ -17,7 +17,7 @@ impl Library {
         operation: &BoardDurabilityOperation,
         history: &crate::active_board::history::DocumentHistory,
     ) -> Result<(), String> {
-        let history_payload = history.encode()?;
+        let history_rows = history.encode_owners()?;
         let mut connection = self.connection()?;
         let transaction = write_transaction(&mut connection, "Board durability")?;
         self.persist_document_identity(&transaction)?;
@@ -30,41 +30,29 @@ impl Library {
                 persist_lifecycle_change(&transaction, change)?;
             }
         }
-        transaction
-            .execute(
-                "INSERT INTO board_document_history (id, payload)
-                 VALUES (1, ?1)
-                 ON CONFLICT(id) DO UPDATE SET payload = excluded.payload",
-                params![history_payload],
-            )
-            .map_err(|error| format!("failed to persist Board history: {error}"))?;
+        for (board_id, payload) in history_rows {
+            transaction
+                .execute(
+                    "INSERT INTO board_history (board_id, payload) VALUES (?1, ?2)
+                 ON CONFLICT(board_id) DO UPDATE SET payload = excluded.payload",
+                    params![board_id, payload],
+                )
+                .map_err(|error| format!("failed to persist Board history: {error}"))?;
+        }
         transaction
             .commit()
             .map_err(|error| format!("failed to commit Board durability transaction: {error}"))
     }
 
     #[cfg(test)]
-    pub(crate) fn persist_lifecycle_change(
+    pub(crate) fn fixture_board_document(
         &self,
-        change: &crate::active_board::persistence::BoardLifecyclePersistence,
-    ) -> Result<(), String> {
-        self.persist_board_unit(
-            &BoardDurabilityOperation::Lifecycle(change.clone()),
-            &self.load_document_history()?,
-        )
-    }
-
-    #[cfg(test)]
-    pub(super) fn fixture_document_changes(
-        &self,
+        board_id: i64,
         changes: crate::canvas::CanvasDocumentChanges,
     ) -> Result<(), String> {
         self.persist_board_unit(
-            &BoardDurabilityOperation::Document {
-                board_id: self.load_user_session()?.active_board_id,
-                changes,
-            },
-            &self.load_document_history()?,
+            &BoardDurabilityOperation::Document { board_id, changes },
+            &Default::default(),
         )
     }
 
@@ -72,16 +60,17 @@ impl Library {
         &self,
     ) -> Result<crate::active_board::history::DocumentHistory, String> {
         let connection = self.connection()?;
-        let payload = match connection.query_row(
-            "SELECT payload FROM board_document_history WHERE id = 1",
-            [],
-            |row| row.get::<_, String>(0),
-        ) {
-            Ok(payload) => payload,
-            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(Default::default()),
-            Err(error) => return Err(format!("failed to load Board history: {error}")),
-        };
-        crate::active_board::history::DocumentHistory::decode(&payload, self)
+        let mut statement = connection
+            .prepare("SELECT board_id, payload FROM board_history")
+            .map_err(|error| format!("failed to load Board history: {error}"))?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|error| format!("failed to query Board history: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to read Board history: {error}"))?;
+        drop(statement);
+        drop(connection);
+        crate::active_board::history::DocumentHistory::decode_owners(rows, self)
     }
 }
 
@@ -199,6 +188,59 @@ fn persist_lifecycle_change(
             active_board_id,
         } => {
             super::boards::restore_board_document_rows(transaction, document, *active_board_id)?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn remap_board_history_assets(
+    transaction: &Transaction<'_>,
+    remaps: &std::collections::HashMap<i64, i64>,
+) -> Result<(), String> {
+    fn remap(value: &mut serde_json::Value, remaps: &std::collections::HashMap<i64, i64>) -> bool {
+        let mut changed = false;
+        match value {
+            serde_json::Value::Object(fields) => {
+                if let Some(id) = fields.get_mut("asset_id") {
+                    if let Some(replacement) = id.as_i64().and_then(|id| remaps.get(&id)) {
+                        *id = (*replacement).into();
+                        changed = true;
+                    }
+                }
+                for child in fields.values_mut() {
+                    changed |= remap(child, remaps);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for child in values {
+                    changed |= remap(child, remaps);
+                }
+            }
+            _ => {}
+        }
+        changed
+    }
+    let mut statement = transaction
+        .prepare("SELECT board_id, payload FROM board_history")
+        .map_err(|error| format!("failed to query history for Asset dedupe: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("failed to read history for Asset dedupe: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect history for Asset dedupe: {error}"))?;
+    drop(statement);
+    for (board_id, payload) in rows {
+        let mut value = serde_json::from_str(&payload)
+            .map_err(|error| format!("failed to decode history for Asset dedupe: {error}"))?;
+        if remap(&mut value, remaps) {
+            transaction
+                .execute(
+                    "UPDATE board_history SET payload = ?1 WHERE board_id = ?2",
+                    params![value.to_string(), board_id],
+                )
+                .map_err(|error| format!("failed to remap history for Asset dedupe: {error}"))?;
         }
     }
     Ok(())

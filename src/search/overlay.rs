@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use eframe::egui;
 
@@ -180,20 +180,7 @@ impl SearchController {
                             }
                         }
                         if response.changed() {
-                            self.overlay.last_query_edit_at = Some(Instant::now());
-                            self.overlay
-                                .result_selection
-                                .select_initial(self.overlay.results.len());
-                            self.overlay.active_recent_search_index = 0;
-                            self.overlay.result_limit = SEARCH_RESULT_PAGE_SIZE;
-                            self.overlay.has_more_results = false;
-                            self.pending_result_selection = None;
-                            if self.overlay.query.trim().is_empty()
-                                && self.overlay.image_pivot.is_none()
-                            {
-                                self.overlay.results.clear();
-                                self.overlay.result_selection.clear();
-                            }
+                            self.query_edited();
                         }
 
                         if !compact_for_drag {
@@ -227,7 +214,6 @@ impl SearchController {
                                 let mut scrolled_lead_result = false;
                                 let selected_indices =
                                     self.overlay.result_selection.selected().to_vec();
-                                let lead_index = self.overlay.result_selection.lead();
                                 egui::Frame::new()
                                     .inner_margin(egui::Margin {
                                         left: body_h_pad as i8,
@@ -257,14 +243,12 @@ impl SearchController {
                                                     {
                                                         let index = row_index * grid_layout.columns
                                                             + column_index;
-                                                        let lead = Some(index) == lead_index;
                                                         let selected =
                                                             selected_indices.contains(&index);
                                                         let response = search_result_tile(
                                                             ui,
                                                             group,
                                                             &mut self.overlay.asset_preview_cache,
-                                                            lead,
                                                             selected,
                                                             grid_layout.tile_width,
                                                         );
@@ -298,12 +282,6 @@ impl SearchController {
                                                             ));
                                                         }
                                                         if response.drag_started() {
-                                                            crate::diagnostics::search_drag_debug(
-                                                                format!(
-                                                                    "overlay tile drag_started index={index} response_rect={:?}",
-                                                                    response.rect
-                                                                ),
-                                                            );
                                                             drag_start_index = Some(index);
                                                         }
                                                     }
@@ -387,10 +365,6 @@ impl SearchController {
                 .into_iter()
                 .map(|placement| placement.state.id)
                 .collect::<Vec<_>>();
-            crate::diagnostics::search_drag_debug(format!(
-                "overlay commit primary_clicked asset_ids={:?} provisional_ids={provisional_placement_ids:?}",
-                drag.asset_ids
-            ));
             drop_request = Some(SearchDropRequest {
                 asset_ids: drag.asset_ids,
                 provisional_placement_ids,
@@ -405,19 +379,10 @@ impl SearchController {
                     .into_iter()
                     .map(|placement| placement.state.id)
                     .collect::<Vec<_>>();
-                crate::diagnostics::search_drag_debug(format!(
-                    "overlay commit pointer_released asset_ids={:?} provisional_ids={provisional_placement_ids:?}",
-                    drag.asset_ids
-                ));
                 drop_request = Some(SearchDropRequest {
                     asset_ids: drag.asset_ids,
                     provisional_placement_ids,
                 });
-            } else {
-                crate::diagnostics::search_drag_debug(format!(
-                    "overlay pointer_released inside_overlay asset_ids={:?}",
-                    drag.asset_ids
-                ));
             }
             ctx.request_repaint_after(Duration::from_millis(16));
         }

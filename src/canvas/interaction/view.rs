@@ -337,8 +337,7 @@ impl CanvasState {
         self.interaction.selected_group_ids = self.groups().iter().map(|g| g.id).collect();
     }
 
-    #[cfg(test)]
-    pub fn selection_border_visible_for_test(&self, now_seconds: f64) -> bool {
+    pub(crate) fn selection_border_visible(&self, now_seconds: f64) -> bool {
         let Some(drag_state) = self.interaction.placement_drag() else {
             return true;
         };

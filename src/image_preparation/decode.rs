@@ -5,10 +5,6 @@ use std::process::Command;
 #[cfg(not(test))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use image::codecs::jpeg::JpegEncoder;
-use image::codecs::webp::WebPEncoder;
-use image::{ExtendedColorType, ImageEncoder};
-
 use crate::data::CanvasImageLod;
 use crate::image_preparation::image_formats::decode_image_file_with_max_side;
 use crate::library::storage::Library;
@@ -259,35 +255,9 @@ fn write_prepared_canvas_cache(
     width: u32,
     height: u32,
 ) -> Result<(PathBuf, &'static str), String> {
-    let (cache_path, extension) = if rgba.chunks_exact(4).all(|pixel| pixel[3] == u8::MAX) {
-        (rgba_output_path.with_extension("jpg"), "jpg")
-    } else {
-        (rgba_output_path.with_extension("webp"), "webp")
-    };
-    let file = std::fs::File::create(&cache_path)
-        .map_err(|error| format!("failed to create imageprep helper cache: {error}"))?;
-    let writer = std::io::BufWriter::new(file);
-    match extension {
-        "jpg" => {
-            let rgb = rgba_to_rgb_for_imageprep_cache(rgba);
-            JpegEncoder::new_with_quality(writer, 82)
-                .write_image(&rgb, width, height, ExtendedColorType::Rgb8)
-                .map_err(|error| format!("failed to write imageprep helper JPEG cache: {error}"))?;
-        }
-        "webp" => {
-            WebPEncoder::new_lossless(writer)
-                .write_image(rgba, width, height, ExtendedColorType::Rgba8)
-                .map_err(|error| format!("failed to write imageprep helper WebP cache: {error}"))?;
-        }
-        _ => unreachable!("cache extension is selected locally"),
-    }
+    let encoding = super::cache_encoding::CanvasImageCacheEncoding::for_pixels(rgba);
+    let extension = encoding.extension();
+    let cache_path = rgba_output_path.with_extension(extension);
+    encoding.write(&cache_path, rgba, width, height, CanvasImageLod::Working)?;
     Ok((cache_path, extension))
-}
-
-fn rgba_to_rgb_for_imageprep_cache(rgba: &[u8]) -> Vec<u8> {
-    let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
-    for pixel in rgba.chunks_exact(4) {
-        rgb.extend_from_slice(&pixel[..3]);
-    }
-    rgb
 }

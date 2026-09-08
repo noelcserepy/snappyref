@@ -153,27 +153,33 @@ mod tests {
         let reopened = Library::initialize(root.to_path_buf()).unwrap();
         assert_eq!(reopened.load_groups().unwrap(), vec![group.clone()]);
         let mut restored_history = reopened.load_document_history().unwrap();
+        let restored_action = restored_history.undo(1).unwrap();
+        let crate::active_board::history::HistoryAction::Document(action) = restored_action.action
+        else {
+            panic!("expected document history")
+        };
+        assert_eq!(action.groups.as_ref().unwrap().before, Some(vec![]));
         assert_eq!(
-            restored_history.accepted_groups(1),
+            action.groups.as_ref().unwrap().after,
             Some(vec![group.clone()])
         );
-        restored_history.undo(1).unwrap();
-        assert_eq!(restored_history.accepted_groups(1), Some(vec![]));
-        restored_history.redo(1).unwrap();
-        assert_eq!(
-            restored_history.accepted_groups(1),
-            Some(vec![group.clone()])
-        );
-        reopened.connection().unwrap().execute_batch("CREATE TRIGGER reject_history BEFORE UPDATE ON board_document_history BEGIN SELECT RAISE(ABORT, 'test failure'); END;").unwrap();
+        assert!(restored_history.redo(1).is_some());
+        reopened.connection().unwrap().execute_batch("CREATE TRIGGER reject_history BEFORE UPDATE ON board_history BEGIN SELECT RAISE(ABORT, 'test failure'); END;").unwrap();
         assert!(
             reopened
-                .persist_board_unit(&operation(vec![]), &DocumentHistory::default())
+                .persist_board_unit(&operation(vec![]), &restored_history)
                 .is_err()
         );
         assert_eq!(reopened.load_groups().unwrap(), vec![group.clone()]);
         assert_eq!(
-            reopened.load_document_history().unwrap().accepted_groups(1),
-            Some(vec![group])
+            reopened
+                .load_document_history()
+                .unwrap()
+                .undo(1)
+                .unwrap()
+                .action
+                .label(),
+            history.undo(1).unwrap().action.label()
         );
     }
 }

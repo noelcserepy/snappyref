@@ -22,37 +22,37 @@ touch "$tmp_dir/root/SnappyRef/SnappyRef.app/Contents/Info.plist"
 touch "$tmp_dir/root/SnappyRef/SnappyRef.app/Contents/Resources/snappyref.icns"
 make_zip "$tmp_dir/mac-ok.zip" SnappyRef
 
-"$repo_root/scripts/check-release-archive.sh" \
+python3 "$repo_root/scripts/release_archive.py" --app-archive \
   "$tmp_dir/mac-ok.zip" \
-  "SnappyRef/SnappyRef.app/Contents/MacOS/snappyref"
+  --platform macos
 
 mkdir -p "$tmp_dir/root/SnappyRef/SnappyRef.app/Contents/Resources/models/siglip2"
 touch "$tmp_dir/root/SnappyRef/SnappyRef.app/Contents/Resources/models/siglip2/tokenizer.json"
 make_zip "$tmp_dir/mac-models.zip" SnappyRef
 
-if "$repo_root/scripts/check-release-archive.sh" \
+if python3 "$repo_root/scripts/release_archive.py" --app-archive \
   "$tmp_dir/mac-models.zip" \
-  "SnappyRef/SnappyRef.app/Contents/MacOS/snappyref" 2>"$tmp_dir/mac-models.err"; then
+  --platform macos 2>"$tmp_dir/mac-models.err"; then
   echo "expected mac archive with in-bundle models to fail" >&2
   exit 1
 fi
-grep -q "in-bundle models directory" "$tmp_dir/mac-models.err"
+grep -q "Resources/models" "$tmp_dir/mac-models.err"
 
 rm -rf "$tmp_dir/root"
 mkdir -p "$tmp_dir/root/SnappyRef"
 touch "$tmp_dir/root/SnappyRef/snappyref.exe"
 make_zip "$tmp_dir/windows-ok.zip" SnappyRef
 
-"$repo_root/scripts/check-release-archive.sh" \
+python3 "$repo_root/scripts/release_archive.py" --app-archive \
   "$tmp_dir/windows-ok.zip" \
-  "SnappyRef/snappyref.exe"
+  --platform windows
 
 touch "$tmp_dir/root/SnappyRef/snappyref-updater.exe"
 make_zip "$tmp_dir/windows-helper.zip" SnappyRef
 
-if "$repo_root/scripts/check-release-archive.sh" \
+if python3 "$repo_root/scripts/release_archive.py" --app-archive \
   "$tmp_dir/windows-helper.zip" \
-  "SnappyRef/snappyref.exe" 2>"$tmp_dir/windows-helper.err"; then
+  --platform windows 2>"$tmp_dir/windows-helper.err"; then
   echo "expected windows archive with updater helper to fail" >&2
   exit 1
 fi
@@ -64,10 +64,10 @@ touch "$tmp_dir/root/SnappyRef/snappyref.exe"
 touch "$tmp_dir/root/SnappyRef/models/siglip2/tokenizer.json"
 make_zip "$tmp_dir/windows-models.zip" SnappyRef
 
-if "$repo_root/scripts/check-release-archive.sh" \
+if python3 "$repo_root/scripts/release_archive.py" --app-archive \
   "$tmp_dir/windows-models.zip" \
-  "SnappyRef/snappyref.exe" 2>"$tmp_dir/windows-models.err"; then
+  --platform windows 2>"$tmp_dir/windows-models.err"; then
   echo "expected windows archive with Local Model Store files to fail" >&2
   exit 1
 fi
-grep -q "models directory" "$tmp_dir/windows-models.err"
+grep -q "SnappyRef/models" "$tmp_dir/windows-models.err"

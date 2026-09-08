@@ -1,32 +1,20 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-manifest=${1:-"$repo_root/tests/fixtures/external/manifest.json"}
-fixture_root=${SNAPPYREF_EXTERNAL_FIXTURE_DIR:-"$repo_root/tests/fixtures/external/files"}
-snappyref_bin=${SNAPPYREF_BIN:-"$repo_root/target/release/snappyref"}
-
-if [[ ! -f "$manifest" ]]; then
-  echo "fixture manifest not found: $manifest" >&2
-  exit 2
-fi
-
-if [[ ! -x "$snappyref_bin" ]]; then
-  echo "release binary not found: $snappyref_bin" >&2
-  echo "run: cargo build --release" >&2
-  exit 2
-fi
-
-python3 - "$manifest" "$fixture_root" "$snappyref_bin" <<'PY'
+#!/usr/bin/env python3
 import json
 import pathlib
 import re
 import subprocess
-import sys
+import argparse
+import os
 
-manifest_path = pathlib.Path(sys.argv[1])
-fixture_root = pathlib.Path(sys.argv[2])
-snappyref_bin = pathlib.Path(sys.argv[3])
+root = pathlib.Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser(description="Check external fixture dimensions and expected decode failures.")
+parser.add_argument('manifest', nargs='?', type=pathlib.Path, default=root / 'tests/fixtures/external/manifest.json')
+parser.add_argument('--fixtures', type=pathlib.Path, default=os.environ.get('SNAPPYREF_EXTERNAL_FIXTURE_DIR', root / 'tests/fixtures/external/files'))
+parser.add_argument('--binary', type=pathlib.Path, default=os.environ.get('SNAPPYREF_BIN', root / 'target/release/snappyref'))
+args = parser.parse_args()
+manifest_path = args.manifest
+fixture_root = args.fixtures
+snappyref_bin = args.binary
 fixtures = json.loads(manifest_path.read_text())
 
 failed = False
@@ -80,4 +68,3 @@ for fixture in fixtures:
 
 if failed:
     raise SystemExit(1)
-PY

@@ -17,22 +17,30 @@ fn inspect_search_result_drag_to_canvas_writes_artifact() {
         .store_rgba_image("first", &vec![255; 120 * 80 * 4], 120, 80)
         .unwrap();
     let source = library
-        .persist_imported_image(
-            &source_path,
-            "image/png",
-            120,
-            80,
-            4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&source_path, "image/png", 120, 80, 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
-    library.archive_placements(&[source.state.id]).unwrap();
-    let empty_board = library.create_board("Empty").unwrap();
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[source.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[source.state.id]).contains(id))).collect()), ..Default::default()}).unwrap();
+    let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
 
     let mut app = test_app(Some(library.clone()));
     app.active_board_id = empty_board.id;
+    app.refresh_board_summaries();
     app.search.overlay.open = true;
     app.search.overlay.results = vec![SearchResultAssetEntry {
         asset_id: source.require_loaded_asset().id,
@@ -349,7 +357,7 @@ fn inspect_delete_board_modal_flash_writes_artifact() {
 
     let root = TempRoot::new("snappyref-inspect-delete-board-flash");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let second = library.create_board("Second").unwrap();
+    let second = library.fixture_board("Second").unwrap();
     let mut app = test_app(Some(library.clone()));
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Boards;
@@ -464,16 +472,28 @@ fn inspect_board_lifecycle_undo_redo_writes_artifact() {
         )
         .unwrap();
     let placement = library
-        .persist_imported_image(
-            &source,
-            "image/png",
-            140,
-            100,
-            140 * 100 * 4,
-            egui::pos2(80.0, -30.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(80.0, -30.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&source, "image/png", 140, 100, 140 * 100 * 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
+    harness
+        .state_mut()
+        .board_editing
+        .documents
+        .restore_document(&library.load_board_document(created.id).unwrap());
     let expected_view = crate::data::ViewportState {
         camera_pan_x: 90.0,
         camera_pan_y: -45.0,
@@ -1005,17 +1025,31 @@ fn inspect_search_palette_footer_writes_artifact() {
             .store_rgba_image(name, &solid_rgba(color, width, height), width, height)
             .unwrap();
         let placement = library
-            .persist_imported_image(
-                &path,
-                "image/png",
-                width,
-                height,
-                width as u64 * height as u64 * 4,
-                egui::pos2(index as f32 * 32.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(index as f32 * 32.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(
+                            &path,
+                            "image/png",
+                            width,
+                            height,
+                            width as u64 * height as u64 * 4,
+                            None,
+                        )
+                        .unwrap(),
+                ),
             )
             .unwrap();
-        library.archive_placements(&[placement.state.id]).unwrap();
+        library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[placement.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[placement.state.id]).contains(id))).collect()), ..Default::default()}).unwrap();
         result_placements.push(placement);
     }
 
@@ -1094,14 +1128,21 @@ fn inspect_blue_image_search_drag_writes_artifact() {
         )
         .unwrap();
     let blue = library
-        .persist_imported_image(
-            &blue_path,
-            "image/png",
-            140,
-            240,
-            140 * 240 * 4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&blue_path, "image/png", 140, 240, 140 * 240 * 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
     let result_specs = [
@@ -1115,17 +1156,31 @@ fn inspect_blue_image_search_drag_writes_artifact() {
             .store_rgba_image(name, &solid_rgba(color, width, height), width, height)
             .unwrap();
         let placement = library
-            .persist_imported_image(
-                &path,
-                "image/png",
-                width,
-                height,
-                width as u64 * height as u64 * 4,
-                egui::pos2(index as f32 * 32.0, 0.0),
-                1.0,
+            .fixture_placement(
+                library.load_user_session().unwrap().active_board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(index as f32 * 32.0, 0.0),
+                        1.0,
+                        0.0,
+                        0,
+                        false,
+                    ),
+                    library
+                        .register_original(
+                            &path,
+                            "image/png",
+                            width,
+                            height,
+                            width as u64 * height as u64 * 4,
+                            None,
+                        )
+                        .unwrap(),
+                ),
             )
             .unwrap();
-        library.archive_placements(&[placement.state.id]).unwrap();
+        library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[placement.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[placement.state.id]).contains(id))).collect()), ..Default::default()}).unwrap();
         result_placements.push(placement);
     }
 
@@ -1300,14 +1355,21 @@ fn inspect_placement_click_hold_flash_writes_artifact() {
         )
         .unwrap();
     let blue = library
-        .persist_imported_image(
-            &blue_path,
-            "image/png",
-            140,
-            240,
-            140 * 240 * 4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&blue_path, "image/png", 140, 240, 140 * 240 * 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
 
@@ -1359,7 +1421,7 @@ fn inspect_placement_click_hold_flash_writes_artifact() {
         harness
             .state()
             .canvas
-            .selection_border_visible_for_test(held_time_seconds),
+            .selection_border_visible(held_time_seconds),
     );
 
     scenario.action("primary release on blue placement", click_screen);
@@ -1409,14 +1471,21 @@ fn inspect_delete_undo_redo_placement_writes_artifact() {
         )
         .unwrap();
     let blue = library
-        .persist_imported_image(
-            &blue_path,
-            "image/png",
-            140,
-            100,
-            140 * 100 * 4,
-            egui::pos2(0.0, 0.0),
-            1.0,
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(0.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&blue_path, "image/png", 140, 100, 140 * 100 * 4, None)
+                    .unwrap(),
+            ),
         )
         .unwrap();
 
@@ -1595,30 +1664,32 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
         .store_rgba_image("crop-source", &source_rgba, width, height)
         .unwrap();
     let loading = library
-        .persist_committed_loading_placement(
-            egui::Pos2::ZERO,
-            1.0,
-            width as f32,
-            height as f32,
-            crate::data::ContentResolutionSource::ExternalPath {
-                path: source_path.to_string_lossy().into_owned(),
-            },
-            Some("Loading".to_owned()),
-        )
-        .unwrap();
-    let source = library
-        .persist_imported_image_resolving_placement(
+        .fixture_placement(
             library.load_user_session().unwrap().active_board_id,
-            loading.state.id,
-            &source_path,
-            "image/png",
-            width,
-            height,
-            source_rgba.len() as u64,
-            egui::Pos2::ZERO,
-            1.0,
+            library.new_committed_loading_placement(
+                egui::Pos2::ZERO,
+                1.0,
+                eframe::egui::vec2(width as f32, height as f32),
+                crate::data::ContentResolutionSource::ExternalPath {
+                    path: source_path.to_string_lossy().into_owned(),
+                },
+                Some("Loading".to_owned()),
+            ),
         )
         .unwrap();
+    let source = crate::data::Placement::loaded(
+        crate::data::PlacementState::new(loading.state.id, egui::Pos2::ZERO, 1.0, 0.0, 0, false),
+        library
+            .register_original(
+                &source_path,
+                "image/png",
+                width,
+                height,
+                source_rgba.len() as u64,
+                None,
+            )
+            .unwrap(),
+    );
     let source_asset_id = source.require_loaded_asset().id;
 
     let mut app = test_app(Some(library.clone()));
@@ -1949,15 +2020,9 @@ fn inspect_pending_drop_batch_undo_writes_artifact() {
     );
     scenario.capture_screen("screen-002-accepted-loading-batch", &mut harness);
 
-    let loaded_placement = library
-        .persist_imported_image_resolving_placement(
-            harness.state().active_board_id,
+    let loaded_placement = crate::data::Placement::loaded(
+        crate::data::PlacementState::new(
             placement_ids[0],
-            &sources[0].0,
-            "image/png",
-            sources[0].2,
-            sources[0].3,
-            std::fs::metadata(&sources[0].0).unwrap().len(),
             harness
                 .state()
                 .canvas
@@ -1967,8 +2032,21 @@ fn inspect_pending_drop_batch_undo_writes_artifact() {
                 .geometry
                 .center,
             1.0,
-        )
-        .unwrap();
+            0.0,
+            0,
+            false,
+        ),
+        library
+            .register_original(
+                &sources[0].0,
+                "image/png",
+                sources[0].2,
+                sources[0].3,
+                std::fs::metadata(&sources[0].0).unwrap().len(),
+                None,
+            )
+            .unwrap(),
+    );
     let late_loaded = inspect_prepared_loaded_placement(
         loaded_placement,
         sources[0].1,

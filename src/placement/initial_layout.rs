@@ -175,3 +175,133 @@ fn occupied_bounds_squareness(existing_rects: &[LayoutRect], candidate_rect: egu
     let height = (max_y - min_y).max(1.0);
     width.max(height) / width.min(height)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn test_viewport_world() -> egui::Rect {
+        egui::Rect::from_min_max(
+            egui::pos2(-10_000.0, -10_000.0),
+            egui::pos2(10_000.0, 10_000.0),
+        )
+    }
+    #[test]
+    fn empty_board_placement_uses_requested_anchor() {
+        let existing = Vec::new();
+        let anchor = eframe::egui::pos2(120.0, -48.0);
+
+        let arranged = arrange_rect_with_existing_layout(
+            &existing,
+            anchor,
+            test_viewport_world(),
+            300.0,
+            200.0,
+            12.0,
+        );
+
+        assert_eq!(arranged, anchor);
+    }
+
+    #[test]
+    fn deterministic_candidate_order_prefers_right_before_below_on_tie() {
+        let mut existing = Vec::new();
+        existing.push(
+            crate::placement::arrangement::PlacementArrangementInput::new(
+                existing.len() as i64,
+                eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::vec2(100 as f32, 100 as f32),
+            ),
+        );
+
+        let arranged = arrange_rect_with_existing_layout(
+            &existing,
+            eframe::egui::pos2(106.0, 106.0),
+            test_viewport_world(),
+            100.0,
+            100.0,
+            12.0,
+        );
+
+        assert_eq!(arranged, eframe::egui::pos2(112.0, 0.0));
+    }
+
+    #[test]
+    fn blocked_right_side_candidate_falls_through_to_valid_lower_slot() {
+        let mut existing = Vec::new();
+        existing.push(
+            crate::placement::arrangement::PlacementArrangementInput::new(
+                existing.len() as i64,
+                eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::vec2(100 as f32, 100 as f32),
+            ),
+        );
+        existing.push(
+            crate::placement::arrangement::PlacementArrangementInput::new(
+                existing.len() as i64,
+                eframe::egui::pos2(112.0, 0.0),
+                eframe::egui::vec2(100 as f32, 100 as f32),
+            ),
+        );
+
+        let arranged = arrange_rect_with_existing_layout(
+            &existing,
+            eframe::egui::pos2(112.0, 50.0),
+            test_viewport_world(),
+            100.0,
+            100.0,
+            12.0,
+        );
+
+        assert_eq!(arranged, eframe::egui::pos2(112.0, 112.0));
+    }
+
+    #[test]
+    fn square_scoring_beats_anchor_distance_for_adjacent_imports() {
+        let mut existing = Vec::new();
+        existing.push(
+            crate::placement::arrangement::PlacementArrangementInput::new(
+                existing.len() as i64,
+                eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::vec2(240 as f32, 80 as f32),
+            ),
+        );
+
+        let arranged = arrange_rect_with_existing_layout(
+            &existing,
+            eframe::egui::pos2(172.0, 0.0),
+            test_viewport_world(),
+            80.0,
+            80.0,
+            12.0,
+        );
+
+        assert_eq!(arranged, eframe::egui::pos2(172.0, 0.0));
+    }
+
+    #[test]
+    fn viewport_bounding_prefers_on_screen_candidate() {
+        let mut existing = Vec::new();
+        existing.push(
+            crate::placement::arrangement::PlacementArrangementInput::new(
+                existing.len() as i64,
+                eframe::egui::pos2(0.0, 0.0),
+                eframe::egui::vec2(240 as f32, 80 as f32),
+            ),
+        );
+        let viewport = eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(100.0, -60.0),
+            eframe::egui::pos2(260.0, 60.0),
+        );
+
+        let arranged = arrange_rect_with_existing_layout(
+            &existing,
+            eframe::egui::pos2(172.0, 0.0),
+            viewport,
+            80.0,
+            80.0,
+            12.0,
+        );
+
+        assert_eq!(arranged, eframe::egui::pos2(172.0, 0.0));
+    }
+}

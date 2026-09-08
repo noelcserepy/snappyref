@@ -182,9 +182,6 @@ pub(crate) fn textbox_required_world_height(galley_height_screen: f32, zoom: f32
     let screen_height = galley_height_screen + padding.y * 2.0;
     (screen_height / zoom.max(MIN_CANVAS_ZOOM)).max(MIN_TEXTBOX_WORLD_SIZE.y)
 }
-struct TextboxEditorToolbarMetrics {
-    size: egui::Vec2,
-}
 
 const ANNOTATION_COLORS: [CanvasAnnotationColor; 5] = [
     CanvasAnnotationColor::Default,
@@ -244,7 +241,7 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
         return;
     };
     let textbox_rect = annotation_screen_rect(state, rect, &state.document.annotations[index]);
-    let toolbar_rect = editing_textbox_toolbar_rect(ui, state, rect);
+    let toolbar_rect = editing_textbox_toolbar_rect(state, rect);
     let content_rect = textbox_content_rect(textbox_rect);
     let text = state.document.annotations[index].text.clone();
     let layout = state.cached_textbox_layout(
@@ -323,27 +320,22 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
         });
 }
 
-fn textbox_editor_toolbar_metrics(_ui: &egui::Ui) -> TextboxEditorToolbarMetrics {
+fn textbox_editor_toolbar_size() -> egui::Vec2 {
     let button_span = TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH * 4.0
         + TOOLBAR_SWATCH_BUTTON_WIDTH * 5.0
         + TOOLBAR_BACKGROUND_BUTTON_WIDTH
         + TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP * 9.0;
-    TextboxEditorToolbarMetrics {
-        size: egui::vec2(button_span, crate::ui::theme::CONTROL_HEIGHT),
-    }
+    egui::vec2(button_span, crate::ui::theme::CONTROL_HEIGHT)
 }
 
-fn annotation_style_toolbar_metrics(_ui: &egui::Ui) -> TextboxEditorToolbarMetrics {
+fn annotation_style_toolbar_size() -> egui::Vec2 {
     let button_span = TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH * 3.0
         + TOOLBAR_SWATCH_BUTTON_WIDTH * 5.0
         + TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP * 7.0;
-    TextboxEditorToolbarMetrics {
-        size: egui::vec2(button_span, crate::ui::theme::CONTROL_HEIGHT),
-    }
+    egui::vec2(button_span, crate::ui::theme::CONTROL_HEIGHT)
 }
 
 pub(crate) fn editing_textbox_toolbar_rect(
-    ui: &egui::Ui,
     state: &CanvasState,
     rect: egui::Rect,
 ) -> Option<egui::Rect> {
@@ -354,17 +346,17 @@ pub(crate) fn editing_textbox_toolbar_rect(
     }
 
     let textbox_rect = annotation_screen_rect(state, rect, annotation);
-    let metrics = textbox_editor_toolbar_metrics(ui);
+    let size = textbox_editor_toolbar_size();
     let min_x = rect.left() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
-    let max_x = (rect.right() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - metrics.size.x).max(min_x);
+    let max_x = (rect.right() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - size.x).max(min_x);
     let preferred_x = textbox_rect.left();
     let x = preferred_x.clamp(min_x, max_x);
 
     let min_y = rect.top() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
-    let above_y = textbox_rect.top() - TEXTBOX_EDITOR_TOOLBAR_CLEARANCE - metrics.size.y;
+    let above_y = textbox_rect.top() - TEXTBOX_EDITOR_TOOLBAR_CLEARANCE - size.y;
     let y = above_y.max(min_y);
 
-    Some(egui::Rect::from_min_size(egui::pos2(x, y), metrics.size))
+    Some(egui::Rect::from_min_size(egui::pos2(x, y), size))
 }
 
 fn show_textbox_editor_toolbar(
@@ -468,7 +460,6 @@ fn show_textbox_editor_toolbar(
 }
 
 pub(crate) fn annotation_style_toolbar_rect(
-    ui: &egui::Ui,
     state: &CanvasState,
     rect: egui::Rect,
 ) -> Option<egui::Rect> {
@@ -481,13 +472,13 @@ pub(crate) fn annotation_style_toolbar_rect(
     }
 
     let annotation_rect = annotation_screen_rect(state, rect, annotation);
-    let metrics = annotation_style_toolbar_metrics(ui);
+    let size = annotation_style_toolbar_size();
     let min_x = rect.left() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
-    let max_x = (rect.right() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - metrics.size.x).max(min_x);
+    let max_x = (rect.right() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - size.x).max(min_x);
     let x = annotation_rect.left().clamp(min_x, max_x);
     let min_y = rect.top() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
-    let y = (annotation_rect.top() - TEXTBOX_EDITOR_TOOLBAR_CLEARANCE - metrics.size.y).max(min_y);
-    Some(egui::Rect::from_min_size(egui::pos2(x, y), metrics.size))
+    let y = (annotation_rect.top() - TEXTBOX_EDITOR_TOOLBAR_CLEARANCE - size.y).max(min_y);
+    Some(egui::Rect::from_min_size(egui::pos2(x, y), size))
 }
 
 pub(crate) fn show_annotation_style_toolbar(
@@ -495,7 +486,7 @@ pub(crate) fn show_annotation_style_toolbar(
     rect: egui::Rect,
     state: &mut CanvasState,
 ) {
-    let toolbar_rect = annotation_style_toolbar_rect(ui, state, rect);
+    let toolbar_rect = annotation_style_toolbar_rect(state, rect);
     let entrance = crate::ui::motion::overlay_entrance(
         ui.ctx(),
         egui::Id::new("annotation_style_toolbar_entrance"),

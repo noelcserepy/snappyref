@@ -19,12 +19,6 @@ impl SnappyRefApp {
         let hover_intake = crate::sources::external_drag::hovered(ui);
         let hovered_sources = hover_intake.sources.clone();
         if hovered_sources.is_empty() {
-            crate::diagnostics::search_drag_debug(format!(
-                "external_hover empty cleanup external_ids={:?} pending_fallback_before={} selected={:?}",
-                self.external_hover_provisional_placement_ids,
-                self.pending_missing_drop_fallback.is_some(),
-                self.canvas.selected_placement_ids()
-            ));
             self.pending_missing_drop_fallback = self.last_hovered_external_drag.take();
             self.canvas
                 .delete_placements(&self.external_hover_provisional_placement_ids);
@@ -32,11 +26,6 @@ impl SnappyRefApp {
             self.hover_preview_dimensions.clear();
             return;
         }
-        crate::diagnostics::search_drag_debug(format!(
-            "external_hover sources count={} screen_pos={:?}",
-            hovered_sources.len(),
-            hover_intake.screen_pos
-        ));
         if self.last_hovered_external_drag.as_ref() == Some(&hover_intake)
             && !self.external_hover_provisional_placement_ids.is_empty()
         {
@@ -153,121 +142,31 @@ impl SnappyRefApp {
         desired_world: egui::Pos2,
         paste_text: Option<String>,
     ) {
-        if let Some(paste_text) = paste_text {
-            if self.handle_internal_clipboard_paste_at(&paste_text, desired_world) {
-                return;
+        use crate::sources::clipboard::{ClipboardContent, read};
+
+        match read(paste_text.as_deref()) {
+            Ok(Some(ClipboardContent::BoardSelection(selection))) => {
+                if let Err(error) = self.paste_board_payload_at(&selection, desired_world) {
+                    self.status = error;
+                }
             }
-
-            if self.handle_clipboard_url_import_at(screen_rect, &paste_text, desired_world) {
-                return;
+            Ok(Some(ClipboardContent::Sources { sources, pureref })) => {
+                if self.import_worker.is_none() {
+                    return;
+                }
+                let source_count = sources.len();
+                self.enqueue_import_sources(sources, screen_rect, desired_world);
+                if pureref {
+                    self.status = if source_count == 1 {
+                        "Queued PureRef paste: 1 image".to_owned()
+                    } else {
+                        format!("Queued PureRef paste: {source_count} images")
+                    };
+                }
             }
+            Ok(None) => {}
+            Err(error) => self.status = error,
         }
-
-        if self.handle_clipboard_path_import_at(screen_rect, desired_world) {
-            return;
-        }
-
-        if self.handle_pureref_clipboard_import_at(screen_rect, desired_world) {
-            return;
-        }
-
-        self.handle_external_clipboard_image_paste_at(screen_rect, desired_world);
-    }
-
-    pub(super) fn handle_clipboard_path_import_at(
-        &mut self,
-        screen_rect: egui::Rect,
-        desired_world: egui::Pos2,
-    ) -> bool {
-        if self.import_worker.is_none() {
-            return false;
-        }
-        let sources = crate::platform::native_drop::clipboard_paths()
-            .into_iter()
-            .map(ImportSource::Path)
-            .collect::<Vec<_>>();
-        if sources.is_empty() {
-            return false;
-        }
-
-        self.enqueue_import_sources(sources, screen_rect, desired_world);
-        true
-    }
-
-    pub(super) fn handle_pureref_clipboard_import_at(
-        &mut self,
-        screen_rect: egui::Rect,
-        desired_world: egui::Pos2,
-    ) -> bool {
-        if self.import_worker.is_none() {
-            return false;
-        }
-
-        let Some(bytes) = crate::platform::native_drop::clipboard_pureref_binary() else {
-            return false;
-        };
-        let sources = crate::sources::pureref::sources_from_binary(&bytes);
-        if sources.is_empty() {
-            return false;
-        }
-
-        let source_count = sources.len();
-        self.enqueue_import_sources(sources, screen_rect, desired_world);
-        self.status = if source_count == 1 {
-            "Queued PureRef paste: 1 image".to_owned()
-        } else {
-            format!("Queued PureRef paste: {source_count} images")
-        };
-        true
-    }
-
-    pub(super) fn handle_external_clipboard_image_paste_at(
-        &mut self,
-        screen_rect: egui::Rect,
-        desired_world: egui::Pos2,
-    ) {
-        if self.import_worker.is_none() {
-            return;
-        }
-
-        let mut clipboard = match arboard::Clipboard::new() {
-            Ok(clipboard) => clipboard,
-            Err(error) => {
-                self.status = format!("Clipboard unavailable: {error}");
-                return;
-            }
-        };
-
-        let clipboard_image = match clipboard.get_image() {
-            Ok(image) => image,
-            Err(error) => {
-                self.status = format!("Clipboard does not contain an image: {error}");
-                return;
-            }
-        };
-
-        let source = ImportSource::Clipboard {
-            rgba: clipboard_image.bytes.into_owned(),
-            width: clipboard_image.width as u32,
-            height: clipboard_image.height as u32,
-        };
-        self.enqueue_import_sources(vec![source], screen_rect, desired_world);
-    }
-
-    pub(super) fn handle_clipboard_url_import_at(
-        &mut self,
-        screen_rect: egui::Rect,
-        paste_text: &str,
-        desired_world: egui::Pos2,
-    ) -> bool {
-        if self.import_worker.is_none() {
-            return false;
-        }
-        let Some(url) = crate::sources::url::normalize_import_url(paste_text) else {
-            return false;
-        };
-        self.enqueue_import_sources(vec![ImportSource::Url(url)], screen_rect, desired_world);
-        true
     }
 
     pub(super) fn enqueue_import_sources(

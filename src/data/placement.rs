@@ -121,21 +121,19 @@ impl Placement {
         }
     }
 
-    /// Adopts the geometry of the record already on the Board. An image load
-    /// can finish after the user moved, rotated, or restacked the Placement,
-    /// and that newer geometry wins. Size and scale follow only once the same
-    /// Asset was already loaded; a first load fits the Asset's aspect.
+    /// Resolves against current Board geometry. First load fits intrinsic aspect
+    /// within the current area; repeated loads preserve the exact loaded geometry.
     pub fn adopt_geometry_of(&mut self, current: &Placement) {
-        let newer = current.state.geometry;
-        let same_loaded_asset = current.is_loaded() && current.asset_id() == self.asset_id();
-        let geometry = &mut self.state.geometry;
-        geometry.center = newer.center;
-        geometry.rotation = newer.rotation;
-        geometry.z_index = newer.z_index;
-        if same_loaded_asset {
-            geometry.size = newer.size;
-            geometry.scale = newer.scale;
+        let mut geometry = current.state.geometry;
+        if !(current.is_loaded() && current.asset_id() == self.asset_id()) {
+            let asset = self.require_loaded_asset();
+            geometry.size = RectGeometry::size_preserving_area_for_aspect(
+                geometry.size,
+                asset.width,
+                asset.height,
+            );
         }
+        self.state.geometry = geometry;
     }
 
     pub fn loaded_asset(&self) -> Option<&super::Asset> {
