@@ -11,6 +11,10 @@ argument-hint: "[windows-check-or-build]"
 Use this skill when the Mac agent needs Windows-native feedback without GitHub
 Actions.
 
+The scripts assume the maintainer's own Windows machine reached over SSH.
+Contributors without that setup can run the same cargo commands in a Windows
+checkout directly, or dispatch the `Build Windows App` workflow on a branch.
+
 ## Ownership and connection
 
 Edit on Mac, then sync to the Windows execution checkout. Do not patch Windows
