@@ -26,8 +26,6 @@ enum StackOrderMove {
 }
 
 impl CanvasState {
-    /// Replaces any rendered placement with the same id, registers it in the
-    /// stack order if new, and keeps the render list sorted by z-index.
     pub fn add_provisional_unresolved_placement(&mut self, mut placement: Placement) {
         placement.lifecycle = PlacementLifecycle::Provisional;
         self.add_unresolved_placement(placement);
