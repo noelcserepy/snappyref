@@ -59,8 +59,10 @@ touch either.
 
 ## Build from source
 
-You need Rust stable. The default `turbojpeg-native` feature links
-libjpeg-turbo for fast JPEG decoding, which is the only non-Rust dependency.
+You need Rust stable and a C compiler. SQLite is compiled from source by
+`rusqlite` and ONNX Runtime is fetched as a prebuilt binary by `ort` during the
+build. The default `turbojpeg-native` feature links libjpeg-turbo for fast
+JPEG decoding, and that is the one library you install yourself.
 
 macOS. `.cargo/config.toml` sets `TURBOJPEG_SOURCE=pkg-config`, so the
 Homebrew package is enough:
@@ -103,9 +105,10 @@ Point git at the repo hooks once per clone:
 git config core.hooksPath .githooks
 ```
 
-The [pre-push hook](.githooks/pre-push) runs `cargo fmt --check`,
-`cargo check --locked`, and `cargo test --locked update_preservation_smoke`.
-CI runs the same gate plus clippy on every pull request. `cargo test --locked`
+The [pre-push hook](.githooks/pre-push) runs `cargo fmt --check`, clippy
+with warnings denied, `cargo check --locked`, and
+`cargo test --locked update_preservation_smoke`. CI runs the same gate on
+every pull request. `cargo test --locked`
 runs the full suite. UI behavior is verified through inspect scenarios; list
 them with `docs/skills/inspect/scripts/run-scenario.sh --list`.
 

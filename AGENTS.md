@@ -22,6 +22,7 @@ Always use `--locked` and the shipping default features.
 
 ```sh
 cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
 cargo check --locked
 cargo test --locked update_preservation_smoke
 cargo test --locked

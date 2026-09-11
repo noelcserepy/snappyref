@@ -19,12 +19,13 @@ Platform prerequisites (libjpeg-turbo on macOS, vcpkg or
 
 ```sh
 cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
 cargo check --locked
 cargo test --locked
 ```
 
-The pre-push hook runs the first two plus one update-preservation test, and CI
-runs the same gate with clippy. For UI behavior, run the matching inspect
+The pre-push hook runs the first three plus one update-preservation test, and
+CI runs the same gate on every pull request. For UI behavior, run the matching inspect
 scenario with `docs/skills/inspect/scripts/run-scenario.sh <scenario>` and
 keep the artifact path for the PR.
 
