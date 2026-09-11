@@ -5,7 +5,9 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/../../../.." && pwd)"
 
 scenario="${1:-}"
-artifact_root="$repo_root/target/snappyref-inspect"
+target_dir="${CARGO_TARGET_DIR:-target}"
+[[ "$target_dir" = /* ]] || target_dir="$repo_root/$target_dir"
+artifact_root="$target_dir/snappyref-inspect"
 
 if [[ -n "$scenario" ]]; then
   latest_file="$artifact_root/$scenario/latest.txt"
