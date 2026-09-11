@@ -1,0 +1,51 @@
+name: Bug report
+description: Something in SnappyRef misbehaves
+labels: [bug]
+body:
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: macOS 15.3, Windows 11 24H2
+    validations:
+      required: true
+  - type: input
+    id: app_version
+    attributes:
+      label: App version
+      description: Shown in the sidebar (Cmd+B / Ctrl+B) under Version. Write "source" plus the commit hash if you built it yourself.
+      placeholder: v0.2.0
+    validations:
+      required: true
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Drop a PNG on an empty board
+        2. Press Cmd+D
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: semantic_search
+    attributes:
+      label: Semantic Search enabled
+      options:
+        - "No"
+        - "Yes"
+        - Not sure
+    validations:
+      required: true
