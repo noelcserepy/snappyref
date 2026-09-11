@@ -254,12 +254,12 @@ fn apply_style(style: &mut egui::Style) {
     style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(RADIUS_CONTROL);
     style.visuals.widgets.hovered.fg_stroke = stroke_strong();
     style.visuals.widgets.active.bg_fill = SURFACE_PRESSED;
-    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, ACCENT);
+    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0_f32, ACCENT);
     style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(RADIUS_CONTROL);
     style.visuals.widgets.active.fg_stroke = stroke_strong();
     style.visuals.selection.bg_fill = SURFACE_ELEVATED;
     // Focus carries the single accent thread.
-    style.visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
+    style.visuals.selection.stroke = egui::Stroke::new(1.0_f32, ACCENT);
     style.visuals.hyperlink_color = ACCENT;
     style.animation_time = MOTION_FEEDBACK_SECONDS;
     style.spacing.item_spacing = egui::vec2(SPACE_3, SPACE_3);
@@ -267,11 +267,11 @@ fn apply_style(style: &mut egui::Style) {
 }
 
 pub fn stroke_subtle() -> egui::Stroke {
-    egui::Stroke::new(1.0, BORDER)
+    egui::Stroke::new(1.0_f32, BORDER)
 }
 
 pub fn stroke_strong() -> egui::Stroke {
-    egui::Stroke::new(1.0, TEXT)
+    egui::Stroke::new(1.0_f32, TEXT)
 }
 
 pub fn motion_easing(t: f32) -> f32 {

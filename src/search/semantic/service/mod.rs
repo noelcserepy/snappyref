@@ -1151,8 +1151,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             embedding
-                .chunks_exact(4)
-                .map(|bytes| f32::from_ne_bytes(bytes.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| f32::from_ne_bytes(*bytes))
                 .collect::<Vec<_>>(),
             vec![1.0, 0.0]
         );

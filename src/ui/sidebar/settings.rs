@@ -289,7 +289,7 @@ fn paint_inline_choice_underline(ui: &egui::Ui, center_x: f32, half_width: f32, 
             egui::pos2(center_x - half_width, y),
             egui::pos2(center_x + half_width, y),
         ],
-        egui::Stroke::new(2.0, crate::ui::theme::ACCENT),
+        egui::Stroke::new(2.0_f32, crate::ui::theme::ACCENT),
     );
 }
 
@@ -394,7 +394,7 @@ fn paint_number_text_field(
                     .scope(|ui| {
                         ui.visuals_mut().selection.bg_fill = crate::ui::theme::ACCENT;
                         ui.visuals_mut().selection.stroke =
-                            egui::Stroke::new(1.0, crate::ui::theme::BACKGROUND);
+                            egui::Stroke::new(1.0_f32, crate::ui::theme::BACKGROUND);
                         ui.add(
                             egui::TextEdit::singleline(&mut text)
                                 .id(id)

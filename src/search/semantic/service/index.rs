@@ -211,12 +211,10 @@ fn decode_f32_blob(blob: &[u8]) -> Result<Vec<f32>, String> {
         return Err("embedding blob has invalid length".to_owned());
     }
 
-    blob.chunks_exact(std::mem::size_of::<f32>())
-        .map(|chunk| {
-            let bytes: [u8; 4] = chunk
-                .try_into()
-                .map_err(|_| "embedding blob chunk decode failed".to_owned())?;
-            Ok(f32::from_ne_bytes(bytes))
-        })
-        .collect()
+    Ok(blob
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| f32::from_ne_bytes(*bytes))
+        .collect())
 }

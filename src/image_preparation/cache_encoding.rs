@@ -36,7 +36,7 @@ fn canvas_image_cache_quality(lod: CanvasImageLod) -> u8 {
 
 fn rgba_to_rgb(rgba: &[u8]) -> Vec<u8> {
     let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
-    for pixel in rgba.chunks_exact(4) {
+    for pixel in rgba.as_chunks::<4>().0 {
         rgb.extend_from_slice(&pixel[..3]);
     }
     rgb
@@ -44,7 +44,12 @@ fn rgba_to_rgb(rgba: &[u8]) -> Vec<u8> {
 
 impl CanvasImageCacheEncoding {
     pub(crate) fn for_pixels(rgba: &[u8]) -> Self {
-        if rgba.chunks_exact(4).all(|pixel| pixel[3] == u8::MAX) {
+        if rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel[3] == u8::MAX)
+        {
             Self::Jpeg
         } else {
             Self::WebpLossless

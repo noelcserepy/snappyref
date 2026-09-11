@@ -112,7 +112,7 @@ fn paint_background_grid(
     };
     let base = crate::ui::theme::TEXT_SUBTLE;
     let color = egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha);
-    let stroke = egui::Stroke::new(0.45, color);
+    let stroke = egui::Stroke::new(0.45_f32, color);
     let world_step = background_world_step(layer.level);
     let mut world_x = first_lattice_at_or_before(visible_world_rect.left(), world_step);
     while world_x <= visible_world_rect.right() + world_step {

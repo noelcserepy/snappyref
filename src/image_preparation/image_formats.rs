@@ -1579,7 +1579,9 @@ mod tests {
             assert_eq!(
                 normalized
                     .rgba
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|pixel| pixel[0])
                     .collect::<Vec<_>>(),
                 red_values

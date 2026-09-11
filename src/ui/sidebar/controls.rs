@@ -77,7 +77,7 @@ pub(super) fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab
                 egui::pos2(center_x - half_width, underline_y),
                 egui::pos2(center_x + half_width, underline_y),
             ],
-            egui::Stroke::new(2.0, crate::ui::theme::ACCENT),
+            egui::Stroke::new(2.0_f32, crate::ui::theme::ACCENT),
         );
     }
 }

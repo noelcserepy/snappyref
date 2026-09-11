@@ -467,7 +467,7 @@ impl CanvasState {
             painter.rect_stroke(
                 rect,
                 theme::RADIUS_NONE,
-                egui::Stroke::new(1., color),
+                egui::Stroke::new(1.0_f32, color),
                 egui::StrokeKind::Outside,
             );
             painter.text(

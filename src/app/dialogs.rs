@@ -73,7 +73,10 @@ pub(super) fn destructive_action_button(label: &str) -> egui::Button<'_> {
             .color(crate::ui::theme::TEXT),
     )
     .fill(crate::ui::theme::DESTRUCTIVE_FILL)
-    .stroke(egui::Stroke::new(1.0, crate::ui::theme::DESTRUCTIVE_EDGE))
+    .stroke(egui::Stroke::new(
+        1.0_f32,
+        crate::ui::theme::DESTRUCTIVE_EDGE,
+    ))
     .corner_radius(crate::ui::theme::RADIUS_INLINE)
 }
 
@@ -95,6 +98,6 @@ pub(super) fn primary_dialog_button(label: &str) -> egui::Button<'_> {
             .color(crate::ui::theme::BACKGROUND),
     )
     .fill(crate::ui::theme::ACCENT)
-    .stroke(egui::Stroke::new(1.0, crate::ui::theme::ACCENT))
+    .stroke(egui::Stroke::new(1.0_f32, crate::ui::theme::ACCENT))
     .corner_radius(crate::ui::theme::RADIUS_INLINE)
 }
