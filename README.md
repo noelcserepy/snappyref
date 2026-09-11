@@ -39,8 +39,9 @@ when that folder is writable, otherwise in your user app-data directory.
 First launch:
 
 - macOS 14 or newer. The app is ad-hoc signed, not notarized, so a plain
-  double-click is blocked. Right-click `SnappyRef.app`, choose Open, then
-  confirm.
+  double-click is blocked. Try opening `SnappyRef.app`, then go to System
+  Settings > Privacy & Security and click Open Anyway. Confirm Open when
+  prompted. See [Apple's instructions](https://support.apple.com/en-gb/102445).
 - Windows. The exe is unsigned. SmartScreen shows "Windows protected your PC".
   Click More info, then Run anyway.
 
