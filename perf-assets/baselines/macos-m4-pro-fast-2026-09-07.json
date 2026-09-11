@@ -5,7 +5,7 @@
     {
       "case": "import-1",
       "repeat": 1,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/import-1-r1",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/import-1-r1",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 112.1308984375,
@@ -30,7 +30,7 @@
     {
       "case": "import-20",
       "repeat": 1,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/import-20-r1",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/import-20-r1",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 122.552056625,
@@ -55,7 +55,7 @@
     {
       "case": "board-0",
       "repeat": 1,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/board-0-r1",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/board-0-r1",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 116.548853515625,
@@ -80,7 +80,7 @@
     {
       "case": "board-1000",
       "repeat": 1,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/board-1000-r1",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/board-1000-r1",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 114.600848640625,
@@ -105,7 +105,7 @@
     {
       "case": "library-1000",
       "repeat": 1,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/library-1000-r1",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/library-1000-r1",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 116.793505859375,
@@ -130,7 +130,7 @@
     {
       "case": "import-1",
       "repeat": 2,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/import-1-r2",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/import-1-r2",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 129.33981446875,
@@ -155,7 +155,7 @@
     {
       "case": "import-20",
       "repeat": 2,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/import-20-r2",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/import-20-r2",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 125.952910171875,
@@ -180,7 +180,7 @@
     {
       "case": "board-0",
       "repeat": 2,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/board-0-r2",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/board-0-r2",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 129.0623359375,
@@ -205,7 +205,7 @@
     {
       "case": "board-1000",
       "repeat": 2,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/board-1000-r2",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/board-1000-r2",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 126.58799609375001,
@@ -230,7 +230,7 @@
     {
       "case": "library-1000",
       "repeat": 2,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/library-1000-r2",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/library-1000-r2",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 109.477568359375,
@@ -255,7 +255,7 @@
     {
       "case": "import-1",
       "repeat": 3,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/import-1-r3",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/import-1-r3",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 120.59617090625,
@@ -280,7 +280,7 @@
     {
       "case": "import-20",
       "repeat": 3,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/import-20-r3",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/import-20-r3",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 131.871212875,
@@ -305,7 +305,7 @@
     {
       "case": "board-0",
       "repeat": 3,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/board-0-r3",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/board-0-r3",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 119.095057625,
@@ -330,7 +330,7 @@
     {
       "case": "board-1000",
       "repeat": 3,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/board-1000-r3",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/board-1000-r3",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 131.314957046875,
@@ -355,7 +355,7 @@
     {
       "case": "library-1000",
       "repeat": 3,
-      "artifact": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/library-1000-r3",
+      "artifact": "perf-assets/runs/fast-reference-2026-09-07/library-1000-r3",
       "valid": true,
       "metrics": {
         "launch_to_first_frame_ms": 124.854703109375,
@@ -537,7 +537,7 @@
   },
   "recorded_on": "2026-09-07",
   "acquisition": {
-    "raw_report": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-2026-09-07/evaluation.json",
+    "raw_report": "perf-assets/runs/fast-reference-2026-09-07/evaluation.json",
     "external_command_timing": {
       "command": [
         "python3",
@@ -546,9 +546,9 @@
         "--binary",
         "target/release/snappyref",
         "--assets",
-        "/Users/noelcserepy/dev/snappyref/perf-assets/images",
+        "perf-assets/images",
         "--models",
-        "/Users/noelcserepy/dev/snappyref/target/release/models",
+        "target/release/models",
         "--output",
         "perf-assets/runs/fast-reference-2026-09-07"
       ],
@@ -567,7 +567,7 @@
       "Three repeats give a median and range, not p95 or a runtime guarantee. Fast excludes full resource and omitted workload coverage."
     ],
     "control": {
-      "raw_report": "/Users/noelcserepy/.codex/worktrees/65c6/snappyref/perf-assets/runs/fast-reference-control-2026-09-07/evaluation.json",
+      "raw_report": "perf-assets/runs/fast-reference-control-2026-09-07/evaluation.json",
       "source": {
         "commit": "eebf2f205776e61be0e77de13c04cbddc8fb98aa",
         "dirty": false,
@@ -593,9 +593,9 @@
           "--binary",
           "target/release/snappyref",
           "--assets",
-          "/Users/noelcserepy/dev/snappyref/perf-assets/images",
+          "perf-assets/images",
           "--models",
-          "/Users/noelcserepy/dev/snappyref/target/release/models",
+          "target/release/models",
           "--output",
           "perf-assets/runs/fast-reference-control-2026-09-07"
         ],

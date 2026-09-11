@@ -673,12 +673,12 @@
         "repeat": 3,
         "valid": false,
         "error": "static-20 exceeded 180s",
-        "artifact": "/Users/noelcserepy/dev/snappyref/perf-assets/runs/refactor-baseline-complete-20260907/static-20-r3"
+        "artifact": "perf-assets/runs/refactor-baseline-complete-20260907/static-20-r3"
       }
     ],
     "superseded_valid_trials": [
-      "/Users/noelcserepy/dev/snappyref/perf-assets/runs/refactor-baseline-complete-20260907/static-20-r1",
-      "/Users/noelcserepy/dev/snappyref/perf-assets/runs/refactor-baseline-complete-20260907/static-20-r2"
+      "perf-assets/runs/refactor-baseline-complete-20260907/static-20-r1",
+      "perf-assets/runs/refactor-baseline-complete-20260907/static-20-r2"
     ],
     "limitation": "One static-20 trial timed out after all 20 placements painted and demand embeddings completed. No settled-idle marker arrived. Three unchanged-binary repeats passed. Background callback delay is suspected, not proven. The original evaluation remains invalid; no timeout was converted into a passing trial.",
     "trials": [
