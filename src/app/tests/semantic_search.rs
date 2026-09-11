@@ -459,7 +459,7 @@ fn long_search_error_does_not_expand_palette_width() {
     app.search.overlay.open = true;
     app.search.overlay.query = "boat".to_owned();
     app.search.overlay.status = crate::search::palette::SearchOverlayStatus::Error(format!(
-        "failed to open image /Users/noelcserepy/dev/snappyref/target/debug/library/originals/{}-image-2025-08-05-160929.jpg: Format error decoding Jpeg: Error parsing image. Illegal start bytes: 8950",
+        "failed to open image /tmp/snappyref-test/library/originals/{}-image-2025-08-05-160929.jpg: Format error decoding Jpeg: Error parsing image. Illegal start bytes: 8950",
         "1777813588290-19"
     ));
     let mut harness = app_harness(app, |ctx, app| {
