@@ -47,7 +47,7 @@ pub(crate) fn hit_test_canvas_item(
                 .placement_by_id(placement_id)
                 .filter(|image| {
                     placement_contains_screen_point(
-                        &image,
+                        image,
                         pointer_pos,
                         state.pan,
                         state.zoom,

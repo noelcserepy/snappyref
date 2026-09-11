@@ -200,10 +200,10 @@ impl SnappyRefApp {
     pub(super) fn request_manual_update_check(&mut self, ctx: &egui::Context) {
         if !self.update_service.check_in_flight() {
             let now = Instant::now();
-            if let Some(last) = self.last_manual_update_check {
-                if now.duration_since(last) < MANUAL_UPDATE_CHECK_THROTTLE {
-                    return;
-                }
+            if let Some(last) = self.last_manual_update_check
+                && now.duration_since(last) < MANUAL_UPDATE_CHECK_THROTTLE
+            {
+                return;
             }
             self.last_manual_update_check = Some(now);
             self.update_service.request_check_now();

@@ -467,7 +467,7 @@ impl CanvasState {
             painter.rect_stroke(
                 rect,
                 theme::RADIUS_NONE,
-                egui::Stroke::new(1., color),
+                egui::Stroke::new(1.0_f32, color),
                 egui::StrokeKind::Outside,
             );
             painter.text(
@@ -487,17 +487,15 @@ impl CanvasState {
         use crate::ui::theme;
         if !ui.input(|i| i.pointer.primary_down())
             && let Some(before) = self.interaction.group_controls_start.take()
-        {
-            if self
+            && self
                 .groups()
                 .iter()
                 .find(|g| g.id == before.id)
                 .is_some_and(|g| g != &before)
-            {
-                self.document.groups_dirty = true;
-                for id in before.members {
-                    self.mark_dirty(id);
-                }
+        {
+            self.document.groups_dirty = true;
+            for id in before.members {
+                self.mark_dirty(id);
             }
         }
         let id = *self.interaction.selected_group_ids.first()?;

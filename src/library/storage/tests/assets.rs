@@ -446,7 +446,7 @@ fn embedding_backfill_includes_unplaced_library_assets() {
         )
         .unwrap();
 
-    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[unplaced.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[unplaced.state.id]).contains(id))).collect()), ..Default::default()}).unwrap();
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: [unplaced.state.id].to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if [unplaced.state.id].contains(id))).collect()), ..Default::default()}).unwrap();
     library
         .upsert_asset_embedding_blob(
             ready.require_loaded_asset().id,

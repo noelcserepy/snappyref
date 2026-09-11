@@ -64,7 +64,7 @@ fn length_prefixed_utf16be_strings(bytes: &[u8]) -> Vec<String> {
         let end = start.saturating_add(length);
 
         if length > 0
-            && length % 2 == 0
+            && length.is_multiple_of(2)
             && end <= bytes.len()
             && let Some(value) = decode_utf16be_string(&bytes[start..end])
         {
@@ -81,8 +81,10 @@ fn length_prefixed_utf16be_strings(bytes: &[u8]) -> Vec<String> {
 
 fn decode_utf16be_string(bytes: &[u8]) -> Option<String> {
     let units = bytes
-        .chunks_exact(2)
-        .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| u16::from_be_bytes(*chunk))
         .collect::<Vec<_>>();
     let value = String::from_utf16(&units).ok()?;
     let trimmed = value.trim_matches(char::from(0)).trim().to_owned();

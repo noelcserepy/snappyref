@@ -2,7 +2,7 @@ mod helper;
 pub(crate) use helper::run_embed_image_server;
 use helper::{EmbeddingHelperClient, embed_image_in_helper, ensure_embedding_helper};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -587,7 +587,7 @@ fn index_asset(
     result_tx: &mpsc::Sender<IndexResult>,
     canvas_image_max_side: u32,
     asset_id: i64,
-    original_path: &PathBuf,
+    original_path: &Path,
     helper: &mut Option<EmbeddingHelperClient>,
     report_import_embedding_start: bool,
 ) -> Result<(), String> {
@@ -708,7 +708,7 @@ where
 fn embedding_source_path(
     library: &Library,
     asset_id: i64,
-    original_path: &PathBuf,
+    original_path: &Path,
     canvas_image_max_side: u32,
 ) -> PathBuf {
     library
@@ -718,7 +718,7 @@ fn embedding_source_path(
             crate::data::CanvasImageLod::Working,
         )
         .filter(|path| path.is_file())
-        .unwrap_or_else(|| original_path.clone())
+        .unwrap_or_else(|| original_path.to_path_buf())
 }
 
 fn ensure_model(
@@ -850,7 +850,7 @@ mod tests {
                 ),
             )
             .unwrap();
-        library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[unplaced.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[unplaced.state.id]).contains(id))).collect()), ..Default::default()}).unwrap();
+        library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: [unplaced.state.id].to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if [unplaced.state.id].contains(id))).collect()), ..Default::default()}).unwrap();
         library
             .upsert_asset_embedding_blob(
                 source.require_loaded_asset().id,
@@ -1151,8 +1151,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             embedding
-                .chunks_exact(4)
-                .map(|bytes| f32::from_ne_bytes(bytes.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| f32::from_ne_bytes(*bytes))
                 .collect::<Vec<_>>(),
             vec![1.0, 0.0]
         );

@@ -64,11 +64,10 @@ impl PlacementCreation {
                 if completion
                     .target_board_id
                     .is_none_or(|id| id == context.board_id)
+                    && let Some(id) = placement_id
                 {
-                    if let Some(id) = placement_id {
-                        context.canvas.clear_image_lod_load(id);
-                        context.canvas.clear_crop_pending(id);
-                    }
+                    context.canvas.clear_image_lod_load(id);
+                    context.canvas.clear_crop_pending(id);
                 }
                 let result = (|| {
                     if let (Some(board_id), Some(id)) =
@@ -77,13 +76,11 @@ impl PlacementCreation {
                             context
                                 .editing
                                 .fail_placement(board_id, id, status.clone())?
+                        && board_id == context.board_id
+                        && context.canvas.placement_for_id(id).is_some()
                     {
-                        if board_id == context.board_id
-                            && context.canvas.placement_for_id(id).is_some()
-                        {
-                            context.canvas.add_unresolved_placement(placement);
-                            context.canvas.select_placements(&[id]);
-                        }
+                        context.canvas.add_unresolved_placement(placement);
+                        context.canvas.select_placements(&[id]);
                     }
                     self.finish_batch(
                         context,

@@ -29,7 +29,7 @@ pub(crate) fn begin_placement_resize(
         return;
     };
     let corners = super::super::geometry::screen_corners_for_placement(
-        &image,
+        image,
         state.pan,
         state.zoom,
         rect.center(),
@@ -163,7 +163,7 @@ pub(crate) fn placement_screen_rect(
     rect: egui::Rect,
     image: &Placement,
 ) -> egui::Rect {
-    screen_rect_for_placement(&image, state.pan, state.zoom, rect.center())
+    screen_rect_for_placement(image, state.pan, state.zoom, rect.center())
 }
 
 fn placement_resize_handle_screen_pos(
@@ -211,7 +211,7 @@ pub(crate) fn selected_placement_rotation_handle_screen_pos(
 
     if let Some(image) = state.selected_single_placement() {
         return Some(placement_rotation_handle_screen_pos(
-            &image,
+            image,
             state.pan,
             state.zoom,
             rect.center(),
@@ -299,7 +299,7 @@ pub(crate) fn hit_test_placement_resize_handle(
     pointer_pos: egui::Pos2,
 ) -> Option<PlacementResizeHandle> {
     let corners = super::super::geometry::screen_corners_for_placement(
-        &image,
+        image,
         state.pan,
         state.zoom,
         rect.center(),

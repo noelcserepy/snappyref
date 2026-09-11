@@ -70,18 +70,15 @@ pub(super) fn paint_sidebar_boards(
                             match action {
                                 Some(BoardRowAction::Switch) => {
                                     board_action =
-                                        Some(SidebarBoardAction::SwitchBoard(summary.board.id));
+                                        Some(SidebarBoardAction::Switch(summary.board.id));
                                 }
                                 Some(BoardRowAction::Rename(name)) => {
-                                    board_action = Some(SidebarBoardAction::RenameBoard(
-                                        summary.board.id,
-                                        name,
-                                    ));
+                                    board_action =
+                                        Some(SidebarBoardAction::Rename(summary.board.id, name));
                                 }
                                 Some(BoardRowAction::Delete) => {
-                                    board_action = Some(SidebarBoardAction::RequestDeleteBoard(
-                                        summary.board.id,
-                                    ));
+                                    board_action =
+                                        Some(SidebarBoardAction::RequestDelete(summary.board.id));
                                 }
                                 None => {}
                             }
@@ -114,7 +111,7 @@ pub(super) fn paint_sidebar_boards(
                         }
                         ui.add_space(crate::ui::theme::SPACE_3);
                         if paint_create_board_button(ui) {
-                            board_action = Some(SidebarBoardAction::CreateBoard);
+                            board_action = Some(SidebarBoardAction::Create);
                         }
                     },
                 );

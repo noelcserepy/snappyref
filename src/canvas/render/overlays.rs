@@ -122,7 +122,7 @@ pub(crate) fn paint_hover_hairline(
             continue;
         }
         let corners = screen_corners_for_placement(
-            &image,
+            image,
             state.pan,
             state.zoom,
             painter.clip_rect().center(),
@@ -149,7 +149,7 @@ pub(crate) fn paint_selected_placement_borders(
             continue;
         };
         let corners = screen_corners_for_placement(
-            &image,
+            image,
             state.pan,
             state.zoom,
             painter.clip_rect().center(),

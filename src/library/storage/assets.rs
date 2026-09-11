@@ -221,8 +221,10 @@ impl Library {
         hash_limit: usize,
         group_limit: usize,
     ) -> Result<ExactDedupeReport, String> {
-        let mut report = ExactDedupeReport::default();
-        report.hashed_assets = self.backfill_asset_hashes(hash_limit)?;
+        let mut report = ExactDedupeReport {
+            hashed_assets: self.backfill_asset_hashes(hash_limit)?,
+            ..Default::default()
+        };
 
         let groups = self.duplicate_asset_groups(group_limit)?;
         for group in groups {

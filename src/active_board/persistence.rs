@@ -316,7 +316,7 @@ impl PendingPersistenceBatch {
                     library.save_user_session(session)
                 }
                 PendingPersistenceOperation::BoardUnit { operation, history } => {
-                    library.persist_board_unit(&operation, &history)
+                    library.persist_board_unit(operation, history)
                 }
                 PendingPersistenceOperation::Flush(done_tx) => {
                     let _ = done_tx.send(Ok(()));

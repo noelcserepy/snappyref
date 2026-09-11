@@ -1,0 +1,6 @@
+# Several egui draw and storage entry points take 8 to 11 plain arguments; bundling them into structs is a separate refactor.
+too-many-arguments-threshold = 11
+# Two test-only types: a service test helper's five-part tuple of handles and the updater's boxed install override.
+type-complexity-threshold = 350
+# ImagePrepResult and PreparationOutcome carry a decoded image inline on purpose; boxing adds an allocation on the hot import path.
+enum-variant-size-threshold = 300

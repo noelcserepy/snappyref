@@ -473,11 +473,11 @@ fn upgrade_content_sources(value: &mut serde_json::Value) -> bool {
     match value {
         serde_json::Value::Object(object) => {
             for variant in ["Loading", "Failed"] {
-                if let Some(serde_json::Value::Object(content)) = object.get_mut(variant) {
-                    if let Some(source) = content.remove("intent") {
-                        content.entry("source").or_insert(source);
-                        changed = true;
-                    }
+                if let Some(serde_json::Value::Object(content)) = object.get_mut(variant)
+                    && let Some(source) = content.remove("intent")
+                {
+                    content.entry("source").or_insert(source);
+                    changed = true;
                 }
             }
             for child in object.values_mut() {

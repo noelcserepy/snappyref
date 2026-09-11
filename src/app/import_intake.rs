@@ -313,10 +313,10 @@ impl SnappyRefApp {
             Ok(integration) => {
                 let ui_integration_ms = ui_integration_started_at.elapsed().as_secs_f64() * 1000.0;
                 let mut status = "Cropped image".to_owned();
-                if let Some((asset_id, original_path)) = integration.indexed_asset {
-                    if let Err(error) = self.search.queue_asset_index(asset_id, original_path) {
-                        status = error;
-                    }
+                if let Some((asset_id, original_path)) = integration.indexed_asset
+                    && let Err(error) = self.search.queue_asset_index(asset_id, original_path)
+                {
+                    status = error;
                 }
                 if let Some(error) = self.residency.queue_backfill(
                     self.import_worker.as_ref(),

@@ -63,8 +63,10 @@ fn textbox_content_rect_respects_available_bounds() {
 
 #[test]
 fn textbox_content_rect_stays_inside_zoomed_out_textbox() {
-    let mut state = CanvasState::default();
-    state.zoom = MIN_CANVAS_ZOOM;
+    let state = CanvasState {
+        zoom: MIN_CANVAS_ZOOM,
+        ..Default::default()
+    };
     let canvas_rect = eframe::egui::Rect::from_min_max(
         eframe::egui::pos2(0.0, 0.0),
         eframe::egui::pos2(800.0, 600.0),

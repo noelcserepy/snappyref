@@ -117,7 +117,7 @@ impl BoardLifecycle<'_> {
                 },
                 HistoryDirection::Backward,
             ) => {
-                let active_document = self.accepted_board_document(&library, *active_before)?;
+                let active_document = self.accepted_board_document(library, *active_before)?;
                 self.editing.persistence.enqueue_board_lifecycle_unit(
                     crate::active_board::persistence::BoardLifecyclePersistence::Archive {
                         board_id: document.board.id,
@@ -202,7 +202,7 @@ impl BoardLifecycle<'_> {
                 HistoryDirection::Forward,
             ) => {
                 let active_document = if active_before_replay != *active_after {
-                    Some(self.accepted_board_document(&library, *active_after)?)
+                    Some(self.accepted_board_document(library, *active_after)?)
                 } else {
                     None
                 };
@@ -321,7 +321,7 @@ impl BoardLifecycle<'_> {
                 continue;
             }
             match crate::image_preparation::load_existing(
-                &library,
+                library,
                 *self.active_board_id,
                 None,
                 placement,
@@ -475,7 +475,7 @@ impl BoardLifecycle<'_> {
             .editing
             .documents
             .summaries()
-            .into_iter()
+            .iter()
             .find(|summary| summary.board.id == board_id)
             .map(|summary| summary.board.name.clone())
             .ok_or("Board unavailable")?;
@@ -508,7 +508,7 @@ impl BoardLifecycle<'_> {
             .editing
             .documents
             .summaries()
-            .into_iter()
+            .iter()
             .map(|summary| summary.board.id)
             .collect::<Vec<_>>();
         let index = board_ids

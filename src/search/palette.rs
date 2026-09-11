@@ -223,7 +223,7 @@ pub(crate) fn search_result_tile(
         ui.painter().rect_stroke(
             preview_rect,
             crate::ui::theme::RADIUS_NONE,
-            egui::Stroke::new(1.0, crate::ui::theme::TEXT),
+            egui::Stroke::new(1.0_f32, crate::ui::theme::TEXT),
             egui::StrokeKind::Outside,
         );
     }
@@ -419,7 +419,10 @@ fn paint_image_pivot_pill(
 
     egui::Frame::new()
         .fill(egui::Color32::from_white_alpha(18))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(28)))
+        .stroke(egui::Stroke::new(
+            1.0_f32,
+            egui::Color32::from_white_alpha(28),
+        ))
         .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT))
         .inner_margin(egui::Margin {
             left: crate::ui::theme::SPACE_1 as i8,
@@ -463,7 +466,7 @@ fn paint_image_pivot_pill(
                 } else {
                     crate::ui::theme::TEXT_MUTED
                 };
-                let stroke = egui::Stroke::new(1.2, dismiss_color);
+                let stroke = egui::Stroke::new(1.2_f32, dismiss_color);
                 let inset = 3.0;
                 ui.painter().line_segment(
                     [
@@ -492,7 +495,7 @@ fn paint_search_icon(ui: &mut egui::Ui, rect: egui::Rect, color: egui::Color32) 
     let painter = ui.painter();
     let center = rect.center();
     let r = rect.width() * 0.28;
-    let stroke = egui::Stroke::new(1.4, color);
+    let stroke = egui::Stroke::new(1.4_f32, color);
     painter.circle_stroke(center - egui::vec2(r * 0.3, r * 0.3), r, stroke);
     painter.line_segment(
         [
@@ -864,7 +867,7 @@ fn palette_status_text(status: &SearchOverlayStatus, idle_text: &'static str) ->
 #[cfg(test)]
 mod tests {
     use super::{
-        KBD_HINT_CELL_SIZE, PALETTE_CHROME_Y_MARGIN, PALETTE_FOOTER_STATUS_WIDTH, PALETTE_WIDTH,
+        KBD_HINT_CELL_SIZE, PALETTE_CHROME_Y_MARGIN, PALETTE_WIDTH,
         search_result_grid_content_height, search_result_grid_layout, search_result_tile_height,
     };
     use crate::ui::theme::SPACE_2;
@@ -875,11 +878,6 @@ mod tests {
         let footer_height = KBD_HINT_CELL_SIZE.y + f32::from(PALETTE_CHROME_Y_MARGIN) * 2.0;
 
         assert_eq!(header_height, footer_height);
-    }
-
-    #[test]
-    fn palette_footer_status_reservation_stays_compact() {
-        assert!(PALETTE_FOOTER_STATUS_WIDTH <= 96.0);
     }
 
     #[test]

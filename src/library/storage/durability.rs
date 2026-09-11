@@ -201,11 +201,11 @@ pub(super) fn remap_board_history_assets(
         let mut changed = false;
         match value {
             serde_json::Value::Object(fields) => {
-                if let Some(id) = fields.get_mut("asset_id") {
-                    if let Some(replacement) = id.as_i64().and_then(|id| remaps.get(&id)) {
-                        *id = (*replacement).into();
-                        changed = true;
-                    }
+                if let Some(id) = fields.get_mut("asset_id")
+                    && let Some(replacement) = id.as_i64().and_then(|id| remaps.get(&id))
+                {
+                    *id = (*replacement).into();
+                    changed = true;
                 }
                 for child in fields.values_mut() {
                     changed |= remap(child, remaps);

@@ -7,7 +7,7 @@ use crate::data::WorkspaceSettings;
 use rusqlite::Connection;
 use rusqlite::params;
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, Default)]
 pub(super) struct StoredUserSessionPayload {
     #[serde(default)]
     window: crate::data::WindowState,
@@ -29,17 +29,6 @@ impl StoredUserSessionPayload {
                 tab: session.sidebar_tab.clone(),
             },
             recent_searches: session.recent_searches.clone(),
-        }
-    }
-}
-
-impl Default for StoredUserSessionPayload {
-    fn default() -> Self {
-        Self {
-            window: crate::data::WindowState::default(),
-            workspace_settings: WorkspaceSettings::default(),
-            sidebar: StoredSidebarState::default(),
-            recent_searches: Vec::new(),
         }
     }
 }

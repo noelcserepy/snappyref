@@ -320,29 +320,28 @@ impl DocumentHistory {
                     changed = true;
                 }
             }
-            if !stack_updated {
-                if let (Some(change), Some(order)) = (&mut action.stack_order, &changes.stack_order)
-                {
-                    // Do not add later-created items to an earlier action. Its
-                    // replay can happen before those items are restored.
-                    let previous = change.after.as_deref().unwrap_or_default();
-                    change.after = Some(
-                        order
-                            .iter()
-                            .copied()
-                            .filter(|item| previous.contains(item))
-                            .collect(),
-                    );
-                    stack_updated = true;
-                    changed = true;
-                }
+            if !stack_updated
+                && let (Some(change), Some(order)) = (&mut action.stack_order, &changes.stack_order)
+            {
+                // Do not add later-created items to an earlier action. Its
+                // replay can happen before those items are restored.
+                let previous = change.after.as_deref().unwrap_or_default();
+                change.after = Some(
+                    order
+                        .iter()
+                        .copied()
+                        .filter(|item| previous.contains(item))
+                        .collect(),
+                );
+                stack_updated = true;
+                changed = true;
             }
-            if !groups_updated {
-                if let (Some(change), Some(groups)) = (&mut action.groups, &changes.groups) {
-                    change.after = Some(groups.clone());
-                    groups_updated = true;
-                    changed = true;
-                }
+            if !groups_updated
+                && let (Some(change), Some(groups)) = (&mut action.groups, &changes.groups)
+            {
+                change.after = Some(groups.clone());
+                groups_updated = true;
+                changed = true;
             }
         }
         changed

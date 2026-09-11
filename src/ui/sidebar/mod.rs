@@ -79,10 +79,10 @@ enum SidebarOptionsSection {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SidebarBoardAction {
-    CreateBoard,
-    SwitchBoard(i64),
-    RenameBoard(i64, String),
-    RequestDeleteBoard(i64),
+    Create,
+    Switch(i64),
+    Rename(i64, String),
+    RequestDelete(i64),
 }
 
 pub(crate) fn sidebar_rect(screen_rect: egui::Rect) -> egui::Rect {

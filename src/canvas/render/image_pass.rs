@@ -380,19 +380,19 @@ fn paint_unloaded_placement(
     let (fill, stroke, label, loading) = match &image.content {
         crate::data::PlacementContent::Loading { .. } => (
             crate::ui::theme::SURFACE,
-            egui::Stroke::new(1.0, crate::ui::theme::BORDER_STRONG),
+            egui::Stroke::new(1.0_f32, crate::ui::theme::BORDER_STRONG),
             None,
             true,
         ),
         crate::data::PlacementContent::Failed { .. } => (
             crate::ui::theme::DESTRUCTIVE_FILL,
-            egui::Stroke::new(1.0, crate::ui::theme::DESTRUCTIVE_EDGE),
+            egui::Stroke::new(1.0_f32, crate::ui::theme::DESTRUCTIVE_EDGE),
             Some("Failed"),
             false,
         ),
         crate::data::PlacementContent::Loaded { .. } => (
             crate::ui::theme::SURFACE,
-            egui::Stroke::new(1.0, crate::ui::theme::BORDER_STRONG),
+            egui::Stroke::new(1.0_f32, crate::ui::theme::BORDER_STRONG),
             None,
             false,
         ),
@@ -525,7 +525,7 @@ fn paint_image_mesh(
     image: &RenderedPlacement,
 ) {
     let corners =
-        screen_corners_for_placement(&image.placement, state.pan, state.zoom, rect.center());
+        screen_corners_for_placement(image.placement, state.pan, state.zoom, rect.center());
     let mut mesh = egui::Mesh::with_texture(image.texture.id());
     let left_top = mesh.vertices.len() as u32;
     mesh.vertices.push(egui::epaint::Vertex {

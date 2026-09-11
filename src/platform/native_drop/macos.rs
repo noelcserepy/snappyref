@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::ffi::{CStr, c_char};
+use std::ffi::c_char;
 use std::sync::{Mutex, Once, OnceLock};
 
 use crate::sources::clipboard::macos::{
@@ -132,14 +132,13 @@ unsafe fn swizzle_drag_operation_method(
 }
 
 unsafe fn add_dragging_updated_method() {
-    let class_name =
-        CStr::from_bytes_with_nul(b"WinitWindowDelegate\0").expect("static Objective-C class name");
+    let class_name = c"WinitWindowDelegate";
     let class = unsafe { objc2::ffi::objc_getClass(class_name.as_ptr()) };
     if class.is_null() {
         return;
     }
 
-    let types = CStr::from_bytes_with_nul(b"Q@:@\0").expect("static Objective-C method encoding");
+    let types = c"Q@:@";
     unsafe {
         let _ = objc2::ffi::class_addMethod(
             class as *mut _,
