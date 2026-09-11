@@ -31,7 +31,7 @@ real boards. Add a real capture at assets/readme/board.png and link it here. -->
 ## Download
 
 Releases are at <https://github.com/noelcserepy/snappyref-dist/releases>.
-The latest is v0.2.0. Each release has `snappyref-mac-<version>.zip` and
+Each release has `snappyref-mac-<version>.zip` and
 `snappyref-windows-<version>.zip`. Unzip, keep the `SnappyRef` folder
 together, and run the app from inside it. The Library is stored beside the app
 when that folder is writable, otherwise in your user app-data directory.
