@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install libjpeg-turbo
+        run: brew install jpeg-turbo
+
+      - name: Configure turbojpeg
+        run: |
+          echo "TURBOJPEG_SOURCE=explicit" >> "$GITHUB_ENV"
+          echo "TURBOJPEG_STATIC=1" >> "$GITHUB_ENV"
+          echo "TURBOJPEG_LIB_DIR=$(brew --prefix jpeg-turbo)/lib" >> "$GITHUB_ENV"
+          echo "TURBOJPEG_INCLUDE_DIR=$(brew --prefix jpeg-turbo)/include" >> "$GITHUB_ENV"
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: cargo check
+        run: cargo check --locked
+
+      - name: cargo test update_preservation_smoke
+        run: cargo test --locked update_preservation_smoke
