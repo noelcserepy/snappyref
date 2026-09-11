@@ -2,6 +2,7 @@
 """Inspect scenario catalogue and required artifact evidence."""
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -34,8 +35,14 @@ SCENARIOS = {
 }
 
 
+def inspect_root(root=ROOT):
+    # Mirrors inspect_artifact_dir in src/app/tests/support.rs.
+    target = Path(os.environ.get('CARGO_TARGET_DIR', 'target'))
+    return (target if target.is_absolute() else root / target) / 'snappyref-inspect'
+
+
 def check_artifact(scenario, started, root=ROOT):
-    latest = root / 'target/snappyref-inspect' / scenario / 'latest.txt'
+    latest = inspect_root(root) / scenario / 'latest.txt'
     if not latest.is_file() or latest.stat().st_mtime < started:
         raise RuntimeError(f'missing or stale inspect artifact: {scenario}')
     artifact = Path(latest.read_text().strip())

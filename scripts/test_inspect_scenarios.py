@@ -11,12 +11,12 @@ from inspect_scenarios import check_artifact, main, SCENARIOS
 
 class InspectEvidenceTests(unittest.TestCase):
     def test_missing_stale_failed_and_incomplete_reports_fail(self):
-        with tempfile.TemporaryDirectory() as scratch:
+        with tempfile.TemporaryDirectory() as scratch, patch.dict('os.environ', {'CARGO_TARGET_DIR': 'build'}):
             root = Path(scratch)
             started = time.time()
             with self.assertRaises(RuntimeError):
                 check_artifact('sample', started, root)
-            directory = root / 'target/snappyref-inspect/sample'
+            directory = root / 'build/snappyref-inspect/sample'
             directory.mkdir(parents=True)
             frame = directory / 'frame.png'
             frame.write_bytes(b'fixture')
