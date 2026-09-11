@@ -1017,6 +1017,9 @@ impl State {
                     self.egui_input.events.push(egui::Event::Copy);
                     return;
                 } else if is_paste_command(self.egui_input.modifiers, active_key) {
+                    // SnappyRef local change: upstream skips the event when the clipboard
+                    // text is empty. Always push Paste so an image-only clipboard still
+                    // triggers SnappyRef's paste handling. See vendor/egui-winit/README.md.
                     let contents = self
                         .clipboard
                         .get()

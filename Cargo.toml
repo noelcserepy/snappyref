@@ -2,6 +2,10 @@
 name = "snappyref"
 version = "0.2.0"
 edition = "2024"
+license = "MIT"
+description = "Local-first reference board for collecting, arranging and searching image references"
+repository = "https://github.com/noelcserepy/snappyref"
+readme = "README.md"
 
 [features]
 default = ["turbojpeg-native"]
