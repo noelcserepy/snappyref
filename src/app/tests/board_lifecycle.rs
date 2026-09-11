@@ -617,12 +617,12 @@ fn board_rename_undo_and_redo_restore_exact_names_once() {
     let storage_lock = rusqlite::Connection::open(root.join("library.db")).unwrap();
     storage_lock.execute_batch("BEGIN IMMEDIATE").unwrap();
 
-    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::RenameBoard(
+    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::Rename(
         board.id,
         "  Reference Board  ".to_owned(),
     )));
     assert_eq!(app.board_summaries()[0].board.name, "Reference Board");
-    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::RenameBoard(
+    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::Rename(
         board.id,
         "Final Board".to_owned(),
     )));
@@ -867,7 +867,7 @@ fn deleting_active_board_restores_accepted_fallback_content_while_persistence_re
     let mut app = test_app(Some(library.clone()));
     app.board_editing.persistence = crate::app::DocumentPersistence::queued(library.clone());
 
-    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::RenameBoard(
+    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::Rename(
         fallback.id,
         "Accepted fallback".to_owned(),
     )));
@@ -943,7 +943,7 @@ fn undoing_board_create_reopens_accepted_previous_board_while_persistence_retrie
     let mut app = test_app(Some(library.clone()));
     app.board_editing.persistence = crate::app::DocumentPersistence::queued(library.clone());
 
-    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::RenameBoard(
+    app.handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::Rename(
         previous.id,
         "Accepted previous".to_owned(),
     )));

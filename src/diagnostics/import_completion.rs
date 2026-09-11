@@ -92,36 +92,35 @@ pub(crate) fn record_loaded_import(
             log.trace,
         );
     }
-    if let Some((asset_id, _original_path)) = indexed_asset {
-        if perf_counts_as_import
-            && let Some(scenario) = &mut scenario
-            && scenario.pending_embedding_asset_ids.insert(*asset_id)
-        {
-            scenario.demand_embeddings_queued += 1;
-            let metadata = scenario.asset_by_asset_id.get(asset_id).cloned();
-            let (format_value, source_file) = match &metadata {
-                Some(meta) => (Some(meta.format.clone()), Some(meta.file.clone())),
-                None => (None, None),
-            };
-            if !scenario.first_embedding_queued_logged {
-                scenario.first_embedding_queued_logged = true;
-                scenario.emit(
-                    "first_import_embedding_queued",
-                    serde_json::json!({
-                        "format": format_value,
-                        "file": source_file,
-                    }),
-                );
-            }
+    if let Some((asset_id, _original_path)) = indexed_asset
+        && perf_counts_as_import
+        && let Some(scenario) = &mut scenario
+        && scenario.pending_embedding_asset_ids.insert(*asset_id)
+    {
+        scenario.demand_embeddings_queued += 1;
+        let metadata = scenario.asset_by_asset_id.get(asset_id).cloned();
+        let (format_value, source_file) = match &metadata {
+            Some(meta) => (Some(meta.format.clone()), Some(meta.file.clone())),
+            None => (None, None),
+        };
+        if !scenario.first_embedding_queued_logged {
+            scenario.first_embedding_queued_logged = true;
             scenario.emit(
-                "import_embedding_queued",
+                "first_import_embedding_queued",
                 serde_json::json!({
-                    "asset_id": asset_id,
                     "format": format_value,
                     "file": source_file,
                 }),
             );
         }
+        scenario.emit(
+            "import_embedding_queued",
+            serde_json::json!({
+                "asset_id": asset_id,
+                "format": format_value,
+                "file": source_file,
+            }),
+        );
     }
 }
 pub(crate) fn log_loaded_timing(

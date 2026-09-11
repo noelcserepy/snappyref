@@ -79,7 +79,7 @@ impl UpdateState {
                     }
                     | UpdateState::Downloading { version: v, .. }
                     | UpdateState::Ready { version: v }
-                        if !crate::updater::version::is_newer_than(&version, v) =>
+                        if !crate::updater::version::is_newer_than(version, v) =>
                     {
                         // Ignore: we already know about this version.
                     }

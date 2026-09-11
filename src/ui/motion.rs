@@ -83,7 +83,7 @@ pub(crate) fn cascade_reveal_on_appear(
     #[cfg(test)]
     {
         let _ = (ctx, list_id, index);
-        return RevealState::SETTLED;
+        RevealState::SETTLED
     }
 
     #[cfg(not(test))]

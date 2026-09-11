@@ -292,17 +292,16 @@ pub(super) fn handle_input(
     if primary_down
         && let Some(pointer_pos) = pointer_pos
         && let Some(ActiveGesture::AnnotationDrag(drag_state)) = state.interaction.gesture.clone()
+        && pointer_pos.distance(drag_state.pointer_start_screen) >= TEXTBOX_DRAG_THRESHOLD_SCREEN
     {
-        if pointer_pos.distance(drag_state.pointer_start_screen) >= TEXTBOX_DRAG_THRESHOLD_SCREEN {
-            let pointer_world = state.screen_to_world(pointer_pos, rect);
-            let world_delta = pointer_world - drag_state.pointer_start_world;
-            for (annotation_id, segment) in drag_state.starting_segments {
-                state.set_annotation_world_points(
-                    annotation_id,
-                    segment.start + world_delta,
-                    segment.end + world_delta,
-                );
-            }
+        let pointer_world = state.screen_to_world(pointer_pos, rect);
+        let world_delta = pointer_world - drag_state.pointer_start_world;
+        for (annotation_id, segment) in drag_state.starting_segments {
+            state.set_annotation_world_points(
+                annotation_id,
+                segment.start + world_delta,
+                segment.end + world_delta,
+            );
         }
     }
 
@@ -656,7 +655,7 @@ pub(crate) fn hit_test_placement(
         .rev()
         .find(|image| {
             placement_contains_screen_point(
-                &image,
+                image,
                 pointer_pos,
                 state.pan,
                 state.zoom,

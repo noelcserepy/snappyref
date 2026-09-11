@@ -682,10 +682,10 @@ impl SearchController {
 
         let pivot = selected_image_pivot(library, canvas);
 
-        if pivot.is_some() && self.overlay.image_pivot != pivot {
-            if let Some(pivot) = pivot {
-                self.open_image_pivot_search(pivot);
-            }
+        if self.overlay.image_pivot != pivot
+            && let Some(pivot) = pivot
+        {
+            self.open_image_pivot_search(pivot);
         }
 
         self.open_overlay_from_command();
@@ -991,8 +991,10 @@ mod tests {
 
     #[test]
     fn model_removal_failure_and_retry_share_settings_result_handling() {
-        let mut search = SearchController::default();
-        search.local_model_store_status = Some(LocalModelStoreStatus::Installed);
+        let mut search = SearchController {
+            local_model_store_status: Some(LocalModelStoreStatus::Installed),
+            ..Default::default()
+        };
         search.embedding_backfill.exhausted = true;
         let mut status = String::new();
         search.remove_semantic_search_assets_with(&mut status, || Err("read only".to_owned()));

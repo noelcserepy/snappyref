@@ -93,7 +93,7 @@ pub(crate) struct UserCompactLayout {
 pub(crate) fn horizontal_layout(
     items: &[PlacementArrangementInput],
     gap: f32,
-) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
+) -> Option<PackedLayout> {
     if items.is_empty() {
         return None;
     }
@@ -121,7 +121,7 @@ pub(crate) fn horizontal_layout(
 pub(crate) fn vertical_layout(
     items: &[PlacementArrangementInput],
     gap: f32,
-) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
+) -> Option<PackedLayout> {
     if items.is_empty() {
         return None;
     }
@@ -316,11 +316,14 @@ enum CompactSort {
     Height,
 }
 
+/// Placement centers by id plus the packed width and height.
+type PackedLayout = (Vec<(i64, egui::Pos2)>, f32, f32);
+
 #[derive(Clone, Copy)]
 enum PackHeuristic {
-    BestShortSide,
-    BestLongSide,
-    BestArea,
+    ShortSide,
+    LongSide,
+    Area,
 }
 
 #[derive(Clone)]
@@ -338,7 +341,7 @@ struct CompactCandidate {
 pub(crate) fn best_compact_layout(
     items: &[PlacementArrangementInput],
     gap: f32,
-) -> Option<(Vec<(i64, egui::Pos2)>, f32, f32)> {
+) -> Option<PackedLayout> {
     best_compact_candidate(items, gap)
         .map(|candidate| (candidate.placements, candidate.width, candidate.height))
 }
@@ -358,9 +361,9 @@ fn best_compact_candidate(
         CompactSort::Height,
     ];
     let heuristics = [
-        PackHeuristic::BestShortSide,
-        PackHeuristic::BestArea,
-        PackHeuristic::BestLongSide,
+        PackHeuristic::ShortSide,
+        PackHeuristic::Area,
+        PackHeuristic::LongSide,
     ];
     let mut best_layout: Option<CompactCandidate> = None;
 
@@ -856,9 +859,7 @@ fn maxrects_pack_layout(
             return None;
         }
 
-        let Some(placed) = place_maxrects_item(&mut free_rects, padded, heuristic) else {
-            return None;
-        };
+        let placed = place_maxrects_item(&mut free_rects, padded, heuristic)?;
         placements.push((
             item.id,
             egui::pos2(
@@ -937,15 +938,15 @@ fn pack_score(free: PackRect, padded: PackRect, heuristic: PackHeuristic) -> Pac
     let long_side_fit = leftover_width.max(leftover_height);
     let area_fit = free.width * free.height - padded.width * padded.height;
     match heuristic {
-        PackHeuristic::BestShortSide => PackScore {
+        PackHeuristic::ShortSide => PackScore {
             primary: short_side_fit,
             secondary: long_side_fit,
         },
-        PackHeuristic::BestLongSide => PackScore {
+        PackHeuristic::LongSide => PackScore {
             primary: long_side_fit,
             secondary: short_side_fit,
         },
-        PackHeuristic::BestArea => PackScore {
+        PackHeuristic::Area => PackScore {
             primary: area_fit,
             secondary: short_side_fit,
         },

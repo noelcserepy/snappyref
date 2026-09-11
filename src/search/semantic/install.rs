@@ -135,11 +135,11 @@ fn install_inner(
     let zip_path = updates_dir.join(format!("{SEMANTIC_SEARCH_DOWNLOAD_PREFIX}{attempt_id}.zip"));
     let staging_root = updates_dir.join(format!("{SEMANTIC_SEARCH_STAGING_PREFIX}{attempt_id}"));
     let mut progress = |written: u64, total: u64| {
-        let percent = if total == 0 {
-            0
-        } else {
-            ((written.saturating_mul(100)) / total).min(100) as u8
-        };
+        let percent = written
+            .saturating_mul(100)
+            .checked_div(total)
+            .unwrap_or(0)
+            .min(100) as u8;
         on_progress(SemanticSearchInstallProgress::Progress { percent });
     };
     let result = download::download_from_url_cancellable(
@@ -402,7 +402,7 @@ mod tests {
     fn descriptor_for_bytes(bytes: &[u8]) -> SemanticSearchAssetDescriptor {
         SemanticSearchAssetDescriptor {
             url: "https://example.invalid/snappyref-semantic-search.zip".to_owned(),
-            sha256: download::sha256_hex(&bytes),
+            sha256: download::sha256_hex(bytes),
             size: bytes.len() as u64,
             model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
         }

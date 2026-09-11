@@ -258,7 +258,7 @@ fn reserved_world_is_persisted_without_worker_relayout() {
                     width: 100,
                     height: 100,
                 },
-                reserved_world: reserved_world,
+                reserved_world,
 
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
@@ -297,7 +297,7 @@ fn overlapping_reserved_world_is_preserved_when_persisting() {
                     width: 100,
                     height: 100,
                 },
-                reserved_world: reserved_world,
+                reserved_world,
 
                 max_texture_side: usize::MAX,
                 canvas_image_settings: CanvasImageSettings::default(),
@@ -1228,7 +1228,7 @@ const ANIMATED_WEBP_2X2_2_FRAMES: &[u8] = &[
 fn solid_png_bytes(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
     let rgba = vec![color; (width * height) as usize]
         .into_iter()
-        .flat_map(|pixel| pixel)
+        .flatten()
         .collect::<Vec<_>>();
     let image = image::RgbaImage::from_raw(width, height, rgba).unwrap();
     let mut bytes = Vec::new();

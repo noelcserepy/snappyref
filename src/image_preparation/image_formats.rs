@@ -2134,13 +2134,10 @@ static unsigned char sample_bits[] = { 0x01 };
         let first = RgbaImage::from_raw(2, 1, vec![255, 0, 0, 255, 255, 0, 0, 255]).unwrap();
         let second = RgbaImage::from_raw(2, 1, vec![0, 0, 255, 255, 0, 0, 255, 255]).unwrap();
         encoder
-            .encode_frames(
-                vec![
-                    Frame::from_parts(first, 0, 0, Delay::from_numer_denom_ms(120, 1)),
-                    Frame::from_parts(second, 0, 0, Delay::from_numer_denom_ms(120, 1)),
-                ]
-                .into_iter(),
-            )
+            .encode_frames(vec![
+                Frame::from_parts(first, 0, 0, Delay::from_numer_denom_ms(120, 1)),
+                Frame::from_parts(second, 0, 0, Delay::from_numer_denom_ms(120, 1)),
+            ])
             .unwrap();
         drop(encoder);
 

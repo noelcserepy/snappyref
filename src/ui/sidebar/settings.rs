@@ -416,13 +416,13 @@ fn paint_number_text_field(
         })
         .inner;
 
-    if response.changed() {
-        if let Ok(parsed) = text.trim().parse::<f32>() {
-            let clamped = parsed.clamp(*range.start(), *range.end());
-            if (*value - clamped).abs() > f32::EPSILON {
-                *value = clamped;
-                changed = true;
-            }
+    if response.changed()
+        && let Ok(parsed) = text.trim().parse::<f32>()
+    {
+        let clamped = parsed.clamp(*range.start(), *range.end());
+        if (*value - clamped).abs() > f32::EPSILON {
+            *value = clamped;
+            changed = true;
         }
     }
 

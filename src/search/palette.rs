@@ -864,7 +864,7 @@ fn palette_status_text(status: &SearchOverlayStatus, idle_text: &'static str) ->
 #[cfg(test)]
 mod tests {
     use super::{
-        KBD_HINT_CELL_SIZE, PALETTE_CHROME_Y_MARGIN, PALETTE_FOOTER_STATUS_WIDTH, PALETTE_WIDTH,
+        KBD_HINT_CELL_SIZE, PALETTE_CHROME_Y_MARGIN, PALETTE_WIDTH,
         search_result_grid_content_height, search_result_grid_layout, search_result_tile_height,
     };
     use crate::ui::theme::SPACE_2;
@@ -875,11 +875,6 @@ mod tests {
         let footer_height = KBD_HINT_CELL_SIZE.y + f32::from(PALETTE_CHROME_Y_MARGIN) * 2.0;
 
         assert_eq!(header_height, footer_height);
-    }
-
-    #[test]
-    fn palette_footer_status_reservation_stays_compact() {
-        assert!(PALETTE_FOOTER_STATUS_WIDTH <= 96.0);
     }
 
     #[test]

@@ -525,7 +525,7 @@ fn paint_image_mesh(
     image: &RenderedPlacement,
 ) {
     let corners =
-        screen_corners_for_placement(&image.placement, state.pan, state.zoom, rect.center());
+        screen_corners_for_placement(image.placement, state.pan, state.zoom, rect.center());
     let mut mesh = egui::Mesh::with_texture(image.texture.id());
     let left_top = mesh.vertices.len() as u32;
     mesh.vertices.push(egui::epaint::Vertex {

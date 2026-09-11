@@ -64,7 +64,7 @@ fn length_prefixed_utf16be_strings(bytes: &[u8]) -> Vec<String> {
         let end = start.saturating_add(length);
 
         if length > 0
-            && length % 2 == 0
+            && length.is_multiple_of(2)
             && end <= bytes.len()
             && let Some(value) = decode_utf16be_string(&bytes[start..end])
         {

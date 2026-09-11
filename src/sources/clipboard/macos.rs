@@ -60,6 +60,22 @@ fn append_file_path_from_file_url(raw_url: &str, paths: &mut Vec<std::path::Path
     }
 }
 
+pub(super) fn append_internal_text(text: &str) -> Result<(), String> {
+    use objc2::msg_send;
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    use objc2_foundation::NSString;
+
+    let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
+    let text = NSString::from_str(text);
+    let success: bool =
+        unsafe { msg_send![&pasteboard, setString: &*text, forType: NSPasteboardTypeString] };
+    if success {
+        Ok(())
+    } else {
+        Err("Failed to add SnappyRef clipboard metadata".to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::append_file_path_from_file_url;
@@ -75,21 +91,5 @@ mod tests {
             paths,
             vec![std::path::PathBuf::from("/Users/alice/Reference A.png")]
         );
-    }
-}
-
-pub(super) fn append_internal_text(text: &str) -> Result<(), String> {
-    use objc2::msg_send;
-    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
-    use objc2_foundation::NSString;
-
-    let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
-    let text = NSString::from_str(text);
-    let success: bool =
-        unsafe { msg_send![&pasteboard, setString: &*text, forType: NSPasteboardTypeString] };
-    if success {
-        Ok(())
-    } else {
-        Err("Failed to add SnappyRef clipboard metadata".to_owned())
     }
 }

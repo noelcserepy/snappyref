@@ -53,7 +53,7 @@ pub(super) fn render_sidebar_for_test(ctx: &egui::Context, app: &mut SnappyRefAp
         &mut app.sidebar_tab,
         &mut app.settings,
         &mut app.canvas,
-        &board_summaries,
+        board_summaries,
         app.active_board_id,
         None,
         about_updates,
@@ -768,7 +768,7 @@ pub(super) fn compact_selection_fact(app: &SnappyRefApp) -> serde_json::Value {
                 .map(|placement| (id, placement.state.geometry.center))
         })
         .collect::<Vec<_>>();
-    centers.sort_by(|left, right| left.0.cmp(&right.0));
+    centers.sort_by_key(|left| left.0);
     let mut xs = centers
         .iter()
         .map(|(_, center)| center.x)

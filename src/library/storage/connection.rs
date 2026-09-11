@@ -89,6 +89,17 @@ impl Library {
     }
 }
 
+/// Every Library write starts as an Immediate transaction so the writer takes
+/// the lock up front instead of failing with SQLITE_BUSY at commit.
+pub(super) fn write_transaction<'c>(
+    connection: &'c mut Connection,
+    label: &str,
+) -> Result<Transaction<'c>, String> {
+    connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("failed to start {label} transaction: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::Library;
@@ -114,15 +125,4 @@ mod tests {
         let reopened = Library::initialize(root.to_path_buf()).unwrap();
         assert!(reopened.allocate_document_id() > group_id);
     }
-}
-
-/// Every Library write starts as an Immediate transaction so the writer takes
-/// the lock up front instead of failing with SQLITE_BUSY at commit.
-pub(super) fn write_transaction<'c>(
-    connection: &'c mut Connection,
-    label: &str,
-) -> Result<Transaction<'c>, String> {
-    connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|error| format!("failed to start {label} transaction: {error}"))
 }

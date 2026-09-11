@@ -28,7 +28,6 @@ enum StackOrderMove {
 impl CanvasState {
     /// Replaces any rendered placement with the same id, registers it in the
     /// stack order if new, and keeps the render list sorted by z-index.
-
     pub fn add_provisional_unresolved_placement(&mut self, mut placement: Placement) {
         placement.lifecycle = PlacementLifecycle::Provisional;
         self.add_unresolved_placement(placement);
@@ -123,7 +122,7 @@ impl CanvasState {
             .placements
             .iter()
             .filter(|image| image.lifecycle == PlacementLifecycle::Committed)
-            .map(|image| image.clone())
+            .cloned()
             .collect()
     }
 
@@ -145,7 +144,7 @@ impl CanvasState {
             .placements
             .iter()
             .find(|image| image.state.id == placement_id)
-            .map(|image| image.clone())
+            .cloned()
     }
 
     pub fn compact_guided_layout_for_sizes(
@@ -218,8 +217,6 @@ impl CanvasState {
         }
     }
 
-    /// Loads not yet handed to the worker; marks them dispatched.
-
     pub fn add_annotation(&mut self, annotation: CanvasAnnotation) {
         self.invalidate_textbox_layout_cache(annotation.id);
         self.document
@@ -265,9 +262,7 @@ impl CanvasState {
         &mut self,
         placement: Option<Placement>,
     ) -> Option<Placement> {
-        let Some(placement) = placement else {
-            return None;
-        };
+        let placement = placement?;
         if placement.state.archived {
             self.delete_placements(&[placement.state.id]);
             return None;
@@ -345,7 +340,7 @@ impl CanvasState {
                     .find(|image| {
                         image.state.id == id && image.lifecycle == PlacementLifecycle::Committed
                     })
-                    .map(|image| image.clone())
+                    .cloned()
             })
             .collect();
 
@@ -398,7 +393,7 @@ impl CanvasState {
                     .find(|image| {
                         image.state.id == *id && image.lifecycle == PlacementLifecycle::Committed
                     })
-                    .map(|image| image.clone())
+                    .cloned()
             })
             .collect();
 
@@ -1249,7 +1244,7 @@ impl CanvasState {
                 }
 
                 image.apply_compact_output(crate::placement::arrangement::CompactOutput {
-                    placement_id: placement_id,
+                    placement_id,
                     center: world_center,
                 });
                 image.state.geometry.scale = next_scale;

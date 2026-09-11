@@ -1302,7 +1302,7 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
             ),
         )
         .unwrap();
-    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[first.state.id, second.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[first.state.id, second.state.id]).contains(id))).collect()), ..Default::default()})
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: [first.state.id, second.state.id].to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if [first.state.id, second.state.id].contains(id))).collect()), ..Default::default()})
         .unwrap();
     let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();

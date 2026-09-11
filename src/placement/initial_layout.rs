@@ -204,14 +204,13 @@ mod tests {
 
     #[test]
     fn deterministic_candidate_order_prefers_right_before_below_on_tie() {
-        let mut existing = Vec::new();
-        existing.push(
+        let existing = vec![
             crate::placement::arrangement::PlacementArrangementInput::new(
-                existing.len() as i64,
+                0,
                 eframe::egui::pos2(0.0, 0.0),
-                eframe::egui::vec2(100 as f32, 100 as f32),
+                eframe::egui::vec2(100_f32, 100_f32),
             ),
-        );
+        ];
 
         let arranged = arrange_rect_with_existing_layout(
             &existing,
@@ -227,19 +226,18 @@ mod tests {
 
     #[test]
     fn blocked_right_side_candidate_falls_through_to_valid_lower_slot() {
-        let mut existing = Vec::new();
-        existing.push(
+        let mut existing = vec![
             crate::placement::arrangement::PlacementArrangementInput::new(
-                existing.len() as i64,
+                0,
                 eframe::egui::pos2(0.0, 0.0),
-                eframe::egui::vec2(100 as f32, 100 as f32),
+                eframe::egui::vec2(100_f32, 100_f32),
             ),
-        );
+        ];
         existing.push(
             crate::placement::arrangement::PlacementArrangementInput::new(
                 existing.len() as i64,
                 eframe::egui::pos2(112.0, 0.0),
-                eframe::egui::vec2(100 as f32, 100 as f32),
+                eframe::egui::vec2(100_f32, 100_f32),
             ),
         );
 
@@ -257,14 +255,13 @@ mod tests {
 
     #[test]
     fn square_scoring_beats_anchor_distance_for_adjacent_imports() {
-        let mut existing = Vec::new();
-        existing.push(
+        let existing = vec![
             crate::placement::arrangement::PlacementArrangementInput::new(
-                existing.len() as i64,
+                0,
                 eframe::egui::pos2(0.0, 0.0),
-                eframe::egui::vec2(240 as f32, 80 as f32),
+                eframe::egui::vec2(240_f32, 80_f32),
             ),
-        );
+        ];
 
         let arranged = arrange_rect_with_existing_layout(
             &existing,
@@ -280,14 +277,13 @@ mod tests {
 
     #[test]
     fn viewport_bounding_prefers_on_screen_candidate() {
-        let mut existing = Vec::new();
-        existing.push(
+        let existing = vec![
             crate::placement::arrangement::PlacementArrangementInput::new(
-                existing.len() as i64,
+                0,
                 eframe::egui::pos2(0.0, 0.0),
-                eframe::egui::vec2(240 as f32, 80 as f32),
+                eframe::egui::vec2(240_f32, 80_f32),
             ),
-        );
+        ];
         let viewport = eframe::egui::Rect::from_min_max(
             eframe::egui::pos2(100.0, -60.0),
             eframe::egui::pos2(260.0, 60.0),

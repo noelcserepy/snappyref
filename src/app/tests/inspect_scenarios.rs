@@ -34,7 +34,7 @@ fn inspect_search_result_drag_to_canvas_writes_artifact() {
             ),
         )
         .unwrap();
-    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[source.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[source.state.id]).contains(id))).collect()), ..Default::default()}).unwrap();
+    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: [source.state.id].to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if [source.state.id].contains(id))).collect()), ..Default::default()}).unwrap();
     let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
 
@@ -547,7 +547,7 @@ fn inspect_board_lifecycle_undo_redo_writes_artifact() {
     );
     if !pointer_rename_committed {
         harness.state_mut().handle_board_action(Some(
-            crate::ui::sidebar::SidebarBoardAction::RenameBoard(
+            crate::ui::sidebar::SidebarBoardAction::Rename(
                 created.id,
                 "Lifecycle Board".to_owned(),
             ),
@@ -1049,7 +1049,7 @@ fn inspect_search_palette_footer_writes_artifact() {
                 ),
             )
             .unwrap();
-        library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[placement.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[placement.state.id]).contains(id))).collect()), ..Default::default()}).unwrap();
+        library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: [placement.state.id].to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if [placement.state.id].contains(id))).collect()), ..Default::default()}).unwrap();
         result_placements.push(placement);
     }
 
@@ -1180,7 +1180,7 @@ fn inspect_blue_image_search_drag_writes_artifact() {
                 ),
             )
             .unwrap();
-        library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: (&[placement.state.id]).to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if (&[placement.state.id]).contains(id))).collect()), ..Default::default()}).unwrap();
+        library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: [placement.state.id].to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if [placement.state.id].contains(id))).collect()), ..Default::default()}).unwrap();
         result_placements.push(placement);
     }
 
@@ -2244,7 +2244,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
             timeout_assertion: "semantic search install completed before timeout",
         },
         |app| app.search.local_model_store_status(),
-        |status| inspect_status_slug(status),
+        inspect_status_slug,
         |status| {
             matches!(
                 status,

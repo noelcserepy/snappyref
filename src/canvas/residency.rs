@@ -105,9 +105,7 @@ impl ImageResidencyCoordinator {
         settings: &WorkspaceSettings,
         max_texture_side: usize,
     ) -> Option<String> {
-        let Some(import_worker) = import_worker else {
-            return None;
-        };
+        let import_worker = import_worker?;
 
         let mut last_error = None;
         for (placement_id, target_lod) in canvas.undispatched_image_lod_loads() {

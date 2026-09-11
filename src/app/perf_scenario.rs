@@ -514,11 +514,11 @@ impl SnappyRefApp {
             // conditions as `import-1`; the remaining entries trickle
             // in via `dispatch_perf_trickle_imports`.
             let mut iter = entries.into_iter();
-            if let Some(first) = iter.next() {
-                if let Err(error) = self.enqueue_perf_entry(&first, desired_world) {
-                    self.emit_perf_error_and_close(ctx, error);
-                    return;
-                }
+            if let Some(first) = iter.next()
+                && let Err(error) = self.enqueue_perf_entry(&first, desired_world)
+            {
+                self.emit_perf_error_and_close(ctx, error);
+                return;
             }
             let remaining: Vec<_> = iter.collect();
             if let Some(scenario) = &mut self.perf_scenario {
@@ -811,19 +811,17 @@ impl SnappyRefApp {
                         .ok()
                         .and_then(|value| value.parse::<u64>().ok())
                         .map(Duration::from_millis)
+                    && !scenario.model_unload_logged
                 {
-                    if !scenario.model_unload_logged {
-                        if idle_since.elapsed() >= unload_after {
-                            if self.search.unload_model_for_perf() {
-                                scenario.model_unload_logged = true;
-                                scenario
-                                    .emit("semantic_model_unload_requested", serde_json::json!({}));
-                                scenario.emit("semantic_model_unloaded", serde_json::json!({}));
-                            }
-                        } else {
-                            next_repaint_after =
-                                next_repaint_after.min(unload_after - idle_since.elapsed());
+                    if idle_since.elapsed() >= unload_after {
+                        if self.search.unload_model_for_perf() {
+                            scenario.model_unload_logged = true;
+                            scenario.emit("semantic_model_unload_requested", serde_json::json!({}));
+                            scenario.emit("semantic_model_unloaded", serde_json::json!({}));
                         }
+                    } else {
+                        next_repaint_after =
+                            next_repaint_after.min(unload_after - idle_since.elapsed());
                     }
                 }
                 ctx.request_repaint_after(next_repaint_after.max(Duration::from_millis(250)));

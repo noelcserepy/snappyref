@@ -98,15 +98,15 @@ impl BoardEditing {
         let placement_changes = changes
             .updated_placements
             .into_iter()
-            .filter_map(|after| {
+            .map(|after| {
                 let before = current_items
                     .iter()
                     .find(|placement| placement.state.id == after.state.id)
                     .cloned();
-                Some(HistoryChange {
+                HistoryChange {
                     before,
                     after: Some(after),
-                })
+                }
             })
             .collect::<Vec<_>>();
         let annotation_changes = changes

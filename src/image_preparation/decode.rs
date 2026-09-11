@@ -46,7 +46,7 @@ pub(super) fn prepare_image_with_helper(
     #[cfg(test)]
     {
         let _ = (source_path, canvas_image_settings);
-        return Ok(None);
+        Ok(None)
     }
 
     #[cfg(not(test))]

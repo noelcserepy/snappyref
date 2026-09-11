@@ -371,18 +371,18 @@ impl SnappyRefApp {
 
     fn handle_board_action(&mut self, action: Option<SidebarBoardAction>) {
         match action {
-            Some(SidebarBoardAction::CreateBoard) => self.create_and_switch_board(true),
-            Some(SidebarBoardAction::SwitchBoard(board_id)) => self.switch_to_board(board_id),
-            Some(SidebarBoardAction::RenameBoard(board_id, name)) => {
+            Some(SidebarBoardAction::Create) => self.create_and_switch_board(true),
+            Some(SidebarBoardAction::Switch(board_id)) => self.switch_to_board(board_id),
+            Some(SidebarBoardAction::Rename(board_id, name)) => {
                 match self.board_lifecycle().rename(board_id, &name) {
                     Ok(Some(status)) | Err(status) => self.status = status,
                     Ok(None) => {}
                 }
             }
-            Some(SidebarBoardAction::RequestDeleteBoard(board_id)) => {
+            Some(SidebarBoardAction::RequestDelete(board_id)) => {
                 let board_name = self
                     .board_summaries()
-                    .into_iter()
+                    .iter()
                     .find(|summary| summary.board.id == board_id)
                     .map(|summary| summary.board.name.clone())
                     .unwrap_or_else(|| "Board".to_owned());
@@ -1363,7 +1363,7 @@ impl eframe::App for SnappyRefApp {
             &mut self.sidebar_tab,
             &mut self.settings,
             &mut self.canvas,
-            &board_summaries,
+            board_summaries,
             self.active_board_id,
             None,
             about_updates,
