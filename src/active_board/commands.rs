@@ -179,6 +179,11 @@ pub(crate) fn delete_selected_from_board(
     context: &mut ActiveBoardCommandContext<'_>,
 ) -> Result<Option<String>, String> {
     let mut status = None;
+    let selected_groups = context.canvas.selected_group_ids().len();
+    if selected_groups > 0 {
+        context.canvas.ungroup_selected();
+        status = Some(format!("Deleted {selected_groups} groups"));
+    }
     let annotation_ids = context.canvas.delete_selected_annotations();
     if !annotation_ids.is_empty() {
         let noun = if annotation_ids.len() == 1 {

@@ -213,7 +213,6 @@ pub struct SnappyRefApp {
     hover_preview_dimensions: std::collections::HashMap<std::path::PathBuf, Option<(u32, u32)>>,
     last_hovered_external_drag: Option<crate::sources::external_drag::ExternalDragIntake>,
     external_hover_provisional_placement_ids: Vec<i64>,
-    pending_missing_drop_fallback: Option<crate::sources::external_drag::ExternalDragIntake>,
     pending_user_session: Option<crate::data::UserSession>,
     pending_user_session_save_at: Option<Instant>,
     update_service: UpdateService,
@@ -324,7 +323,6 @@ impl SnappyRefApp {
             hover_preview_dimensions: std::collections::HashMap::new(),
             last_hovered_external_drag: None,
             external_hover_provisional_placement_ids: Vec::new(),
-            pending_missing_drop_fallback: None,
             pending_user_session: None,
             pending_user_session_save_at: None,
             update_service: UpdateService::new(update_config),
@@ -1333,6 +1331,18 @@ impl eframe::App for SnappyRefApp {
         self.handle_pending_crop_requests(ui.ctx());
         self.drive_embedding_backfill(ui.ctx());
         self.handle_pending_annotation_requests();
+        if let Some((name, members)) = self.canvas.take_group_creation()
+            && let Some(library) = &self.library
+        {
+            match self
+                .canvas
+                .create_named_group(library.allocate_document_id(), name, &members)
+            {
+                Ok(Some(id)) => self.canvas.remember_group_destination(id),
+                Ok(None) => {}
+                Err(error) => self.status = error,
+            }
+        }
         self.persist_canvas_changes_debounced(ui.ctx());
         if let Some(error) = self.board_editing.persistence.take_error() {
             self.status = error;

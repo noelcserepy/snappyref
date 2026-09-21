@@ -1,6 +1,7 @@
 mod board_lifecycle;
 mod completion;
 mod editing_interaction;
+mod inspect_media;
 mod inspect_scenarios;
 mod performance_reporting;
 mod placement_creation;

@@ -49,12 +49,20 @@ pub(crate) fn append_file_paths_from_item(
 }
 
 fn append_file_path_from_file_url(raw_url: &str, paths: &mut Vec<std::path::PathBuf>) {
-    let Ok(url) = url::Url::parse(raw_url) else {
+    use objc2_foundation::{NSString, NSURL};
+
+    let Some(url) = (unsafe { NSURL::URLWithString(&NSString::from_str(raw_url)) }) else {
         return;
     };
-    let Ok(path) = url.to_file_path() else {
+    if !unsafe { url.isFileURL() } {
+        return;
+    }
+    // Finder also publishes file-reference URLs. Resolve them before deduplicating
+    // against the ordinary paths from NSFilenamesPboardType.
+    let Some(path) = (unsafe { url.filePathURL().and_then(|url| url.path()) }) else {
         return;
     };
+    let path = std::path::PathBuf::from(path.to_string());
     if !paths.contains(&path) {
         paths.push(path);
     }
@@ -79,6 +87,28 @@ pub(super) fn append_internal_text(text: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::append_file_path_from_file_url;
+
+    #[test]
+    fn finder_file_reference_and_filename_import_once() {
+        use objc2_foundation::{NSString, NSURL};
+
+        let root = crate::test_support::TempRoot::new("finder-file-reference");
+        let path = root.join("Référence 明 A.png");
+        std::fs::write(&path, b"fixture").unwrap();
+        let path = path.canonicalize().unwrap();
+        let url = unsafe { NSURL::fileURLWithPath(&NSString::from_str(path.to_str().unwrap())) };
+        let reference = unsafe { url.fileReferenceURL().unwrap().absoluteString().unwrap() };
+        assert!(reference.to_string().contains("/.file/id="));
+
+        let mut paths = vec![path.clone()];
+        append_file_path_from_file_url(&reference.to_string(), &mut paths);
+        assert_eq!(paths, vec![path.clone()]);
+
+        let mut paths = Vec::new();
+        append_file_path_from_file_url(&reference.to_string(), &mut paths);
+        assert_eq!(paths, vec![path]);
+    }
+
     #[test]
     fn file_url_clipboard_values_decode_to_paths_once() {
         let mut paths = Vec::new();

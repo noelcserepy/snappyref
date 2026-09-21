@@ -225,4 +225,47 @@ mod tests {
         assert!(read_from(&mut clipboard, Some(&selection_text(-1.))).is_err());
         assert!(clipboard.reads.is_empty());
     }
+
+    #[test]
+    fn fresh_external_contents_replace_internal_selection_and_empty_text_does_nothing() {
+        let mut clipboard = ClipboardFixture {
+            text: Some(selection_text(1.)),
+            ..Default::default()
+        };
+        assert!(matches!(
+            read_from(&mut clipboard, None).unwrap(),
+            Some(ClipboardContent::BoardSelection(_))
+        ));
+        clipboard.text = None;
+        clipboard.image = Some(ImportSource::Clipboard {
+            rgba: vec![12, 34, 56, 255],
+            width: 1,
+            height: 1,
+        });
+        let Some(ClipboardContent::Sources { sources, pureref }) =
+            read_from(&mut clipboard, None).unwrap()
+        else {
+            panic!("fresh image expected")
+        };
+        assert_eq!(sources, vec![clipboard.image.clone().unwrap()]);
+        assert!(!pureref);
+        clipboard.image = None;
+        for text in [None, Some(""), Some("ordinary unsupported text")] {
+            assert!(read_from(&mut clipboard, text).unwrap().is_none());
+        }
+        clipboard.paths = vec!["first.png".into(), "second.jpg".into()];
+        let Some(ClipboardContent::Sources { sources, pureref }) =
+            read_from(&mut clipboard, None).unwrap()
+        else {
+            panic!("file batch expected")
+        };
+        assert_eq!(
+            sources,
+            vec![
+                ImportSource::Path("first.png".into()),
+                ImportSource::Path("second.jpg".into())
+            ]
+        );
+        assert!(!pureref);
+    }
 }

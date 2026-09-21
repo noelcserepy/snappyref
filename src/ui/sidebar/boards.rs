@@ -212,10 +212,10 @@ pub(super) fn paint_board_row(
     let title_double_clicked = title_response.double_clicked();
     let mut submitted_name = None;
     if title_double_clicked {
-        ui.memory_mut(|memory| memory.request_focus(name_edit_id));
         ui.data_mut(|data| data.insert_persisted(name_edit_id, name.to_owned()));
     }
-    if renaming {
+    // Publish the editor in the same frame that requests its accessibility focus.
+    if renaming || title_double_clicked {
         let mut name_edit = ui
             .data_mut(|data| data.get_persisted::<String>(name_edit_id))
             .unwrap_or_else(|| name.to_owned());
@@ -228,6 +228,9 @@ pub(super) fn paint_board_row(
                 .frame(egui::Frame::NONE)
                 .desired_width(name_rect.width()),
         );
+        if title_double_clicked {
+            name_response.request_focus();
+        }
         ui.data_mut(|data| data.insert_persisted(name_edit_id, name_edit.clone()));
         let rename_submitted = name_response.lost_focus()
             && name_edit != name

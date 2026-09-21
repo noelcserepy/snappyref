@@ -95,6 +95,36 @@ pub(super) fn replace_board_groups(
     Ok(())
 }
 
+pub(super) fn prune_archived_group_members(transaction: &Transaction<'_>) -> Result<(), String> {
+    let board_ids = transaction
+        .prepare("SELECT board_id FROM board_groups")
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| row.get::<_, i64>(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    for board_id in board_ids {
+        let live_ids = transaction
+            .prepare("SELECT id FROM board_items WHERE board_id = ?1 AND archived = 0")
+            .map_err(|error| error.to_string())?
+            .query_map([board_id], |row| row.get::<_, i64>(0))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<std::collections::HashSet<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        let mut groups = load_groups_for_board_id(transaction, board_id)?;
+        let mut changed = false;
+        for group in &mut groups {
+            let old_len = group.members.len();
+            group.members.retain(|id| live_ids.contains(id));
+            changed |= old_len != group.members.len();
+        }
+        if changed {
+            replace_board_groups(transaction, board_id, &groups)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 impl Library {
     pub fn load_groups(&self) -> Result<Vec<Group>, String> {
@@ -181,5 +211,104 @@ mod tests {
                 .label(),
             history.undo(1).unwrap().action.label()
         );
+    }
+}
+
+#[cfg(test)]
+mod release_tests {
+    use super::*;
+    use crate::data::{Placement, PlacementState};
+    use eframe::egui;
+
+    #[test]
+    fn library_remove_multiple_assets_prunes_groups_on_every_board_after_reopen() {
+        let root = crate::test_support::TempRoot::new("library-remove-groups");
+        let library = Library::initialize(root.to_path_buf()).unwrap();
+        let second = library.fixture_board("Second").unwrap();
+        let assets: Vec<_> = (0..3)
+            .map(|i| {
+                let path = library
+                    .store_rgba_image(&format!("asset-{i}"), &[i, 40, 90, 255], 1, 1)
+                    .unwrap();
+                library
+                    .register_original(&path, "image/png", 1, 1, 4, None)
+                    .unwrap()
+            })
+            .collect();
+        for board in [1, second.id] {
+            let mut snapshot = library.load_board_document(board).unwrap();
+            snapshot.placements = assets
+                .iter()
+                .map(|asset| {
+                    Placement::loaded(
+                        PlacementState::new(
+                            library.allocate_document_id(),
+                            egui::pos2(20.0, 30.0),
+                            1.0,
+                            0.0,
+                            0,
+                            false,
+                        ),
+                        asset.clone(),
+                    )
+                })
+                .collect();
+            snapshot.groups = vec![Group {
+                id: library.allocate_document_id(),
+                name: "References".into(),
+                members: snapshot.placements.iter().map(Placement::id).collect(),
+                container: RectGeometry::new(
+                    egui::pos2(20.0, 30.0),
+                    egui::vec2(100.0, 100.0),
+                    1.0,
+                    0.0,
+                    0,
+                ),
+                flow: GroupFlow::Row,
+                spacing: 8.0,
+                padding: 12.0,
+            }];
+            snapshot.stack_order = snapshot
+                .placements
+                .iter()
+                .map(|p| crate::data::CanvasStackItem::Placement(p.id()))
+                .collect();
+            library.fixture_board_snapshot(&snapshot, board).unwrap();
+        }
+        let mut accepted = crate::active_board::catalog::AcceptedBoards::default();
+        for board in [1, second.id] {
+            accepted.ensure_loaded(&library, board).unwrap();
+        }
+        library
+            .archive_assets(&[assets[0].id, assets[1].id])
+            .unwrap();
+        accepted.remove_assets(&[assets[0].id, assets[1].id]);
+        for board in [1, second.id] {
+            let document = accepted.document(&library, board).unwrap();
+            assert_eq!(
+                document.groups[0].members,
+                vec![document.placements[0].id()]
+            );
+        }
+        drop(library);
+        let reopened = Library::initialize(root.to_path_buf()).unwrap();
+        for board in [1, second.id] {
+            let document = reopened.load_board_document(board).unwrap();
+            assert_eq!(document.placements.len(), 1);
+            assert_eq!(document.placements[0].asset_id(), Some(assets[2].id));
+            assert_eq!(
+                document.groups[0].members,
+                vec![document.placements[0].id()],
+                "board {board} must not retain archived group members"
+            );
+            assert_eq!(document.groups[0].flow, GroupFlow::Row);
+            assert_eq!(document.groups[0].spacing, 8.0);
+            assert_eq!(
+                document.stack_order,
+                vec![crate::data::CanvasStackItem::Placement(
+                    document.placements[0].id()
+                )]
+            );
+        }
     }
 }

@@ -19,7 +19,7 @@ impl SnappyRefApp {
         let hover_intake = crate::sources::external_drag::hovered(ui);
         let hovered_sources = hover_intake.sources.clone();
         if hovered_sources.is_empty() {
-            self.pending_missing_drop_fallback = self.last_hovered_external_drag.take();
+            self.last_hovered_external_drag = None;
             self.canvas
                 .delete_placements(&self.external_hover_provisional_placement_ids);
             self.external_hover_provisional_placement_ids.clear();
@@ -32,7 +32,6 @@ impl SnappyRefApp {
             return;
         }
         self.last_hovered_external_drag = Some(hover_intake.clone());
-        self.pending_missing_drop_fallback = None;
 
         let hovered_paths = hovered_sources
             .iter()
@@ -92,31 +91,16 @@ impl SnappyRefApp {
         }
 
         let drop_intake = crate::sources::external_drag::take_drop(ui);
-        let (dropped_sources, drop_screen_pos) = if drop_intake.sources.is_empty() {
-            let Some(fallback) = self.take_missing_drop_event_fallback() else {
-                return;
-            };
-            (fallback.sources, fallback.screen_pos)
-        } else {
-            self.last_hovered_external_drag = None;
-            self.pending_missing_drop_fallback = None;
-            (drop_intake.sources, drop_intake.screen_pos)
-        };
+        let dropped_sources = drop_intake.sources;
+        let drop_screen_pos = drop_intake.screen_pos;
         if dropped_sources.is_empty() {
             return;
         }
 
+        self.last_hovered_external_drag = None;
         let desired_world = self.preferred_import_world_with_pointer(screen_rect, drop_screen_pos);
         self.enqueue_import_sources(dropped_sources, screen_rect, desired_world);
         self.external_hover_provisional_placement_ids.clear();
-    }
-
-    pub(super) fn take_missing_drop_event_fallback(
-        &mut self,
-    ) -> Option<crate::sources::external_drag::ExternalDragIntake> {
-        self.pending_missing_drop_fallback
-            .take()
-            .filter(|fallback| !fallback.sources.is_empty())
     }
 
     pub(super) fn handle_clipboard_paste(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {

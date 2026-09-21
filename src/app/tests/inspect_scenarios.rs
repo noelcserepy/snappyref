@@ -429,7 +429,7 @@ fn inspect_board_lifecycle_undo_redo_writes_artifact() {
         "scenario.seed",
         serde_json::json!({
             "seed": "one-initial-board",
-            "purpose": "pointer-create, pointer-rename, confirmed pointer-delete, then keyboard lifecycle replay",
+            "purpose": "pointer-create, rename command, confirmed pointer-delete, then keyboard lifecycle replay",
         }),
     );
 
@@ -520,40 +520,17 @@ fn inspect_board_lifecycle_undo_redo_writes_artifact() {
         harness.step();
     }
 
-    let board_name_rect = harness.get_by_label("Board Board 2").rect();
-    scenario.target("sidebar.created-board-name", "button", board_name_rect);
-    scenario.action(
-        "pointer double-click Board 2 name",
-        board_name_rect.center(),
+    scenario.event(
+        "action",
+        serde_json::json!({"name": "rename the created Board"}),
     );
-    harness.get_by_label("Board Board 2").click();
+    harness
+        .state_mut()
+        .handle_board_action(Some(crate::ui::sidebar::SidebarBoardAction::Rename(
+            created.id,
+            "Lifecycle Board".to_owned(),
+        )));
     harness.step();
-    harness.get_by_label("Board Board 2").click();
-    harness.step();
-    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::A);
-    harness.event(egui::Event::Text("Lifecycle Board".to_owned()));
-    harness.key_press(egui::Key::Enter);
-    harness.step();
-    let pointer_rename_committed =
-        harness.state().board_summaries().iter().any(|summary| {
-            summary.board.id == created.id && summary.board.name == "Lifecycle Board"
-        });
-    scenario.fact(
-        "board-lifecycle.rename-harness",
-        serde_json::json!({
-            "pointer_double_click_committed": pointer_rename_committed,
-            "limitation": "egui_kittest did not expose the overlapping board-row title response as a double click",
-        }),
-    );
-    if !pointer_rename_committed {
-        harness.state_mut().handle_board_action(Some(
-            crate::ui::sidebar::SidebarBoardAction::Rename(
-                created.id,
-                "Lifecycle Board".to_owned(),
-            ),
-        ));
-        harness.step();
-    }
     scenario.assertion(
         "rename action commits the exact requested name",
         harness.state().board_summaries().iter().any(|summary| {

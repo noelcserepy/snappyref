@@ -785,3 +785,111 @@ fn embedding_helpers_scope_to_requested_model_key() {
     assert_eq!(embeddings.len(), 1);
     assert_eq!(embeddings[0].asset_id, first.require_loaded_asset().id);
 }
+
+#[test]
+fn closed_library_move_rebases_managed_originals_and_history() {
+    let parent = TempRoot::new("relocated-library");
+    let old_root = parent.join("before");
+    let new_root = parent.join("after");
+    let library = Library::initialize(old_root.clone()).unwrap();
+    let path = library
+        .store_rgba_image("portable", &[33, 66, 99, 255], 1, 1)
+        .unwrap();
+    let asset = library
+        .register_original(&path, "image/png", 1, 1, 4, None)
+        .unwrap();
+    let placement = library
+        .fixture_placement(
+            1,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(9.0, 8.0),
+                    1.0,
+                    0.4,
+                    0,
+                    false,
+                ),
+                asset.clone(),
+            ),
+        )
+        .unwrap();
+    let mut history = crate::active_board::history::DocumentHistory::default();
+    history.record_applied(
+        1,
+        crate::active_board::history::HistoryAction::document(
+            "Import".into(),
+            vec![crate::active_board::history::HistoryChange {
+                before: None,
+                after: Some(placement),
+            }],
+            vec![],
+            None,
+        ),
+    );
+    library
+        .persist_board_unit(
+            &crate::library::storage::BoardDurabilityOperation::Document {
+                board_id: 1,
+                changes: Default::default(),
+            },
+            &history,
+        )
+        .unwrap();
+    let mut session = library.load_user_session().unwrap();
+    session.settings.placement_gap = 51.0;
+    session.recent_searches = vec!["portable references".into()];
+    library.save_user_session(&session).unwrap();
+    drop(library);
+    fs::rename(&old_root, &new_root).unwrap();
+    let moved = Library::initialize(new_root.clone()).unwrap();
+    let restored = moved.load_placements().unwrap();
+    let restored_path = &restored[0].require_loaded_asset().original_path;
+    assert!(
+        restored_path.starts_with(&new_root),
+        "managed path must follow library move: {restored_path:?}"
+    );
+    assert_eq!(
+        image::open(restored_path).unwrap().to_rgba8().as_raw(),
+        &[33, 66, 99, 255]
+    );
+    assert_eq!(moved.load_user_session().unwrap(), session);
+    let undo = moved.load_document_history().unwrap().undo(1).unwrap();
+    let crate::active_board::history::HistoryAction::Document(action) = undo.action else {
+        panic!("document action")
+    };
+    assert_eq!(
+        action.placements[0]
+            .after
+            .as_ref()
+            .unwrap()
+            .require_loaded_asset()
+            .original_path,
+        *restored_path
+    );
+    drop(moved);
+    let copy_root = parent.join("copied");
+    fs::create_dir_all(copy_root.join("originals")).unwrap();
+    fs::copy(new_root.join("library.db"), copy_root.join("library.db")).unwrap();
+    for entry in fs::read_dir(new_root.join("originals")).unwrap() {
+        let entry = entry.unwrap();
+        fs::copy(
+            entry.path(),
+            copy_root.join("originals").join(entry.file_name()),
+        )
+        .unwrap();
+    }
+    let copied = Library::initialize(copy_root.clone()).unwrap();
+    let copied_asset = copied.load_asset(asset.id).unwrap();
+    assert!(copied_asset.original_path.starts_with(&copy_root));
+    fs::remove_dir_all(new_root).unwrap();
+    assert_eq!(
+        image::open(copied_asset.original_path)
+            .unwrap()
+            .to_rgba8()
+            .as_raw(),
+        &[33, 66, 99, 255]
+    );
+    assert_eq!(copied.load_user_session().unwrap(), session);
+    assert!(copied.load_document_history().unwrap().undo(1).is_some());
+}

@@ -290,14 +290,26 @@ fn marquee_selection_can_select_textbox_when_no_images_intersect() {
 
 #[test]
 fn merge_only_updates_crop_owned_item_fields() {
-    let mut item = PlacementState::new(7, eframe::egui::pos2(12.0, 18.0), 1.5, 0.25, 9, false);
+    let mut item = PlacementState::new(
+        7,
+        eframe::egui::pos2(12.0, 18.0),
+        1.5,
+        std::f32::consts::FRAC_PI_2,
+        9,
+        false,
+    );
 
     merge_cropped_item_fields(&mut item, eframe::egui::vec2(80.0, 96.0));
 
-    assert_eq!(item.geometry.center.x, 132.0);
-    assert_eq!(item.geometry.center.y, 162.0);
+    // A quarter turn maps the scaled local offset (120, 144) to (-144, 120).
+    assert!(
+        item.geometry
+            .center
+            .distance(eframe::egui::pos2(-132.0, 138.0))
+            < 0.001
+    );
     assert_eq!(item.geometry.scale, 1.5);
-    assert_eq!(item.geometry.rotation, 0.25);
+    assert_eq!(item.geometry.rotation, std::f32::consts::FRAC_PI_2);
     assert_eq!(item.geometry.z_index, 9);
     assert!(!item.archived);
 }
@@ -655,4 +667,49 @@ fn provisional_placements_use_interleaved_image_painting() {
         ]
     );
     assert!(!optimized_image_pass_eligible_for_state(&state));
+}
+
+#[test]
+fn rotated_crop_uses_visible_pixels_and_preserves_world_position() {
+    eframe::egui::__run_test_ui(|ui| {
+        let mut state = CanvasState::default();
+        let viewport = eframe::egui::Rect::from_min_size(
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::vec2(800.0, 600.0),
+        );
+        push_test_image(ui, &mut state, 501, 100, 80, 1.0, eframe::egui::Pos2::ZERO);
+        state.set_placement_center_and_rotation(
+            501,
+            eframe::egui::Pos2::ZERO,
+            std::f32::consts::FRAC_PI_2,
+        );
+        let request = state
+            .build_crop_request(
+                viewport,
+                &crate::canvas::CropState {
+                    placement_id: 501,
+                    start_screen: viewport.center() + eframe::egui::vec2(-40.0, -50.0),
+                    current_screen: viewport.center() + eframe::egui::vec2(40.0, 0.0),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            request.crop_rect,
+            PixelCropRect {
+                x: 0,
+                y: 0,
+                width: 50,
+                height: 80
+            }
+        );
+        let mut placement = state.placement_for_id(501).unwrap().state.clone();
+        merge_cropped_item_fields(&mut placement, request.crop_offset_local);
+        assert!(
+            placement
+                .geometry
+                .center
+                .distance(eframe::egui::pos2(0.0, -25.0))
+                < 0.001
+        );
+    });
 }

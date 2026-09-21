@@ -39,6 +39,7 @@ pub(super) use viewport::{
     apply_canvas_navigation, handle_viewport_navigation_input, step_mouse_wheel_zoom_animation,
 };
 
+use super::AnnotationEndpoint;
 #[cfg(test)]
 use super::PlacementScaleStart;
 use super::geometry::{min_loaded_placement_scale, placement_contains_screen_point, rotate_vec2};
@@ -165,6 +166,15 @@ pub(super) fn handle_input(
     }
 
     if let Some(pointer_pos) = pointer_pos
+        && let Some(annotation_id) = state.single_selected_annotation_id()
+        && let Some(annotation) = state.annotation_by_id(annotation_id)
+        && annotation::annotation_endpoint_at_pointer(state, rect, annotation, pointer_pos)
+            .is_some()
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    }
+
+    if let Some(pointer_pos) = pointer_pos
         && let Some(image) = state.selected_single_placement()
         && let Some(handle) = hit_test_placement_resize_handle(state, rect, image, pointer_pos)
     {
@@ -231,7 +241,14 @@ pub(super) fn handle_input(
                         if state.interaction.editing_text_annotation_id.is_some() {
                             state.finish_textbox_edit();
                         }
-                        state.add_annotation_to_selection(annotation_id);
+                        if state.is_annotation_selected(annotation_id) {
+                            state
+                                .interaction
+                                .selected_annotation_ids
+                                .retain(|id| *id != annotation_id);
+                        } else {
+                            state.add_annotation_to_selection(annotation_id);
+                        }
                         state.interaction.end_gesture();
                         return;
                     }
@@ -253,6 +270,14 @@ pub(super) fn handle_input(
                 }
                 CanvasHit::Placement(placement_id) => {
                     if shift_held {
+                        if state.is_selected(placement_id) {
+                            state
+                                .interaction
+                                .selected_placement_ids
+                                .retain(|id| *id != placement_id);
+                            state.interaction.end_gesture();
+                            return;
+                        }
                         state.add_to_selection(placement_id);
                     } else if !state.is_selected(placement_id) {
                         state.set_single_selection(placement_id);
@@ -297,11 +322,12 @@ pub(super) fn handle_input(
         let pointer_world = state.screen_to_world(pointer_pos, rect);
         let world_delta = pointer_world - drag_state.pointer_start_world;
         for (annotation_id, segment) in drag_state.starting_segments {
-            state.set_annotation_world_points(
-                annotation_id,
-                segment.start + world_delta,
-                segment.end + world_delta,
-            );
+            let (start, end) = match drag_state.endpoint {
+                Some(AnnotationEndpoint::Start) => (segment.start + world_delta, segment.end),
+                Some(AnnotationEndpoint::End) => (segment.start, segment.end + world_delta),
+                None => (segment.start + world_delta, segment.end + world_delta),
+            };
+            state.set_annotation_world_points(annotation_id, start, end);
         }
     }
 
@@ -535,15 +561,20 @@ pub(super) fn handle_input(
                 TextboxTransformState::PendingMove { .. } => {}
             },
             Some(ActiveGesture::AnnotationDrag(drag_state)) => {
-                for annotation_id in drag_state.annotation_ids {
+                for (annotation_id, _) in drag_state.starting_segments {
                     state.mark_annotation_dirty(annotation_id);
                 }
             }
             Some(ActiveGesture::PlacementDrag(drag_state)) => {
                 if drag_state.moved {
-                    for item in drag_state.starting_items {
-                        state.finish_group_member_drag(item.id);
-                        state.mark_dirty(item.id);
+                    let ids = drag_state
+                        .starting_items
+                        .iter()
+                        .map(|item| item.id)
+                        .collect::<Vec<_>>();
+                    state.finish_group_member_drag(&ids);
+                    for id in ids {
+                        state.mark_dirty(id);
                     }
                 }
                 state.clear_guide_snap_indicators();

@@ -57,6 +57,8 @@ pub(crate) struct CanvasInteractionState {
     pub(super) group_gesture: Option<super::groups::GroupGesture>,
     pub(super) group_transform_changed: bool,
     pub(super) group_picker: Option<super::groups::GroupPicker>,
+    pub(super) group_name_edit: Option<(crate::data::GroupId, String)>,
+    pub(super) pending_group_creation: Option<(String, Vec<i64>)>,
     pub(super) last_group_destination: Option<i64>,
     pub(super) editing_text_annotation_id: Option<i64>,
     pub(super) focus_text_editor: bool,

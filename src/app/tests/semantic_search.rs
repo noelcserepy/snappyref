@@ -1043,3 +1043,30 @@ fn empty_recent_searches_do_not_submit_boilerplate_query() {
             .is_empty()
     );
 }
+
+#[test]
+fn recent_search_keyboard_dispatch_restores_query_and_persists_order() {
+    let root = TempRoot::new("search-recent-keyboard");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.search
+        .set_recent_searches(vec!["stone arches".into(), "blue chairs".into()]);
+    app.search.overlay.open = true;
+    app.search.overlay.focus_requested = true;
+    app.search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+    let mut harness = app_harness(app, |ctx, app| {
+        app.show_search_overlay(ctx, test_screen_rect());
+    });
+    harness.key_press(egui::Key::ArrowDown);
+    harness.step();
+    harness.key_press(egui::Key::Enter);
+    harness.step();
+    assert_eq!(harness.state().search.overlay.query, "blue chairs");
+    harness.state_mut().flush_persistence();
+    assert_eq!(
+        library.load_user_session().unwrap().recent_searches,
+        vec!["blue chairs", "stone arches"]
+    );
+    assert!(harness.state().canvas.all_placement_ids().is_empty());
+}

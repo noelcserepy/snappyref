@@ -410,6 +410,25 @@ mod tests {
     }
 
     #[test]
+    fn board_rename_focus_is_present_in_accessibility_tree_on_double_click() {
+        use egui_kittest::{Harness, kittest::Queryable};
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(268.0, 200.0))
+            .with_step_dt(1.0 / 60.0)
+            .build_ui(|ui| {
+                paint_board_row(ui, 1, "My Board", "0 images", true, None, false, 0.0);
+            });
+        harness.get_by_label("Board My Board").click();
+        harness.step();
+        harness.get_by_label("Board My Board").click();
+        harness.step();
+        assert!(
+            harness.ctx.egui_wants_keyboard_input(),
+            "double-click must focus the rename editor"
+        );
+    }
+
+    #[test]
     fn board_row_rename_mode_consumes_full_row_height() {
         let ctx = egui::Context::default();
         let mut cursor_after_row = 0.0;

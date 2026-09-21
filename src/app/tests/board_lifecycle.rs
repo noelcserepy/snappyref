@@ -1115,27 +1115,33 @@ fn command_zero_switches_tenth_visible_board() {
     let tenth = tenth.unwrap();
     let mut app = test_app(Some(library.clone()));
 
-    let _ = ctx.run_ui(
-        egui::RawInput {
-            modifiers: egui::Modifiers {
-                command: true,
-                ..Default::default()
-            },
-            events: vec![egui::Event::Key {
-                key: egui::Key::Num0,
-                physical_key: Some(egui::Key::Num0),
-                pressed: true,
-                repeat: false,
+    for (key, index) in [(egui::Key::Num9, 8), (egui::Key::Num0, 9)] {
+        let _ = ctx.run_ui(
+            egui::RawInput {
                 modifiers: egui::Modifiers {
                     command: true,
                     ..Default::default()
                 },
-            }],
-            ..Default::default()
-        },
-        |ui| app.handle_board_shortcuts(ui.ctx()),
-    );
+                events: vec![egui::Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
+                }],
+                ..Default::default()
+            },
+            |ui| app.handle_board_shortcuts(ui.ctx()),
+        );
 
+        assert_eq!(
+            app.active_board_id,
+            library.list_boards().unwrap()[index].id
+        );
+    }
     assert_eq!(app.active_board_id, tenth.id);
 }
 
@@ -1210,6 +1216,14 @@ fn switching_boards_saves_previous_viewport_and_loads_target_viewport() {
     library.set_active_board(second.id).unwrap();
     assert_eq!(app.active_board_id, second.id);
     assert_eq!(app.canvas.background(), crate::data::CanvasBackground::Dots);
+    let first_view = saved_first.viewport;
+    app.sidebar_open = false;
+    for _ in 0..3 {
+        app.switch_to_board(first.id);
+        assert_eq!(app.canvas.viewport_state(), first_view);
+        app.switch_to_board(second.id);
+        assert_eq!(app.canvas.viewport_state(), second_session.viewport);
+    }
 }
 
 #[test]
@@ -1343,15 +1357,30 @@ fn board_delete_undo_restores_document_view_history_and_active_fallback() {
             true,
         )
         .unwrap();
+    let mut other = placement.clone();
+    other.state.id = library.allocate_document_id();
+    other.state.geometry.center.x += 80.0;
+    let other = library.fixture_placement(second.id, other).unwrap();
+    let group = crate::data::Group {
+        id: library.allocate_document_id(),
+        name: "Kept group".to_owned(),
+        members: vec![other.state.id, placement.state.id],
+        container: placement.state.geometry,
+        flow: crate::data::GroupFlow::Column,
+        spacing: 17.0,
+        padding: 23.0,
+    };
     let mixed_stack = vec![
         CanvasStackItem::Annotation(annotation.id),
         CanvasStackItem::Placement(placement.state.id),
+        CanvasStackItem::Placement(other.state.id),
     ];
     library
         .fixture_board_document(
             library.load_user_session().unwrap().active_board_id,
             crate::canvas::CanvasDocumentChanges {
                 stack_order: Some(mixed_stack.to_vec()),
+                groups: Some(vec![group.clone()]),
                 ..Default::default()
             },
         )
@@ -1416,7 +1445,8 @@ fn board_delete_undo_restores_document_view_history_and_active_fallback() {
         vec![first.clone(), second.clone()]
     );
     let restored_placements = library.load_placements().unwrap();
-    assert_eq!(restored_placements.len(), 1);
+    assert_eq!(restored_placements.len(), 2);
+    assert_eq!(library.load_groups().unwrap(), vec![group.clone()]);
     assert_eq!(restored_placements[0].state.id, placement.state.id);
     assert_eq!(
         restored_placements[0].state.geometry,
@@ -1463,6 +1493,15 @@ fn board_delete_undo_restores_document_view_history_and_active_fallback() {
         )
         .unwrap();
     assert_eq!(active_assets, 1);
+    app.undo_document_history(&ctx);
+    app.flush_persistence();
+    assert_eq!(app.active_board_id, second.id);
+    assert_eq!(library.load_groups().unwrap(), vec![group]);
+    assert_eq!(library.load_canvas_stack_order().unwrap(), mixed_stack);
+    assert_eq!(
+        library.load_user_session().unwrap().viewport,
+        session.viewport
+    );
 }
 
 #[test]
@@ -1969,4 +2008,25 @@ fn command_enter_places_all_unplaced_library_search_results_on_empty_active_boar
     assert_eq!(asset_ids, expected_asset_ids);
     assert_eq!(harness.state().canvas.selected_placement_ids().len(), 2);
     assert!(!harness.state().search.overlay.open);
+}
+
+#[test]
+fn deleting_last_board_is_rejected_and_cancel_preserves_content() {
+    let root = TempRoot::new("snappyref-last-board-delete");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let board = library.list_boards().unwrap()[0].clone();
+    let mut app = test_app(Some(library.clone()));
+    app.refresh_board_summaries();
+    app.request_board_delete(board.id, board.name.clone());
+    app.cancel_pending_board_delete();
+    assert!(app.pending_board_delete.is_none());
+    assert_eq!(library.list_boards().unwrap(), vec![board.clone()]);
+    app.request_board_delete(board.id, board.name.clone());
+    app.confirm_pending_board_delete(&egui::Context::default());
+    app.flush_persistence();
+    assert_eq!(app.status, "cannot delete the last board");
+    assert_eq!(app.active_board_id, board.id);
+    assert_eq!(library.list_boards().unwrap(), vec![board]);
+    app.create_and_switch_board(false);
+    assert_eq!(app.board_summaries().len(), 2);
 }

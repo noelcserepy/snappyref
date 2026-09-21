@@ -196,10 +196,16 @@ pub(crate) struct DragState {
 
 #[derive(Clone)]
 pub(crate) struct AnnotationDragState {
-    annotation_ids: Vec<i64>,
     pointer_start_world: egui::Pos2,
     pointer_start_screen: egui::Pos2,
     starting_segments: Vec<(i64, SegmentGeometry)>,
+    endpoint: Option<AnnotationEndpoint>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum AnnotationEndpoint {
+    Start,
+    End,
 }
 
 #[derive(Clone)]

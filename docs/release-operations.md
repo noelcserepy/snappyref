@@ -45,6 +45,11 @@ by a key they do not know.
 7. Confirm archive validation passed for both app zips.
 8. Run [update smokes](#update-smokes) only on explicit user request.
 
+The [functional test catalog](release-functional-test-plan.md) covers the app's
+user interactions on macOS and Windows. Follow the
+[budgeted execution plan](release-test-execution.md) to combine existing code
+tests with bounded native-agent workflows. Both exclude app updating.
+
 ## Publish Semantic Search Asset
 
 Run `Publish Semantic Search` only when the local search assets change or need
