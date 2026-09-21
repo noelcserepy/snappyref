@@ -58,7 +58,7 @@ interface:
           retry_after: Duration?
 
       behavior:
-        exact-identity: available must return the Asset identified by the supplied AssetId.
+        canonical-identity: available must return the active canonical Asset for the supplied AssetId. Exact-duplicate reconciliation must keep merged identities resolvable across restart so copied selections remain usable.
         missing-explicit: An unknown or removed Asset produces missing.
 
       caller_obligations: {}
@@ -118,6 +118,7 @@ interface:
 
       behavior:
         cross-board-reference-archive: archived must also archive every Placement that references an archived Asset on every Board.
+        group-membership-pruned: Archived Placements must leave Group membership on every Board, including cached and reopened documents.
         managed-files-retained: archived must retain managed originals and durable records for recovery or later cleanup policy.
         active-enumeration-excluded: Archived Assets must not appear in active enumeration or Search indexing.
         repeat-safe: Repeating the same archive request produces unchanged without another change.
@@ -130,7 +131,9 @@ interface:
     board-independent-assets: An Asset exists independently of any Board or Placement.
     known-content-stable-identity: Registering content with a known matching file size and SHA-256 must reuse the existing active canonical Asset.
     stored-duplicates-possible: Stored exact duplicates may remain active until reconciliation completes.
+    no-identity-reuse: A merged AssetId must never be assigned to unrelated content.
     original-durability: Removing a source file after successful registration must not make the Asset unavailable.
+    relocated-originals: Moving or copying a closed Library must resolve managed originals from the new Library root when those files exist there, without relying on the previous root.
     archive-not-physical-delete: Ordinary Library deletion archives Asset records, managed files, and affected Placement references instead of physically deleting them.
 
   requires:

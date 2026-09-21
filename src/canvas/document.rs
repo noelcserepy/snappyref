@@ -763,7 +763,7 @@ impl CanvasState {
             .document
             .placements
             .iter()
-            .filter(|image| asset_ids.contains(&image.require_loaded_asset().id))
+            .filter(|image| image.asset_id().is_some_and(|id| asset_ids.contains(&id)))
             .map(|image| image.state.id)
             .collect::<Vec<_>>();
         self.delete_placements(&placement_ids)
@@ -1317,10 +1317,15 @@ impl CanvasState {
         crop_state: &CropState,
     ) -> Option<CanvasCropRequest> {
         let image = self.placement_by_id(crop_state.placement_id)?;
-        let image_rect = placement_screen_rect(self, rect, image);
+        let center = placement_screen_rect(self, rect, image).center();
+        let size = image.state.geometry.size * image.state.geometry.scale * self.zoom;
+        let image_rect = egui::Rect::from_center_size(center, size);
+        let unrotate = |point| {
+            center + super::geometry::rotate_vec2(point - center, -image.state.geometry.rotation)
+        };
         let clamped_screen_rect = clamped_crop_screen_rect(
-            crop_state.start_screen,
-            crop_state.current_screen,
+            unrotate(crop_state.start_screen),
+            unrotate(crop_state.current_screen),
             image_rect,
         )?;
         let local_rect = screen_rect_to_local_crop_rect(

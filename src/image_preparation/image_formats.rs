@@ -1540,6 +1540,117 @@ mod tests {
     }
 
     #[test]
+    fn oriented_imports_keep_pixels_through_crop_and_reopen() {
+        use crate::image_preparation::{
+            CanvasImageSettings, ImagePrepResult, crop_item, import_path_sync, load_existing,
+        };
+        use crate::library::storage::Library;
+        let root = crate::test_support::TempRoot::new("oriented-crop-reopen");
+        let library = Library::initialize(root.to_path_buf()).unwrap();
+        for exif in 1..=8 {
+            for (extension, bytes) in [
+                ("jpg", jpeg_with_orientation(exif)),
+                ("tiff", tiff_with_orientation(exif)),
+            ] {
+                let source = root.join(format!("orientation-{exif}.{extension}"));
+                std::fs::write(&source, &bytes).unwrap();
+                let upright = decode_image_file(&source).unwrap();
+                let imported =
+                    import_path_sync(&library, source.clone(), eframe::egui::Pos2::ZERO).unwrap();
+                let placement = library.fixture_placement(1, imported.placement).unwrap();
+                std::fs::remove_file(source).unwrap();
+                let before = match load_existing(
+                    &library,
+                    1,
+                    None,
+                    placement.clone(),
+                    usize::MAX,
+                    CanvasImageSettings::default(),
+                    crate::data::CanvasImageLod::Working,
+                    None,
+                    None,
+                ) {
+                    ImagePrepResult::Loaded(loaded) => loaded,
+                    other => panic!("initial preview {exif}.{extension}: {other:?}"),
+                };
+                let request = crate::canvas::CanvasCropRequest {
+                    placement_id: placement.id(),
+                    source_asset: placement.require_loaded_asset().clone(),
+                    crop_rect: crate::canvas::PixelCropRect {
+                        x: 1,
+                        y: 0,
+                        width: 1,
+                        height: 2,
+                    },
+                    crop_offset_local: eframe::egui::Vec2::ZERO,
+                };
+                let cropped = match crop_item(
+                    &library,
+                    request,
+                    usize::MAX,
+                    CanvasImageSettings::default(),
+                    None,
+                ) {
+                    ImagePrepResult::Cropped(cropped) => cropped,
+                    other => panic!("crop {exif}.{extension}: {other:?}"),
+                };
+                let expected_crop = [1, upright.width as usize + 1]
+                    .into_iter()
+                    .flat_map(|pixel| upright.rgba[pixel * 4..pixel * 4 + 4].iter().copied())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    cropped.preview_rgba, expected_crop,
+                    "crop {exif}.{extension}"
+                );
+                let reopened = Library::initialize(root.to_path_buf()).unwrap();
+                let restored = reopened
+                    .load_board_document(1)
+                    .unwrap()
+                    .placements
+                    .into_iter()
+                    .find(|p| p.id() == placement.id())
+                    .unwrap();
+                let loaded = match load_existing(
+                    &reopened,
+                    1,
+                    None,
+                    restored,
+                    usize::MAX,
+                    CanvasImageSettings::default(),
+                    crate::data::CanvasImageLod::Working,
+                    None,
+                    None,
+                ) {
+                    ImagePrepResult::Loaded(loaded) => loaded,
+                    other => panic!("reload {exif}.{extension}: {other:?}"),
+                };
+                assert_eq!(
+                    (loaded.preview_width, loaded.preview_height),
+                    (upright.width, upright.height)
+                );
+                // Cached previews may be lossy. Reopening must preserve that preview,
+                // while the managed original and cropped PNG keep exact decoded pixels.
+                assert_eq!(
+                    loaded.preview_rgba, before.preview_rgba,
+                    "preview {exif}.{extension}"
+                );
+                assert_eq!(
+                    decode_image_file(&placement.require_loaded_asset().original_path)
+                        .unwrap()
+                        .rgba,
+                    upright.rgba,
+                    "original {exif}.{extension}"
+                );
+                assert_eq!(
+                    decode_image_file(&cropped.stored_path).unwrap().rgba,
+                    expected_crop,
+                    "saved crop {exif}.{extension}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn all_exif_orientations_transform_pixels_and_intrinsic_dimensions() {
         let expected = [
             (3, 2, vec![1, 2, 3, 4, 5, 6]),

@@ -522,6 +522,11 @@ impl Library {
                     original_sha256 TEXT
                 );
 
+                CREATE TABLE IF NOT EXISTS asset_redirects (
+                    old_asset_id INTEGER PRIMARY KEY,
+                    asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS boards (
                     id            INTEGER PRIMARY KEY,
                     name          TEXT NOT NULL,

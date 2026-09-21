@@ -76,6 +76,7 @@ interface:
         precise-modifiers: Precision modifiers must suppress or refine snapping without changing the underlying action.
         pointer-mode-explicit: Mouse mode must map wheel notches to pointer-centered zoom and high-resolution scroll to pan; Trackpad mode must map pinch to pointer-centered zoom and translation to pan.
         source-preserving-crop: Crop actions must not alter the source Asset.
+        annotation-endpoints: Dragging either selected line or arrow endpoint must keep the opposite endpoint fixed and record one undoable edit. Dragging its body must translate the whole segment.
         clipboard-delegated: Copy and paste must use Clipboard Exchange so internal mixed content and native external image content follow one boundary policy.
         external-paste-creates: Accepted external image clipboard content must use Placement Creation's committed creation path.
         windows-file-drop-continuity: Installing richer Windows URL-drop handling must preserve file drops supplied by an existing window drop target.
@@ -92,11 +93,15 @@ interface:
         group-selection: Outside member editing, selecting a Group member must select the Group, and dragging the Group must move its members together.
         group-member-editing: Double-clicking a Group member must enter member editing. Escape must return to Group selection.
         group-member-reorder: Dragging a member within its Group during member editing must change its ordered position rather than leave it freely positioned outside the layout.
+        group-member-detach: During member editing, dropping a Placement with its center outside the Group container must remove it from the Group and keep its dropped position. Remaining members must reflow. The entire drop must be one undoable edit. Empty Groups must survive.
         group-controls: A selected Group must expose Row, Column, and Wrap flow controls, spacing, padding, and inline name editing.
         group-resize-and-scale: Container-resize interaction must request Group reflow from Spatial Layout. Explicit uniform scaling must remain a separate action.
         group-picker-search: Add to group must show a keyboard-searchable picker of destination Groups on the active Board, including their names and empty Groups.
         group-picker-repeat: The picker must initially highlight the last-used destination when it remains available on the active Board. Enter must confirm the highlighted destination.
         group-picker-choice: Typing must filter destinations, and keyboard navigation must allow choosing another destination before confirmation.
+        group-picker-create: A nonblank typed name without an exact existing match must offer Create new. Clicking it or confirming its keyboard selection must create a named Wrap Group from the selected existing Placements as one undoable edit and remember it as the last destination.
+        group-picker-current-names: Leaving a Group name field, including selecting another Placement, must commit the valid name before the destination picker reads it.
+        group-picker-style: The picker must use the search palette's warm borderless panel, text-first search field, quiet keyboard hints, and scrollable keyboard-highlighted choices. Escape, Cancel, and outside click must dismiss it without changing the Board.
         group-picker-cancel: Cancelling the picker must leave membership and geometry unchanged.
         group-picker-command: Confirming a destination must send the selected existing Placements through Board Document's Group addition behavior.
         group-picker-context-parity: Add to group from the context menu must expose the same destination choices as the keyboard action.

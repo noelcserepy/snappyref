@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use rusqlite::OptionalExtension;
 use rusqlite::Transaction;
 use rusqlite::TransactionBehavior;
 use rusqlite::params;
@@ -45,6 +46,7 @@ impl Library {
             document_ids: Arc::new(AtomicI64::new(1)),
         };
         library.initialize_schema()?;
+        library.rebase_managed_originals()?;
         let connection = library.connection()?;
         let next_id = connection
             .query_row(
@@ -61,6 +63,70 @@ impl Library {
             .unwrap_or(1);
         library.document_ids.store(next_id, Ordering::Relaxed);
         Ok(library)
+    }
+
+    fn rebase_managed_originals(&self) -> Result<(), String> {
+        let mut connection = self.connection()?;
+        let separator = std::path::MAIN_SEPARATOR;
+        let pattern = format!("%{separator}originals{separator}%");
+        // Probe for any managed original stored under another root before
+        // scanning, so an unmoved Library pays one indexed-free lookup at open.
+        let current_prefix = format!("{}{separator}", self.originals_dir.to_string_lossy());
+        let stale: Option<i64> = connection
+            .query_row(
+                "SELECT id FROM assets
+                 WHERE original_path LIKE ?1
+                   AND SUBSTR(original_path, 1, ?2) <> ?3
+                 LIMIT 1",
+                params![
+                    &pattern,
+                    current_prefix.chars().count() as i64,
+                    &current_prefix
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("failed to locate managed originals: {error}"))?;
+        if stale.is_none() {
+            return Ok(());
+        }
+        let paths = connection
+            .prepare("SELECT id, original_path FROM assets WHERE original_path LIKE ?1")
+            .map_err(|error| error.to_string())?
+            .query_map([pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        let relocations = paths
+            .into_iter()
+            .filter_map(|(id, stored)| {
+                let stored = PathBuf::from(stored);
+                let parent = stored.parent()?;
+                if parent == self.originals_dir || parent.file_name()? != "originals" {
+                    return None;
+                }
+                let relocated = self.originals_dir.join(stored.file_name()?);
+                relocated.is_file().then_some((id, relocated))
+            })
+            .collect::<Vec<_>>();
+        if relocations.is_empty() {
+            return Ok(());
+        }
+        let transaction = write_transaction(&mut connection, "managed original relocation")?;
+        for (id, relocated) in relocations {
+            transaction
+                .execute(
+                    "UPDATE assets SET original_path = ?1 WHERE id = ?2",
+                    params![relocated.to_string_lossy(), id],
+                )
+                .map_err(|error| format!("failed to relocate managed original: {error}"))?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit original relocation: {error}"))?;
+        Ok(())
     }
 
     pub(crate) fn allocate_document_id(&self) -> i64 {

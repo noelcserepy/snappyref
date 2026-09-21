@@ -120,6 +120,20 @@ pub(crate) fn paint_annotation(
             }
         }
     }
+    if state.single_selected_annotation_id() == Some(annotation.id)
+        && annotation.kind != CanvasAnnotationKind::Textbox
+    {
+        // Endpoint handles keep their screen size at every zoom.
+        let (start, end) = annotation_screen_points(state, rect, annotation);
+        for point in [start, end] {
+            painter.circle_filled(point, crate::ui::theme::SPACE_1, crate::ui::theme::SURFACE);
+            painter.circle_stroke(
+                point,
+                crate::ui::theme::SPACE_1,
+                crate::ui::theme::stroke_strong(),
+            );
+        }
+    }
 }
 
 pub(crate) fn annotation_should_paint(

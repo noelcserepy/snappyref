@@ -163,10 +163,17 @@ impl AcceptedBoards {
                 .map(Placement::id)
                 .collect::<Vec<_>>();
             let stack_order = document.stack_order.iter().copied().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if archived_placement_ids.contains(id))).collect();
+            let mut groups = document.groups.clone();
+            for group in &mut groups {
+                group
+                    .members
+                    .retain(|id| !archived_placement_ids.contains(id));
+            }
             self.apply_changes(
                 board_id,
                 &crate::canvas::CanvasDocumentChanges {
                     archived_placement_ids,
+                    groups: Some(groups),
                     stack_order: Some(stack_order),
                     ..Default::default()
                 },

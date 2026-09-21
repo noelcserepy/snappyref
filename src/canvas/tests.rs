@@ -1129,3 +1129,65 @@ mod image_content;
 mod selection_transform;
 
 mod annotations;
+
+#[test]
+fn trackpad_translation_and_pinch_preserve_pointer_world_anchor() {
+    use eframe::egui;
+    let ctx = egui::Context::default();
+    let mut state = CanvasState::default();
+    state.set_pointer_mode(crate::data::PointerMode::Trackpad);
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+    let pointer = egui::pos2(300.0, 220.0);
+    let pan_before = state.viewport_state();
+    let _ = ctx.run_ui(
+        egui::RawInput {
+            events: vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(40.0, -20.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            ..Default::default()
+        },
+        |ui| {
+            super::show(
+                ui,
+                rect,
+                rect,
+                &mut state,
+                None,
+                false,
+                CanvasInputPolicy::ViewportOnly,
+                false,
+            );
+        },
+    );
+    assert_ne!(state.viewport_state(), pan_before);
+    // Pinch is a separate gesture, without residual scroll smoothing.
+    let ctx = egui::Context::default();
+    let world_before = state.screen_to_world(pointer, rect);
+    let zoom_before = state.zoom;
+    let _ = ctx.run_ui(
+        egui::RawInput {
+            events: vec![egui::Event::PointerMoved(pointer), egui::Event::Zoom(1.25)],
+            ..Default::default()
+        },
+        |ui| {
+            super::show(
+                ui,
+                rect,
+                rect,
+                &mut state,
+                None,
+                false,
+                CanvasInputPolicy::ViewportOnly,
+                false,
+            );
+        },
+    );
+    assert!(state.zoom > zoom_before);
+    assert!(state.screen_to_world(pointer, rect).distance(world_before) < 0.001);
+}

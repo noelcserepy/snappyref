@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "release_content.rs"]
+mod release_content;
+
 const CMD: egui::Modifiers = egui::Modifiers {
     command: true,
     ..egui::Modifiers::NONE
@@ -60,10 +63,7 @@ fn inspect_group_operations_writes_artifact() {
     let mut scenario = InspectScenario::new("group-operations");
     let root = TempRoot::new("snappyref-inspect-group-operations");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let mut app = test_app(Some(library.clone()));
-    app.board_editing.persistence =
-        crate::active_board::persistence::DocumentPersistence::queued(library.clone());
-    let mut harness = app_full_harness_with_step_dt(app, 1.0 / 60.0);
+    let mut items = Vec::new();
     let mut ids = Vec::new();
     scenario.event("seed", serde_json::json!({"placements": 3, "purpose": "Group shortcuts, movement, editing, picker and controls"}));
     for (i, color) in [
@@ -96,19 +96,24 @@ fn inspect_group_operations_writes_artifact() {
             )
             .unwrap();
         ids.push(placement.id());
-        let ctx = harness.ctx.clone();
-        harness.state_mut().canvas.add_prepared_placement_image(
-            &ctx,
-            inspect_prepared_loaded_placement(
-                placement,
-                color,
-                120,
-                90,
-                None,
-                crate::image_preparation::ImportOrigin::Existing,
-            ),
-        );
+        items.push(inspect_prepared_loaded_placement(
+            placement,
+            color,
+            120,
+            90,
+            None,
+            crate::image_preparation::ImportOrigin::Existing,
+        ));
     }
+    let mut app = test_app(Some(library.clone()));
+    app.board_editing.persistence =
+        crate::active_board::persistence::DocumentPersistence::queued(library.clone());
+    let mut harness = app_full_harness_with_startup(1.0 / 60.0, move |ctx| {
+        for item in items {
+            app.canvas.add_prepared_placement_image(ctx, item);
+        }
+        app
+    });
     harness.step();
     let screen = test_screen_rect();
     let center = |harness: &Harness<'_, SnappyRefApp>, id| {
@@ -209,7 +214,7 @@ fn inspect_group_operations_writes_artifact() {
             && harness.state().canvas.selected_group_ids().is_empty(),
     );
     let reorder_from = center(&harness, ids[0]);
-    let reorder_to = center(&harness, ids[1]) + egui::vec2(0.0, 60.0);
+    let reorder_to = center(&harness, ids[1]) + egui::vec2(0.0, 20.0);
     scenario.action("drag first member after second", reorder_to);
     drag(
         &mut harness,
@@ -221,6 +226,89 @@ fn inspect_group_operations_writes_artifact() {
         "member drag reorders ordered membership",
         harness.state().canvas.groups()[0].members == vec![ids[1], ids[0]],
     );
+    let grouped = harness.state().canvas.groups().to_vec();
+    let geometries = |harness: &Harness<'_, SnappyRefApp>| {
+        ids.iter()
+            .map(|id| {
+                harness
+                    .state()
+                    .canvas
+                    .placement_for_id(*id)
+                    .unwrap()
+                    .state
+                    .geometry
+            })
+            .collect::<Vec<_>>()
+    };
+    let before_detach = geometries(&harness);
+    let detach_from = center(&harness, ids[1]);
+    let detach_to = detach_from + egui::vec2(250.0, 0.0);
+    scenario.action("drag member outside Group", detach_to);
+    drag(&mut harness, detach_from, detach_to, egui::Modifiers::NONE);
+    scenario.assertion(
+        "outside drop removes membership and keeps placement at drop",
+        harness.state().canvas.groups()[0].members == vec![ids[0]]
+            && center(&harness, ids[1]).distance(detach_to) < 1.0
+            && harness.state().canvas.selected_placement_ids() == vec![ids[1]],
+    );
+    scenario.assertion(
+        "remaining member closes the gap and container shrinks",
+        geometries(&harness)[0].center.y < before_detach[0].center.y
+            && harness.state().canvas.groups()[0].container.size.y < grouped[0].container.size.y,
+    );
+    scenario.capture_screen("screen-002-member-detached", &mut harness);
+    let detached_groups = harness.state().canvas.groups().to_vec();
+    let detached_geometry = geometries(&harness);
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    scenario.assertion(
+        "one Undo restores membership and all placement positions",
+        harness.state().canvas.groups() == grouped && geometries(&harness) == before_detach,
+    );
+    shortcut(
+        &mut harness,
+        egui::Modifiers { shift: true, ..CMD },
+        egui::Key::Z,
+    );
+    scenario.assertion(
+        "Redo restores detached placement and reflowed Group",
+        harness.state().canvas.groups() == detached_groups
+            && geometries(&harness) == detached_geometry,
+    );
+    let last_member = center(&harness, ids[0]);
+    for _ in 0..40 {
+        harness.step();
+    }
+    for _ in 0..2 {
+        inspect_click_at(&harness, last_member, egui::Modifiers::NONE);
+        harness.step();
+    }
+    let last_drop = last_member + egui::vec2(250.0, 0.0);
+    scenario.action("drag last member outside Group", last_drop);
+    drag(&mut harness, last_member, last_drop, egui::Modifiers::NONE);
+    scenario.assertion(
+        "last member detaches and empty Group keeps its configuration",
+        harness.state().canvas.groups()[0].members.is_empty()
+            && harness.state().canvas.groups()[0].name == detached_groups[0].name
+            && harness.state().canvas.groups()[0].container == detached_groups[0].container
+            && center(&harness, ids[0]).distance(last_drop) < 1.0,
+    );
+    scenario.capture_screen("screen-002-empty-after-detach", &mut harness);
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    scenario.assertion(
+        "Undo last member drop restores the Group",
+        harness.state().canvas.groups() == detached_groups
+            && geometries(&harness) == detached_geometry,
+    );
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    // Continue the existing Group controls checks after restoring the members.
+    let member = center(&harness, ids[0]);
+    for _ in 0..40 {
+        harness.step();
+    }
+    for _ in 0..2 {
+        inspect_click_at(&harness, member, egui::Modifiers::NONE);
+        harness.step();
+    }
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Escape);
     scenario.assertion(
         "Escape returns to Group selection",
@@ -327,7 +415,7 @@ fn inspect_group_operations_writes_artifact() {
     for _ in 0..4 {
         harness.step();
     }
-    let _ = harness.get_by_label("Find a group");
+    let _ = harness.get_by_role(egui::accesskit::Role::TextInput);
     scenario.event(
         "context-menu-picker",
         serde_json::json!({"search_prompt_visible": true}),
@@ -507,4 +595,179 @@ fn group_document_history_survives_transfer_delete_restart_and_board_archive() {
         )
     });
     assert_eq!(durable.groups, deleted);
+}
+
+#[test]
+fn inspect_group_picker_rename_and_create_writes_artifact() {
+    let mut scenario = InspectScenario::new("group-picker-rename-create");
+    let root = TempRoot::new("snappyref-group-picker-rename-create");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut items = Vec::new();
+    let mut ids = Vec::new();
+    for i in 0..2 {
+        let mut item = persisted_loaded_item(&library, library.allocate_document_id(), 1);
+        item.placement.state.geometry.center = egui::pos2(i as f32 * 260.0 - 130.0, 90.0);
+        item.placement.state.geometry.size = egui::vec2(120.0, 90.0);
+        item.placement = library.fixture_placement(1, item.placement).unwrap();
+        ids.push(item.placement.id());
+        items.push(item);
+    }
+    let mut app = test_app(Some(library.clone()));
+    let selected = ids[..1].to_vec();
+    let mut harness = app_full_harness_with_startup(1.0 / 60.0, move |ctx| {
+        for item in items {
+            app.canvas.add_prepared_placement_image(ctx, item);
+        }
+        app.canvas.select_placements(&selected);
+        app.group_selection();
+        app
+    });
+    let group_id = harness.state().canvas.groups()[0].id;
+    harness
+        .get_by_role(egui::accesskit::Role::TextInput)
+        .click();
+    harness.step();
+    shortcut(&mut harness, CMD, egui::Key::A);
+    harness.event(egui::Event::Text("Faces gqwe".into()));
+    harness.step();
+    let other = harness.state().canvas.placement_for_id(ids[1]).unwrap();
+    let other_point = inspect_world_to_screen(other.state.geometry.center, test_screen_rect());
+    inspect_click_at(&harness, other_point, egui::Modifiers::NONE);
+    harness.step();
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::G);
+    harness.step();
+    assert_eq!(harness.state().canvas.groups()[0].name, "Faces gqwe");
+    let _ = harness.get_by_label("Faces gqwe");
+    scenario.assertion(
+        "click-away rename appears in picker",
+        harness.state().canvas.groups()[0].name == "Faces gqwe",
+    );
+    scenario.capture_screen("renamed-destination", &mut harness);
+    harness.event(egui::Event::Text("New references".into()));
+    harness.step();
+    harness.step();
+    scenario.capture_screen("create-new-action", &mut harness);
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Escape);
+    assert_eq!(harness.state().canvas.groups().len(), 1);
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::G);
+    harness.step();
+    harness.event(egui::Event::Text("New references".into()));
+    harness.step();
+    harness
+        .get_by_label("Create new \"New references\"")
+        .click();
+    harness.step();
+    let created = harness
+        .state()
+        .canvas
+        .groups()
+        .iter()
+        .find(|g| g.id != group_id)
+        .unwrap()
+        .clone();
+    scenario.assertion(
+        "create names and groups the selected placement once",
+        created.name == "New references"
+            && created.members == ids[1..]
+            && created.flow == crate::data::GroupFlow::Wrap,
+    );
+    assert_eq!(created.members, ids[1..]);
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    assert_eq!(harness.state().canvas.groups().len(), 1);
+    shortcut(
+        &mut harness,
+        egui::Modifiers { shift: true, ..CMD },
+        egui::Key::Z,
+    );
+    assert_eq!(
+        harness.state().canvas.groups().len(),
+        2,
+        "status={}",
+        harness.state().status
+    );
+    harness.state_mut().flush_persistence();
+    assert_eq!(
+        library.load_groups().unwrap(),
+        harness.state().canvas.groups()
+    );
+    scenario.assertion(
+        "create is one undoable durable edit",
+        library.load_groups().unwrap().len() == 2,
+    );
+    // Open with a long query at a constrained width to check the real popup.
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::G);
+    harness.step();
+    harness.event(egui::Event::Text(
+        "A long group name for architectural details and reference studies".into(),
+    ));
+    harness.step();
+    harness.set_size(egui::vec2(480.0, 420.0));
+    harness.step();
+    scenario.capture_screen("narrow-create-action", &mut harness);
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Enter);
+    assert_eq!(harness.state().canvas.groups().len(), 3);
+    scenario.assertion(
+        "Enter creates the typed destination when no group matches",
+        harness.state().canvas.groups().last().unwrap().name
+            == "A long group name for architectural details and reference studies",
+    );
+
+    let report = scenario.finish();
+    assert!(report.passed, "{}", report.artifact_dir.display());
+}
+
+#[test]
+fn copied_legacy_group_survives_dedupe_and_reopen() {
+    let root = TempRoot::new("clipboard-legacy-dedupe");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let other = library.fixture_board("B").unwrap();
+    let mut items = Vec::new();
+    for _ in 0..3 {
+        let mut item = persisted_loaded_item(&library, library.allocate_document_id(), 1);
+        item.placement = library.fixture_placement(1, item.placement).unwrap();
+        items.push(item);
+    }
+    let ids = items
+        .iter()
+        .map(|item| item.placement.id())
+        .collect::<Vec<_>>();
+    let ctx = egui::Context::default();
+    let mut app = test_app(Some(library.clone()));
+    app.import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
+        library.clone(),
+        ctx.clone(),
+        None,
+    ));
+    for item in items {
+        app.canvas.add_prepared_placement_image(&ctx, item);
+    }
+    app.canvas.select_placements(&ids);
+    app.group_selection();
+    let payload = app.copy_selected_board_payload().unwrap();
+    app.switch_to_board(other.id);
+    // Merged IDs must not be reused for unrelated newly imported pixels.
+    let path = library
+        .store_rgba_image("unrelated", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let fresh = library
+        .register_original(&path, "image/png", 1, 1, 4, None)
+        .unwrap();
+    assert!(fresh.id > payload.placements.iter().map(|p| p.asset_id).max().unwrap());
+    app.paste_board_payload_at(&payload, egui::pos2(300., 0.))
+        .unwrap();
+    assert_eq!(app.canvas.groups()[0].members.len(), 3);
+    assert_eq!(app.canvas.all_placement_ids().len(), 3);
+    app.flush_persistence();
+    drop(app);
+    let reopened = Library::initialize(root.to_path_buf()).unwrap();
+    let mut app = test_app(Some(reopened.clone()));
+    app.import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
+        reopened.clone(),
+        ctx,
+        None,
+    ));
+    app.switch_to_board(other.id);
+    app.paste_board_payload_at(&payload, egui::pos2(600., 0.))
+        .unwrap();
+    assert_eq!(app.canvas.groups().last().unwrap().members.len(), 3);
 }

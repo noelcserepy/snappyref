@@ -176,6 +176,5 @@ pub(super) fn merge_cropped_item_fields(
     crop_offset_local: egui::Vec2,
 ) {
     let scale = item.geometry.scale.max(0.01);
-    item.geometry.center.x += crop_offset_local.x * scale;
-    item.geometry.center.y += crop_offset_local.y * scale;
+    item.geometry.center += rotate_vec2(crop_offset_local * scale, item.geometry.rotation);
 }

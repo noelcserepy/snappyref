@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::canvas::geometry::{clamped_crop_screen_rect, screen_corners_for_placement};
+use crate::canvas::geometry::{rotate_vec2, screen_corners_for_placement};
 use crate::canvas::interaction::{
     hit_test_placement, placement_screen_rect, selected_placement_rotation_handle_screen_pos,
 };
@@ -64,26 +64,40 @@ pub(crate) fn paint_crop_marquee(painter: &egui::Painter, rect: egui::Rect, stat
     };
 
     let image_rect = placement_screen_rect(state, rect, image);
-    let Some(crop_rect) = clamped_crop_screen_rect(
-        crop_state.start_screen,
-        crop_state.current_screen,
-        image_rect,
-    ) else {
+    let Some(request) = state.build_crop_request(rect, crop_state) else {
         return;
     };
-
-    painter.rect_stroke(
-        image_rect,
-        0.0,
-        crate::ui::theme::stroke_strong(),
-        egui::StrokeKind::Outside,
+    // The crop outline follows the image axes, matching the source pixels kept.
+    let crop = request.crop_rect;
+    let local = egui::Rect::from_min_size(
+        egui::pos2(crop.x as f32, crop.y as f32),
+        egui::vec2(crop.width as f32, crop.height as f32),
     );
-    painter.rect_stroke(
-        crop_rect,
-        0.0,
+    let half = egui::vec2(
+        request.source_asset.width as f32,
+        request.source_asset.height as f32,
+    ) * 0.5;
+    let points = [
+        local.left_top(),
+        local.right_top(),
+        local.right_bottom(),
+        local.left_bottom(),
+    ]
+    .map(|point| {
+        image_rect.center()
+            + rotate_vec2(
+                (point.to_vec2() - half) * image.state.geometry.scale * state.zoom,
+                image.state.geometry.rotation,
+            )
+    });
+    painter.add(egui::Shape::closed_line(
+        screen_corners_for_placement(image, state.pan, state.zoom, rect.center()).to_vec(),
         crate::ui::theme::stroke_strong(),
-        egui::StrokeKind::Outside,
-    );
+    ));
+    painter.add(egui::Shape::closed_line(
+        points.to_vec(),
+        crate::ui::theme::stroke_strong(),
+    ));
 }
 
 pub(crate) fn paint_hover_hairline(

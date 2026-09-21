@@ -531,6 +531,7 @@ fn raw_dropped_file_enqueues_external_import() {
                 app.handle_dropped_files(ui, test_screen_rect());
             });
     });
+    let view_before = harness.state().canvas.viewport_state();
     let drop_pos = egui::pos2(900.0, 600.0);
 
     harness.hover_at(drop_pos);
@@ -586,6 +587,7 @@ fn raw_dropped_file_enqueues_external_import() {
             < 1.0
     );
 
+    assert_eq!(harness.state().canvas.viewport_state(), view_before);
     harness.state_mut().undo_document_history(&ctx);
     assert_eq!(harness.state().status, "Undid Import image");
     assert!(
@@ -598,22 +600,55 @@ fn raw_dropped_file_enqueues_external_import() {
 }
 
 #[test]
-fn missing_drop_event_fallback_is_single_use_after_hover_ends() {
-    let mut app = test_app(None);
-    let hover_pos = egui::pos2(320.0, 240.0);
-    let source = crate::image_preparation::ImportSource::Path(std::path::PathBuf::from(
-        "C:/Users/Admin/Pictures/drop.png",
-    ));
-    app.pending_missing_drop_fallback = Some(crate::sources::external_drag::ExternalDragIntake {
-        sources: vec![source.clone()],
-        screen_pos: Some(hover_pos),
-    });
-
-    let fallback = app
-        .take_missing_drop_event_fallback()
-        .expect("hover-end fallback should be available once");
-
-    assert_eq!(fallback.sources, vec![source]);
-    assert_eq!(fallback.screen_pos, Some(hover_pos));
-    assert!(app.take_missing_drop_event_fallback().is_none());
+fn reopening_board_keeps_failed_placements_without_loading_them_as_assets() {
+    let root = TempRoot::new("snappyref-reopen-failed-imports");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut app = test_app(Some(library.clone()));
+    for _ in 0..2 {
+        let reservation = app
+            .reserve_import(
+                Some((100, 80)),
+                egui::Pos2::ZERO,
+                crate::data::ContentResolutionSource::Unknown {
+                    description: "failed source".into(),
+                },
+            )
+            .unwrap();
+        app.accept_preparation_result(
+            &egui::Context::default(),
+            crate::image_preparation::ImagePrepResult::Failed {
+                target_board_id: Some(reservation.target_board_id),
+                queue_id: Some(reservation.queue_id),
+                placement_id: Some(reservation.placement_id),
+                context: "decode".into(),
+                error: "failed".into(),
+            },
+        );
+    }
+    app.flush_persistence();
+    drop(app);
+    let mut reopened = test_app(Some(library));
+    let (worker, _sender) = crate::image_preparation::ImagePrepWorker::controlled();
+    reopened.import_worker = Some(worker);
+    reopened.board_lifecycle().restore().unwrap();
+    assert_eq!(reopened.canvas.all_placement_ids().len(), 2);
+    assert!(
+        reopened
+            .canvas
+            .all_placement_ids()
+            .iter()
+            .all(|id| matches!(
+                reopened.canvas.placement_for_id(*id).unwrap().content,
+                crate::data::PlacementContent::Failed { .. }
+            ))
+    );
+    assert_eq!(
+        reopened
+            .import_worker
+            .as_ref()
+            .unwrap()
+            .stats()
+            .queued_startup,
+        0
+    );
 }

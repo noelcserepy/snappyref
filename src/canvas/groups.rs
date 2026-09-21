@@ -59,9 +59,25 @@ impl CanvasState {
         }
     }
     pub fn create_group(&mut self, id: GroupId) -> Result<Option<GroupId>, String> {
-        let members: Vec<_> = self
-            .selected_placement_ids()
-            .into_iter()
+        self.create_named_group(
+            id,
+            format!("Group {}", self.groups().len() + 1),
+            &self.selected_placement_ids(),
+        )
+    }
+    pub(crate) fn create_named_group(
+        &mut self,
+        id: GroupId,
+        name: String,
+        selected: &[i64],
+    ) -> Result<Option<GroupId>, String> {
+        let name = name.trim().to_owned();
+        if name.is_empty() {
+            return Err("Group name cannot be blank".into());
+        }
+        let members: Vec<_> = selected
+            .iter()
+            .copied()
             .filter(|id| {
                 self.placement_for_id(*id)
                     .is_some_and(|p| p.lifecycle == crate::data::PlacementLifecycle::Committed)
@@ -83,7 +99,7 @@ impl CanvasState {
         );
         let group = Group {
             id,
-            name: format!("Group {}", self.groups().len() + 1),
+            name,
             members: Vec::new(),
             container: RectGeometry::new(bounds.center(), size, 1., 0., 0),
             flow: GroupFlow::Wrap,
@@ -267,40 +283,61 @@ impl CanvasState {
             self.document.groups_dirty = true;
         }
     }
-    pub(super) fn finish_group_member_drag(&mut self, id: i64) {
+    pub(super) fn finish_group_member_drag(&mut self, ids: &[i64]) {
         let Some(group_id) = self.interaction.editing_group_id else {
             return;
         };
-        let Some(mut group) = self.groups().iter().find(|g| g.id == group_id).cloned() else {
+        let mut groups = self.groups().to_vec();
+        let Some(group) = groups.iter_mut().find(|g| g.id == group_id) else {
             return;
         };
-        let Some(placement) = self.placement_for_id(id) else {
-            return;
-        };
-        let point = placement.state.geometry.center;
-        group.members.retain(|member| *member != id);
-        let position = group
-            .members
-            .iter()
-            .position(|member| {
-                self.placement_for_id(*member).is_some_and(|p| {
-                    let other = p.state.geometry.center;
-                    match group.flow {
-                        GroupFlow::Row => point.x < other.x,
-                        GroupFlow::Column => point.y < other.y,
-                        GroupFlow::Wrap => {
-                            point.y < other.y - p.state.geometry.scaled_size().y / 2.
-                                || ((point.y - other.y).abs()
-                                    < p.state.geometry.scaled_size().y / 2.
-                                    && point.x < other.x)
+        // Judge every dropped center against the container before any reflow.
+        let bounds = group.container.unrotated_bounds();
+        for id in ids {
+            if !group.members.contains(id) {
+                continue;
+            }
+            let Some(placement) = self.placement_for_id(*id) else {
+                continue;
+            };
+            let point = placement.state.geometry.center;
+            group.members.retain(|member| member != id);
+            if !bounds.contains(point) {
+                continue;
+            }
+            let position = group
+                .members
+                .iter()
+                .position(|member| {
+                    self.placement_for_id(*member).is_some_and(|p| {
+                        let other = p.state.geometry.center;
+                        match group.flow {
+                            GroupFlow::Row => point.x < other.x,
+                            GroupFlow::Column => point.y < other.y,
+                            GroupFlow::Wrap => {
+                                point.y < other.y - p.state.geometry.scaled_size().y / 2.
+                                    || ((point.y - other.y).abs()
+                                        < p.state.geometry.scaled_size().y / 2.
+                                        && point.x < other.x)
+                            }
                         }
-                    }
+                    })
                 })
-            })
-            .unwrap_or(group.members.len());
-        group.members.insert(position, id);
-        let _ = self.edit_group(group);
-        self.reflow_group_for_member(id);
+                .unwrap_or(group.members.len());
+            group.members.insert(position, *id);
+        }
+        let remaining_member = group.members.first().copied();
+        if !self
+            .selected_placement_ids()
+            .iter()
+            .any(|id| group.members.contains(id))
+        {
+            self.interaction.editing_group_id = None;
+        }
+        self.replace_groups(groups);
+        if let Some(id) = remaining_member {
+            self.reflow_group_for_member(id);
+        }
     }
 }
 
@@ -358,9 +395,15 @@ impl CanvasState {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GroupPickerChoice {
+    Existing(GroupId),
+    Create,
+}
+
 pub(super) struct GroupPicker {
     query: String,
-    highlighted: Option<GroupId>,
+    highlighted: Option<GroupPickerChoice>,
     focus: bool,
     members: Vec<i64>,
 }
@@ -376,77 +419,197 @@ impl CanvasState {
                 .interaction
                 .last_group_destination
                 .filter(|id| self.groups().iter().any(|g| g.id == *id))
-                .or_else(|| self.groups().first().map(|g| g.id)),
+                .or_else(|| self.groups().first().map(|g| g.id))
+                .map(GroupPickerChoice::Existing),
             focus: true,
             members: self.selected_placement_ids(),
         });
     }
+
+    pub(crate) fn take_group_creation(&mut self) -> Option<(String, Vec<i64>)> {
+        self.interaction.pending_group_creation.take()
+    }
+
+    pub(crate) fn remember_group_destination(&mut self, id: GroupId) {
+        self.interaction.last_group_destination = Some(id);
+    }
+
     pub(super) fn show_group_picker(&mut self, ctx: &egui::Context) {
+        use crate::ui::theme;
         let Some(mut picker) = self.interaction.group_picker.take() else {
             return;
         };
+        let input_id = egui::Id::new("group-picker-query");
+        let just_opened = picker.focus;
         let mut confirmed = None;
         let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-        egui::Window::new("Add to group")
-            .id(egui::Id::new("group-picker"))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        let viewport = ctx.viewport_rect();
+        let width = 420.0_f32.min((viewport.width() - theme::SPACE_6 * 2.0).max(180.0));
+        let entrance =
+            crate::ui::motion::entrance_on_appear(ctx, egui::Id::new("group-picker-entrance"));
+        let settle = crate::ui::motion::settle_offset(entrance);
+        // Same warm, borderless panel and text-first input as the search palette.
+        let panel = egui::Area::new(egui::Id::new("group-picker"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::CENTER_TOP)
+            .fixed_pos(egui::pos2(
+                viewport.center().x,
+                viewport.top() + 56.0 - settle,
+            ))
             .show(ctx, |ui| {
-                ui.set_width(280.);
-                ui.label("Find a group");
-                let search = ui.text_edit_singleline(&mut picker.query);
-                if picker.focus {
-                    search.request_focus();
-                    picker.focus = false;
-                }
-                let choices: Vec<_> = self
-                    .groups()
-                    .iter()
-                    .filter(|g| g.name.to_lowercase().contains(&picker.query.to_lowercase()))
-                    .collect();
-                if !choices.iter().any(|g| Some(g.id) == picker.highlighted) {
-                    picker.highlighted = choices.first().map(|g| g.id);
-                }
-                if !choices.is_empty() {
-                    let current = choices
-                        .iter()
-                        .position(|g| Some(g.id) == picker.highlighted)
-                        .unwrap_or(0);
-                    if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                        picker.highlighted = Some(choices[(current + 1) % choices.len()].id);
-                    }
-                    if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                        picker.highlighted =
-                            Some(choices[(current + choices.len() - 1) % choices.len()].id);
-                    }
-                }
-                egui::ScrollArea::vertical()
-                    .max_height(240.)
+                ui.set_opacity(entrance);
+                egui::Frame::new()
+                    .fill(theme::PALETTE_SURFACE)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(theme::RADIUS_PANEL)
+                    .shadow(egui::epaint::Shadow {
+                        offset: [0, 12],
+                        blur: 40,
+                        spread: 0,
+                        color: egui::Color32::from_black_alpha(180),
+                    })
+                    .inner_margin(theme::SPACE_4)
                     .show(ui, |ui| {
-                        for group in choices {
-                            if ui
-                                .selectable_label(picker.highlighted == Some(group.id), &group.name)
-                                .clicked()
-                            {
-                                confirmed = Some(group.id);
+                        ui.set_width(width - theme::SPACE_4 * 2.0);
+                        ui.spacing_mut().item_spacing.y = theme::SPACE_2;
+                        ui.label(theme::editorial_caption("Add to group"));
+                        let search = ui.add(
+                            egui::TextEdit::singleline(&mut picker.query)
+                                .id(input_id)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("Find or create a group")
+                                .frame(egui::Frame::NONE),
+                        );
+                        if picker.focus {
+                            search.request_focus();
+                            picker.focus = false;
+                        }
+                        ui.separator();
+                        let query = picker.query.trim().to_lowercase();
+                        let mut choices: Vec<_> = self
+                            .groups()
+                            .iter()
+                            .filter(|g| g.name.to_lowercase().contains(&query))
+                            .map(|g| (GroupPickerChoice::Existing(g.id), g.name.clone()))
+                            .collect();
+                        if !query.is_empty()
+                            && !self.groups().iter().any(|g| g.name.to_lowercase() == query)
+                        {
+                            choices.push((
+                                GroupPickerChoice::Create,
+                                format!("Create new \"{}\"", picker.query.trim()),
+                            ));
+                        }
+                        if !choices
+                            .iter()
+                            .any(|(choice, _)| Some(*choice) == picker.highlighted)
+                        {
+                            picker.highlighted = choices.first().map(|(choice, _)| *choice);
+                        }
+                        let navigating = ctx.input(|i| {
+                            i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp)
+                        });
+                        if !choices.is_empty() {
+                            let current = choices
+                                .iter()
+                                .position(|(c, _)| Some(*c) == picker.highlighted)
+                                .unwrap_or(0);
+                            if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                                picker.highlighted = Some(choices[(current + 1) % choices.len()].0);
+                            }
+                            if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                                picker.highlighted =
+                                    Some(choices[(current + choices.len() - 1) % choices.len()].0);
                             }
                         }
+                        egui::ScrollArea::vertical()
+                            .max_height((viewport.height() - 220.0).clamp(60.0, 240.0))
+                            .show(ui, |ui| {
+                                if choices.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new("Type a name to create a group")
+                                            .color(theme::TEXT_SUBTLE),
+                                    );
+                                }
+                                for (choice, label) in choices {
+                                    let selected = picker.highlighted == Some(choice);
+                                    ui.visuals_mut().widgets.inactive.bg_fill =
+                                        egui::Color32::TRANSPARENT;
+                                    ui.visuals_mut().widgets.hovered.bg_fill =
+                                        theme::SURFACE_ELEVATED;
+                                    ui.visuals_mut().widgets.active.bg_fill =
+                                        theme::SURFACE_PRESSED;
+                                    ui.visuals_mut().selection.bg_fill = theme::SURFACE_ELEVATED;
+                                    let row = ui.add(
+                                        egui::Button::new("")
+                                            .left_text(label.as_str())
+                                            .selected(selected)
+                                            .stroke(egui::Stroke::NONE)
+                                            .corner_radius(theme::RADIUS_COMPACT)
+                                            .min_size(egui::vec2(ui.available_width(), 36.0))
+                                            .truncate(),
+                                    );
+                                    row.widget_info(|| {
+                                        egui::WidgetInfo::labeled(
+                                            egui::WidgetType::Button,
+                                            ui.is_enabled(),
+                                            &label,
+                                        )
+                                    });
+                                    if selected && navigating {
+                                        row.scroll_to_me(None);
+                                    }
+                                    if row.clicked() {
+                                        confirmed = Some(choice);
+                                    }
+                                }
+                            });
+                        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            confirmed = picker.highlighted;
+                        }
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("↑ ↓  choose    enter  confirm")
+                                    .monospace()
+                                    .small()
+                                    .color(theme::TEXT_SUBTLE),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.add(egui::Button::new("Cancel").frame(false)).clicked() {
+                                        cancel = true;
+                                    }
+                                },
+                            );
+                        });
                     });
-                if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    confirmed = picker.highlighted;
-                }
-                if ui.button("Cancel").clicked() {
-                    cancel = true;
-                }
             });
-        if let Some(id) = confirmed {
-            if self.add_members_to_group(id, &picker.members).is_ok() {
-                self.interaction.last_group_destination = Some(id);
-                self.select_group(id);
+        cancel |= !just_opened
+            && ctx.input(|i| {
+                i.pointer.any_pressed()
+                    && i.pointer
+                        .interact_pos()
+                        .is_some_and(|p| !panel.response.rect.contains(p))
+            });
+        if cancel || confirmed.is_some() {
+            ctx.memory_mut(|m| m.surrender_focus(input_id));
+        }
+        if !cancel {
+            match confirmed {
+                Some(GroupPickerChoice::Existing(id)) => {
+                    if self.add_members_to_group(id, &picker.members).is_ok() {
+                        self.remember_group_destination(id);
+                        self.select_group(id);
+                    }
+                }
+                Some(GroupPickerChoice::Create) => {
+                    self.interaction.pending_group_creation =
+                        Some((picker.query.trim().to_owned(), picker.members));
+                }
+                None => self.interaction.group_picker = Some(picker),
             }
-        } else if !cancel {
-            self.interaction.group_picker = Some(picker);
         }
     }
     pub(super) fn paint_groups(&self, painter: &egui::Painter, viewport: egui::Rect) {
@@ -498,6 +661,24 @@ impl CanvasState {
                 self.mark_dirty(id);
             }
         }
+        // The editor can disappear when a canvas click selects another item.
+        // Finish its draft here even when it will not render a lost-focus frame.
+        if let Some((id, _)) = &self.interaction.group_name_edit {
+            let editing = self.interaction.selected_group_ids == [*id]
+                && ui
+                    .ctx()
+                    .memory(|m| m.has_focus(egui::Id::new(("group-name", *id))));
+            if !editing {
+                let (id, name) = self.interaction.group_name_edit.take().unwrap();
+                if let Some(mut group) = self.groups().iter().find(|g| g.id == id).cloned()
+                    && !name.trim().is_empty()
+                    && group.name != name.trim()
+                {
+                    group.name = name.trim().to_owned();
+                    let _ = self.edit_group(group);
+                }
+            }
+        }
         let id = *self.interaction.selected_group_ids.first()?;
         if self.interaction.selected_group_ids.len() != 1 {
             return None;
@@ -523,23 +704,27 @@ impl CanvasState {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label("Name");
-                            let draft_id = egui::Id::new(("group-name-draft", id));
-                            let mut name = ui
-                                .ctx()
-                                .data(|data| data.get_temp::<String>(draft_id))
+                            let mut name = self
+                                .interaction
+                                .group_name_edit
+                                .as_ref()
+                                .filter(|(group_id, _)| *group_id == id)
+                                .map(|(_, name)| name.clone())
                                 .unwrap_or_else(|| group.name.clone());
-                            let name_response =
-                                ui.add(egui::TextEdit::singleline(&mut name).desired_width(160.));
+                            let name_response = ui.add(
+                                egui::TextEdit::singleline(&mut name)
+                                    .id(egui::Id::new(("group-name", id)))
+                                    .desired_width(160.),
+                            );
                             if name_response.has_focus() {
-                                ui.ctx()
-                                    .data_mut(|data| data.insert_temp(draft_id, name.clone()));
+                                self.interaction.group_name_edit = Some((id, name.clone()));
                             }
                             if name_response.lost_focus() {
                                 if !name.trim().is_empty() && group.name != name.trim() {
                                     group.name = name.trim().to_owned();
                                     changed = true;
                                 }
-                                ui.ctx().data_mut(|data| data.remove::<String>(draft_id));
+                                self.interaction.group_name_edit = None;
                             }
                             for (flow, label) in [
                                 (GroupFlow::Row, "Row"),

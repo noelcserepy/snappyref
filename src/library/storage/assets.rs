@@ -69,6 +69,7 @@ pub(super) fn insert_asset_row(
     transaction
         .execute(
             "INSERT INTO assets (
+                id,
                 original_path,
                 filename,
                 mime_type,
@@ -77,7 +78,10 @@ pub(super) fn insert_asset_row(
                 file_size,
                 imported_at,
                 original_sha256
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             ) VALUES (
+                MAX(COALESCE((SELECT MAX(id) FROM assets), 0),
+                    COALESCE((SELECT MAX(old_asset_id) FROM asset_redirects), 0)) + 1,
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 original_path,
                 filename,
@@ -424,6 +428,23 @@ impl Library {
             )
             .map_err(|error| format!("failed to delete duplicate embeddings: {error}"))?;
 
+        // Copies outside the database still refer to the old identities. Keep
+        // those identities resolvable, including across subsequent merges/restarts.
+        for duplicate_id in &duplicate_ids {
+            transaction
+                .execute(
+                    "UPDATE asset_redirects SET asset_id = ?1 WHERE asset_id = ?2",
+                    params![canonical_id, duplicate_id],
+                )
+                .map_err(|error| format!("failed to retarget merged assets: {error}"))?;
+            transaction
+                .execute(
+                    "INSERT INTO asset_redirects (old_asset_id, asset_id) VALUES (?1, ?2)",
+                    params![duplicate_id, canonical_id],
+                )
+                .map_err(|error| format!("failed to preserve merged asset identity: {error}"))?;
+        }
+
         super::durability::remap_board_history_assets(&transaction, &remaps)?;
         let delete_sql = format!("DELETE FROM assets WHERE id IN ({placeholders})");
         let duplicate_assets_removed = transaction
@@ -463,7 +484,7 @@ impl Library {
                 &format!(
                     "SELECT {ASSET_COLUMNS}
                      FROM assets
-                     WHERE id = ?1
+                     WHERE id = COALESCE((SELECT asset_id FROM asset_redirects WHERE old_asset_id = ?1), ?1)
                        AND archived = 0"
                 ),
                 params![asset_id],
@@ -480,7 +501,7 @@ impl Library {
             .prepare_cached(&format!(
                 "SELECT {ASSET_COLUMNS}
                  FROM assets
-                 WHERE id = ?1
+                 WHERE id = COALESCE((SELECT asset_id FROM asset_redirects WHERE old_asset_id = ?1), ?1)
                    AND archived = 0"
             ))
             .map_err(|error| format!("failed to prepare asset lookup: {error}"))?;
@@ -505,7 +526,16 @@ impl Library {
         let mut connection = self.connection()?;
         let transaction = write_transaction(&mut connection, "asset archive")?;
 
+        let mut affected_board_ids = std::collections::HashSet::new();
         for asset_id in asset_ids {
+            let board_ids = transaction
+                .prepare_cached("SELECT DISTINCT board_id FROM board_items WHERE asset_id = ?1")
+                .map_err(|error| format!("failed to prepare placement board lookup: {error}"))?
+                .query_map(params![asset_id], |row| row.get::<_, i64>(0))
+                .map_err(|error| format!("failed to read placement boards: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("failed to collect placement boards: {error}"))?;
+            affected_board_ids.extend(board_ids);
             transaction
                 .execute(
                     "UPDATE assets SET archived = 1 WHERE id = ?1",
@@ -535,6 +565,8 @@ impl Library {
                     )
                 })?;
         }
+
+        super::groups::prune_archived_group_members(&transaction, &affected_board_ids)?;
 
         transaction
             .commit()

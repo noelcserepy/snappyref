@@ -1355,3 +1355,78 @@ pub(super) fn reserve_import_fixture(
     request.reserved_world = reservation.reserved_world;
     request
 }
+
+#[test]
+fn local_intake_failures_unicode_dedup_and_managed_source_restart() {
+    let root = TempRoot::new("intake-managed-restart");
+    let source_root = TempRoot::new("intake-external-source");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let source = write_png(&source_root, "Référence 明 A.png", 64, 48);
+    let original_pixels = image::open(&source).unwrap().into_rgba8();
+    for (name, bytes) in [
+        ("corrupt.png", b"not png".as_slice()),
+        ("empty.png", b"".as_slice()),
+        ("unsupported.txt", b"plain text".as_slice()),
+    ] {
+        let path = source_root.join(name);
+        fs::write(&path, bytes).unwrap();
+        assert!(
+            import_path_sync(&library, path, eframe::egui::Pos2::ZERO).is_err(),
+            "{name}"
+        );
+    }
+    let first = import_path_sync(&library, source.clone(), eframe::egui::Pos2::ZERO).unwrap();
+    assert_eq!(
+        image::open(&first.placement.require_loaded_asset().original_path)
+            .unwrap()
+            .into_rgba8(),
+        original_pixels
+    );
+    let first_board = library.load_user_session().unwrap().active_board_id;
+    library
+        .fixture_placement(first_board, first.placement.clone())
+        .unwrap();
+    let other = library.fixture_board("Other").unwrap();
+    library.set_active_board(other.id).unwrap();
+    let duplicate = source_root.join("another name.png");
+    fs::copy(&source, &duplicate).unwrap();
+    let second = import_path_sync(
+        &library,
+        duplicate.clone(),
+        eframe::egui::pos2(200.0, 100.0),
+    )
+    .unwrap();
+    library
+        .fixture_placement(other.id, second.placement.clone())
+        .unwrap();
+    assert_ne!(first.placement.id(), second.placement.id());
+    assert_eq!(first.placement.asset_id(), second.placement.asset_id());
+    fs::rename(&source, source_root.join("moved-original.png")).unwrap();
+    fs::remove_file(duplicate).unwrap();
+    drop(library);
+    let reopened = Library::initialize(root.to_path_buf()).unwrap();
+    for board in [first_board, other.id] {
+        let placements = reopened.load_placements_for_board(board).unwrap();
+        assert_eq!(placements.len(), 1);
+        assert_eq!(
+            image::open(&placements[0].require_loaded_asset().original_path)
+                .unwrap()
+                .into_rgba8(),
+            original_pixels
+        );
+        assert!(matches!(
+            load_existing(
+                &reopened,
+                board,
+                None,
+                placements[0].clone(),
+                usize::MAX,
+                CanvasImageSettings::default(),
+                CanvasImageLod::Working,
+                None,
+                None
+            ),
+            ImagePrepResult::Loaded(_)
+        ));
+    }
+}

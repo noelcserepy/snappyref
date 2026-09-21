@@ -168,6 +168,7 @@ mod tests {
         let settings = WorkspaceSettings::default();
 
         assert_eq!(settings.placement_gap, 0.0);
+        assert_eq!(settings.pointer_mode, super::PointerMode::Mouse);
     }
 }
 

@@ -456,3 +456,58 @@ fn paint_switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
     }
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    #[test]
+    fn numeric_settings_clamp_bounds_and_restore_invalid_text_on_blur() {
+        for upper in [180.0, 128.0] {
+            for (text, expected) in [
+                ("0", 0.0),
+                ("999", upper),
+                ("-4", 0.0),
+                ("", 15.0),
+                ("abc", 15.0),
+            ] {
+                let mut harness = Harness::builder()
+                    .with_size(egui::vec2(400.0, 100.0))
+                    .build_ui_state(
+                        move |ui, value| {
+                            paint_number_text_field(
+                                ui,
+                                "release-test",
+                                value,
+                                0.0..=upper,
+                                "units",
+                            );
+                            ui.button("Elsewhere").clicked();
+                        },
+                        15.0,
+                    );
+                harness
+                    .get_by_role(egui::accesskit::Role::TextInput)
+                    .click();
+                harness.step();
+                harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+                harness.step();
+                harness.key_press(egui::Key::Backspace);
+                harness.step();
+                if !text.is_empty() {
+                    harness.event(egui::Event::Text(text.into()));
+                    harness.step();
+                }
+                harness.get_by_label("Elsewhere").click();
+                harness.step();
+                assert_eq!(
+                    *harness.state(),
+                    expected,
+                    "input {text:?}, maximum {upper}"
+                );
+                assert!(!harness.ctx.egui_wants_keyboard_input());
+            }
+        }
+    }
+}

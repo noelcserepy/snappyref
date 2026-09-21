@@ -83,34 +83,31 @@ fn drag_with_modifiers(
     modifiers: egui::Modifiers,
     button: egui::PointerButton,
 ) {
-    harness.event_modifiers(egui::Event::PointerMoved(from), modifiers);
-    harness.event_modifiers(
-        egui::Event::PointerButton {
-            pos: from,
-            button,
-            pressed: true,
-            modifiers,
-        },
+    harness.input_mut().modifiers = modifiers;
+    harness.event(egui::Event::PointerMoved(from));
+    harness.event(egui::Event::PointerButton {
+        pos: from,
+        button,
+        pressed: true,
         modifiers,
-    );
+    });
     for _ in 0..8 {
         harness.step();
     }
     std::thread::sleep(Duration::from_millis(120));
     let mid = from + (to - from) * 0.5;
-    harness.event_modifiers(egui::Event::PointerMoved(mid), modifiers);
+    harness.event(egui::Event::PointerMoved(mid));
     harness.step();
-    harness.event_modifiers(egui::Event::PointerMoved(to), modifiers);
+    harness.event(egui::Event::PointerMoved(to));
     harness.step();
-    harness.event_modifiers(
-        egui::Event::PointerButton {
-            pos: to,
-            button,
-            pressed: false,
-            modifiers,
-        },
+    harness.event(egui::Event::PointerButton {
+        pos: to,
+        button,
+        pressed: false,
         modifiers,
-    );
+    });
+    harness.step();
+    harness.input_mut().modifiers = egui::Modifiers::NONE;
     harness.step();
 }
 
@@ -529,6 +526,41 @@ fn inspect_canvas_navigation_and_boards_writes_artifact() {
     );
     scenario.capture_screen("screen-002-panned", &mut harness);
 
+    let item_before_pan = harness
+        .state()
+        .canvas
+        .placement_for_id(green.state.id)
+        .unwrap()
+        .state
+        .geometry;
+    let before_alt = harness.state().canvas.viewport_state();
+    drag_with_modifiers(
+        &mut harness,
+        screen.center() + egui::vec2(300.0, 200.0),
+        screen.center() + egui::vec2(360.0, 260.0),
+        egui::Modifiers::ALT,
+        egui::PointerButton::Primary,
+    );
+    let after_alt = harness.state().canvas.viewport_state();
+    scenario.assertion(
+        "Alt-primary drag pans without moving content",
+        after_alt != before_alt
+            && harness
+                .state()
+                .canvas
+                .placement_for_id(green.state.id)
+                .unwrap()
+                .state
+                .geometry
+                == item_before_pan,
+    );
+    harness.hover_at(screen.center() + egui::vec2(400.0, 300.0));
+    harness.step();
+    scenario.assertion(
+        "releasing Alt-primary drag ends panning",
+        harness.state().canvas.viewport_state() == after_alt,
+    );
+
     // Space focuses the selection.
     harness
         .state_mut()
@@ -833,5 +865,755 @@ fn inspect_persistence_write_retry_writes_artifact() {
     );
     scenario.capture_screen("screen-002-recovered", &mut harness);
 
+    finish(scenario);
+}
+
+#[test]
+fn canvas_selection_gestures_preserve_content_geometry() {
+    let root = TempRoot::new("snappyref-selection-gestures");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut harness = app_full_harness(test_app(Some(library.clone())));
+    let left = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "left",
+        [60, 90, 180, 255],
+        (100, 100),
+        egui::pos2(-150.0, 0.0),
+    );
+    let right = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "right",
+        [180, 90, 60, 255],
+        (100, 100),
+        egui::pos2(150.0, 0.0),
+    );
+    let screen = test_screen_rect();
+    let point = |p| inspect_world_to_screen(p, screen);
+    inspect_click_at(
+        &harness,
+        point(left.state.geometry.center),
+        egui::Modifiers::NONE,
+    );
+    harness.step();
+    assert_eq!(
+        harness.state().canvas.selected_placement_ids(),
+        vec![left.state.id]
+    );
+    inspect_click_at(
+        &harness,
+        point(right.state.geometry.center),
+        egui::Modifiers::SHIFT,
+    );
+    harness.step();
+    assert_eq!(harness.state().canvas.selected_placement_ids().len(), 2);
+    inspect_click_at(
+        &harness,
+        point(left.state.geometry.center),
+        egui::Modifiers::SHIFT,
+    );
+    harness.step();
+    assert_eq!(
+        harness.state().canvas.selected_placement_ids(),
+        vec![right.state.id]
+    );
+    inspect_click_at(
+        &harness,
+        point(egui::pos2(0.0, 250.0)),
+        egui::Modifiers::NONE,
+    );
+    harness.step();
+    assert!(harness.state().canvas.selected_placement_ids().is_empty());
+    for (min, max, modifiers, count) in [
+        (
+            egui::pos2(-350.0, -250.0),
+            egui::pos2(-10.0, 250.0),
+            egui::Modifiers::NONE,
+            1,
+        ),
+        (
+            egui::pos2(10.0, -250.0),
+            egui::pos2(350.0, 250.0),
+            egui::Modifiers::SHIFT,
+            2,
+        ),
+    ] {
+        drag_with_modifiers(
+            &mut harness,
+            point(min),
+            point(max),
+            modifiers,
+            egui::PointerButton::Primary,
+        );
+        assert_eq!(harness.state().canvas.selected_placement_ids().len(), count);
+    }
+    for placement in [left, right] {
+        assert_eq!(
+            harness
+                .state()
+                .canvas
+                .placement_for_id(placement.state.id)
+                .unwrap()
+                .state
+                .geometry,
+            placement.state.geometry
+        );
+    }
+    assert_eq!(harness.state().canvas.canvas_stack_order().len(), 2);
+}
+
+#[test]
+fn space_focus_fits_multiple_images_textbox_and_mixed_selection() {
+    let root = TempRoot::new("snappyref-focus-kinds");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut harness = app_full_harness(test_app(Some(library.clone())));
+    let left = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "focus-left",
+        [30, 60, 90, 255],
+        (100, 150),
+        egui::pos2(-150.0, -80.0),
+    );
+    let right = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "focus-right",
+        [90, 60, 30, 255],
+        (180, 100),
+        egui::pos2(220.0, 110.0),
+    );
+    let annotation = crate::data::CanvasAnnotation::new(
+        901,
+        CanvasAnnotationKind::Textbox,
+        egui::pos2(-50.0, -200.0),
+        egui::pos2(190.0, -100.0),
+        "Focus note".to_owned(),
+        CanvasTextSize::M,
+        CanvasStrokeWidth::M,
+        crate::data::CanvasAnnotationColor::Sky,
+        false,
+        false,
+    );
+    harness.state_mut().canvas.add_annotation(annotation);
+    for (images, notes) in [
+        (vec![left.id(), right.id()], vec![]),
+        (vec![], vec![901]),
+        (vec![left.id()], vec![901]),
+    ] {
+        harness.state_mut().canvas.select_content(&images, &notes);
+        harness.key_press(egui::Key::Space);
+        for _ in 0..30 {
+            harness.step();
+        }
+        let selected = harness
+            .state()
+            .canvas
+            .selection_screen_rect(test_screen_rect())
+            .unwrap();
+        assert!(
+            test_screen_rect().shrink(20.0).contains_rect(selected),
+            "{selected:?}"
+        );
+        assert_eq!(harness.state().canvas.selected_placement_ids(), images);
+    }
+}
+
+#[test]
+fn abandoned_external_hover_leaves_no_content_or_history() {
+    let root = TempRoot::new("snappyref-abandoned-hover");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let source = library
+        .store_rgba_image("hover", &solid_rgba([50, 90, 140, 255], 40, 30), 40, 30)
+        .unwrap();
+    let (worker, _) = crate::image_preparation::ImagePrepWorker::controlled();
+    let mut app = test_app(Some(library.clone()));
+    app.import_worker = Some(worker);
+    let mut harness = app_full_harness(app);
+    harness.hover_at(egui::pos2(700.0, 400.0));
+    harness.input_mut().hovered_files = vec![egui::HoveredFile {
+        path: Some(source),
+        ..Default::default()
+    }];
+    harness.step();
+    assert_eq!(
+        harness
+            .state()
+            .canvas
+            .provisional_placements_in_selection_order()
+            .len(),
+        1
+    );
+    harness.input_mut().hovered_files.clear();
+    harness.event(egui::Event::PointerGone);
+    harness.step();
+    assert!(harness.state().canvas.canvas_stack_order().is_empty());
+    assert_eq!(harness.state().placement_creation.pending_len(), 0);
+    harness.state_mut().flush_persistence();
+    assert!(library.load_placements().unwrap().is_empty());
+    let board = harness.state().active_board_id;
+    assert!(
+        library
+            .load_document_history()
+            .unwrap()
+            .undo(board)
+            .is_none()
+    );
+}
+
+#[test]
+fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
+    use std::io::{Read, Write};
+    let mut scenario = InspectScenario::new("slow-url-inactive-mixed-batch");
+    let root = TempRoot::new("snappyref-slow-url-batch");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let source = root.join("valid.png");
+    image::RgbaImage::from_pixel(80, 50, image::Rgba([55, 120, 200, 255]))
+        .save(&source)
+        .unwrap();
+    let corrupt = root.join("corrupt.png");
+    std::fs::write(&corrupt, b"corrupt image").unwrap();
+    let png = std::fs::read(&source).unwrap();
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let (release, wait) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let mut request = [0; 2048];
+            let n = stream.read(&mut request).unwrap();
+            let slow = String::from_utf8_lossy(&request[..n]).contains("/slow.png");
+            if slow {
+                wait.recv_timeout(Duration::from_secs(15)).unwrap();
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", png.len()).unwrap();
+                stream.write_all(&png).unwrap();
+            } else {
+                stream.write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            }
+        }
+    });
+    let mut app = test_app(Some(library.clone()));
+    app.import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
+        library.clone(),
+        egui::Context::default(),
+        None,
+    ));
+    let mut harness = app_full_harness(app);
+    let screen = test_screen_rect();
+    let view_before = harness.state().canvas.viewport_state();
+    harness.hover_at(screen.center());
+    harness.event(egui::Event::Paste(format!("http://{address}/slow.png")));
+    harness.step();
+    let slow_id = harness.state().canvas.selected_placement_ids()[0];
+    assert_eq!(harness.state().canvas.viewport_state(), view_before);
+    assert_eq!(harness.state().placement_creation.pending_len(), 1);
+    scenario.capture_screen("screen-000-url-loading", &mut harness);
+    drag_with_modifiers(
+        &mut harness,
+        screen.center(),
+        screen.center() + egui::vec2(85.0, 65.0),
+        egui::Modifiers::NONE,
+        egui::PointerButton::Primary,
+    );
+    let moved = center_of(&harness, slow_id);
+    assert!(moved.distance(egui::Pos2::ZERO) > 20.0);
+    drag_with_modifiers(
+        &mut harness,
+        screen.center() + egui::vec2(300.0, 200.0),
+        screen.center() + egui::vec2(360.0, 250.0),
+        egui::Modifiers::ALT,
+        egui::PointerButton::Primary,
+    );
+    let navigated = harness.state().canvas.viewport_state();
+    assert_ne!(navigated, view_before);
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while harness.state().placement_creation.pending_len() != 0 && Instant::now() < deadline {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(harness.state().placement_creation.pending_len(), 0);
+    assert!(
+        harness
+            .state()
+            .canvas
+            .placement_for_id(slow_id)
+            .unwrap()
+            .is_loaded()
+    );
+    assert!(center_of(&harness, slow_id).distance(moved) < 0.01);
+    assert_eq!(harness.state().canvas.viewport_state(), navigated);
+    scenario.assertion("slow URL accepts without viewport movement; pending placement moves and pans; completion preserves identity, edited center and navigated viewport", true);
+    scenario.capture_screen("screen-001-url-loaded", &mut harness);
+    harness.input_mut().dropped_files = vec![
+        egui::DroppedFile {
+            path: Some(source),
+            ..Default::default()
+        },
+        egui::DroppedFile {
+            path: Some(corrupt),
+            ..Default::default()
+        },
+        egui::DroppedFile {
+            name: format!("http://{address}/fail.png"),
+            ..Default::default()
+        },
+    ];
+    harness.step();
+    let ids = harness.state().canvas.selected_placement_ids();
+    assert_eq!(ids.len(), 3);
+    let board_a = harness.state().active_board_id;
+    shortcut(&mut harness, CMD, egui::Key::N);
+    let board_b = harness.state().active_board_id;
+    assert_ne!(board_a, board_b);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while harness.state().placement_creation.pending_len() != 0 && Instant::now() < deadline {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(harness.state().placement_creation.pending_len(), 0);
+    assert!(harness.state().canvas.canvas_stack_order().is_empty());
+    harness.state_mut().flush_persistence();
+    let completed = library.load_placements_for_board(board_a).unwrap();
+    assert_eq!(completed.len(), 4);
+    assert_eq!(completed.iter().filter(|p| p.is_loaded()).count(), 2);
+    assert_eq!(
+        completed
+            .iter()
+            .filter(|p| matches!(p.content, crate::data::PlacementContent::Failed { .. }))
+            .count(),
+        2
+    );
+    assert!(
+        library
+            .load_placements_for_board(board_b)
+            .unwrap()
+            .is_empty()
+    );
+    let batch = completed
+        .iter()
+        .filter(|p| ids.contains(&p.id()))
+        .collect::<Vec<_>>();
+    for (i, a) in batch.iter().enumerate() {
+        for b in &batch[i + 1..] {
+            let overlap = a.visual_bounds().intersect(b.visual_bounds());
+            assert!(
+                overlap.width() <= 0.01 || overlap.height() <= 0.01,
+                "batch bounds {:?} {:?}",
+                a.visual_bounds(),
+                b.visual_bounds()
+            );
+        }
+    }
+    scenario.fact(
+        "completed-inactive-batch-layout",
+        serde_json::json!(
+            batch
+                .iter()
+                .map(|p| (
+                    p.id(),
+                    p.state.geometry.center.x,
+                    p.state.geometry.center.y,
+                    p.state.geometry.scale
+                ))
+                .collect::<Vec<_>>()
+        ),
+    );
+    shortcut(&mut harness, CMD, egui::Key::Num1);
+    for _ in 0..20 {
+        harness.step();
+    }
+    assert_eq!(harness.state().active_board_id, board_a);
+    assert_eq!(harness.state().canvas.canvas_stack_order().len(), 4);
+    scenario.assertion("mixed valid, corrupt and failed HTTP batch completes only on inactive target board with stable IDs and nonoverlapping final layout", true);
+    scenario.capture_screen("screen-002-return-to-completed-batch", &mut harness);
+    harness.state_mut().canvas.select_placements(&ids);
+    harness.key_press(INSPECT_DELETE_KEY);
+    harness.step();
+    assert_eq!(harness.state().canvas.canvas_stack_order().len(), 1);
+    scenario.assertion(
+        "failed placements leave no endless loading and delete with the mixed batch",
+        true,
+    );
+    server.join().unwrap();
+    finish(scenario);
+}
+
+#[test]
+fn overlay_scroll_routing_releases_canvas_for_next_drag() {
+    let root = TempRoot::new("snappyref-overlay-routing");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut harness = app_full_harness(test_app(Some(library.clone())));
+    let placement = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "routing",
+        [60, 150, 90, 255],
+        (100, 80),
+        egui::pos2(200.0, 180.0),
+    );
+    shortcut(&mut harness, CMD, egui::Key::B);
+    let before = harness.state().canvas.viewport_state();
+    harness.hover_at(sidebar_rect(test_screen_rect()).center());
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, 2.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+    for _ in 0..20 {
+        harness.step();
+    }
+    assert_eq!(harness.state().canvas.viewport_state(), before);
+    shortcut(&mut harness, CMD, egui::Key::F);
+    assert!(harness.state().search.overlay.open);
+    let overlay = harness
+        .state()
+        .search
+        .overlay
+        .last_expanded_overlay_rect
+        .unwrap();
+    harness.hover_at(overlay.center());
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, 50.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+    for _ in 0..20 {
+        harness.step();
+    }
+    assert_eq!(harness.state().canvas.viewport_state(), before);
+    harness.key_press(egui::Key::Escape);
+    harness.step();
+    assert!(!harness.state().search.overlay.open);
+    shortcut(&mut harness, CMD, egui::Key::B);
+    let from = inspect_world_to_screen(placement.state.geometry.center, test_screen_rect());
+    drag_with_modifiers(
+        &mut harness,
+        from,
+        from + egui::vec2(90.0, 60.0),
+        egui::Modifiers::NONE,
+        egui::PointerButton::Primary,
+    );
+    assert!(center_of(&harness, placement.id()).distance(placement.state.geometry.center) > 30.0);
+    let before = harness.state().canvas.viewport_state();
+    harness.hover_at(test_screen_rect().center());
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, 1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+    for _ in 0..20 {
+        harness.step();
+    }
+    assert!(harness.state().canvas.viewport_state().camera_zoom > before.camera_zoom);
+}
+
+#[test]
+fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
+    let mut scenario = InspectScenario::new("multi-transform-layout-contracts");
+    let root = TempRoot::new("snappyref-transform-layout");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut harness = app_full_harness(test_app(Some(library.clone())));
+    let a = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "transform-a",
+        [60, 100, 180, 255],
+        (140, 100),
+        egui::pos2(-180.0, -80.0),
+    );
+    let b = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "transform-b",
+        [180, 100, 60, 255],
+        (80, 160),
+        egui::pos2(180.0, 80.0),
+    );
+    let other = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "unselected",
+        [60, 180, 100, 255],
+        (90, 90),
+        egui::pos2(650.0, 250.0),
+    );
+    let ids = [a.id(), b.id()];
+    let snapshot = |h: &Harness<'_, SnappyRefApp>| {
+        ids.map(|id| {
+            h.state()
+                .canvas
+                .placement_for_id(id)
+                .unwrap()
+                .state
+                .geometry
+        })
+    };
+    harness.state_mut().canvas.select_placements(&ids);
+    let screen = test_screen_rect();
+    let before = snapshot(&harness);
+    let start = inspect_world_to_screen(before[0].center, screen);
+    drag_with_modifiers(
+        &mut harness,
+        start,
+        start + egui::vec2(90.0, 55.0),
+        CMD,
+        egui::PointerButton::Primary,
+    );
+    let moved = snapshot(&harness);
+    assert!((moved[0].center - before[0].center).length() > 50.0);
+    assert!(
+        (moved[0].center - before[0].center - (moved[1].center - before[1].center)).length() < 0.01
+    );
+    assert_eq!(
+        harness
+            .state()
+            .canvas
+            .placement_for_id(other.id())
+            .unwrap()
+            .state
+            .geometry,
+        other.state.geometry
+    );
+    scenario.assertion(
+        "multi-selection drag preserves relative geometry and unselected image",
+        true,
+    );
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    assert_eq!(snapshot(&harness), before);
+    harness.state_mut().canvas.select_placements(&ids);
+    let view = harness.state().canvas.viewport_state();
+    drag_with_modifiers(
+        &mut harness,
+        start,
+        start + egui::vec2(90.0, 0.0),
+        CMD_ALT,
+        egui::PointerButton::Primary,
+    );
+    let scaled = snapshot(&harness);
+    let factor = scaled[0].scale / before[0].scale;
+    assert!(factor > 1.05);
+    assert!((scaled[1].scale / before[1].scale - factor).abs() < 0.001);
+    assert!(
+        (scaled[0].center.distance(scaled[1].center) / before[0].center.distance(before[1].center)
+            - factor)
+            .abs()
+            < 0.001
+    );
+    assert_eq!(harness.state().canvas.viewport_state(), view);
+    scenario.assertion(
+        "Mod-Alt scales sizes and spacing uniformly without panning",
+        true,
+    );
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    harness.state_mut().canvas.select_placements(&ids);
+    harness.state_mut().settings.rotation_snap_degrees = 15.0;
+    harness.key_down(egui::Key::R);
+    harness.step();
+    let bounds = harness
+        .state()
+        .canvas
+        .selection_screen_rect(screen)
+        .unwrap();
+    let handle = bounds.center_top() - egui::vec2(0.0, 18.0);
+    drag_with_modifiers(
+        &mut harness,
+        handle,
+        bounds.center() + egui::vec2(80.0, -130.0),
+        egui::Modifiers::NONE,
+        egui::PointerButton::Primary,
+    );
+    harness.key_up(egui::Key::R);
+    harness.step();
+    let rotated = snapshot(&harness);
+    let steps = rotated[0].rotation / 15.0_f32.to_radians();
+    assert!(steps.abs() >= 1.0 && (steps - steps.round()).abs() < 0.001);
+    assert!((rotated[0].rotation - rotated[1].rotation).abs() < 0.001);
+    assert!(
+        (rotated[0].center.distance(rotated[1].center)
+            - before[0].center.distance(before[1].center))
+        .abs()
+            < 0.01
+    );
+    scenario.assertion(
+        "R-handle rotation snaps both images in15degree steps and preserves separation",
+        true,
+    );
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    harness.state_mut().canvas.select_placements(&ids);
+    harness.key_down(egui::Key::R);
+    harness.step();
+    let bounds = harness
+        .state()
+        .canvas
+        .selection_screen_rect(screen)
+        .unwrap();
+    let handle = bounds.center_top() - egui::vec2(0.0, 18.0);
+    harness.event(egui::Event::PointerMoved(handle));
+    harness.event(egui::Event::PointerButton {
+        pos: handle,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    harness.input_mut().modifiers = egui::Modifiers::ALT;
+    let target = bounds.center() + egui::vec2(80.0, -130.0);
+    harness.event(egui::Event::PointerMoved(target));
+    harness.step();
+    harness.event(egui::Event::PointerButton {
+        pos: target,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::ALT,
+    });
+    harness.step();
+    harness.input_mut().modifiers = egui::Modifiers::NONE;
+    harness.key_up(egui::Key::R);
+    harness.step();
+    let precise = snapshot(&harness)[0].rotation / 15.0_f32.to_radians();
+    assert!((precise - precise.round()).abs() > 0.05);
+    scenario.assertion("Alt added during active rotation bypasses snap", true);
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    harness.state_mut().canvas.select_placements(&ids);
+    drag_with_modifiers(
+        &mut harness,
+        start,
+        egui::pos2(screen.right() + 80.0, screen.center().y),
+        CMD_ALT,
+        egui::PointerButton::Primary,
+    );
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    harness.state_mut().canvas.select_placements(&ids);
+    let before_normal = snapshot(&harness);
+    let start = inspect_world_to_screen(before_normal[0].center, screen);
+    drag_with_modifiers(
+        &mut harness,
+        start,
+        start + egui::vec2(30.0, 35.0),
+        CMD,
+        egui::PointerButton::Primary,
+    );
+    let after_normal = snapshot(&harness);
+    assert_eq!(after_normal[0].scale, before_normal[0].scale);
+    assert!(after_normal[0].center.distance(before_normal[0].center) > 20.0);
+    scenario.assertion(
+        "release outside canvas ends scaling; next ordinary drag moves without scaling",
+        true,
+    );
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    scenario.capture_screen("screen-000-after-transforms", &mut harness);
+    for gap in [0.0, 24.0] {
+        let before_setting = snapshot(&harness);
+        harness.state_mut().settings.placement_gap = gap;
+        harness.step();
+        assert_eq!(snapshot(&harness), before_setting);
+        for key in [egui::Key::W, egui::Key::E] {
+            harness.state_mut().canvas.select_placements(&ids);
+            let original = snapshot(&harness);
+            harness.key_press(key);
+            harness.step();
+            let arranged = snapshot(&harness);
+            let ra = harness
+                .state()
+                .canvas
+                .placement_for_id(ids[0])
+                .unwrap()
+                .visual_bounds();
+            let rb = harness
+                .state()
+                .canvas
+                .placement_for_id(ids[1])
+                .unwrap()
+                .visual_bounds();
+            let actual = if key == egui::Key::W {
+                (ra.left().max(rb.left()) - ra.right().min(rb.right())).abs()
+            } else {
+                (ra.top().max(rb.top()) - ra.bottom().min(rb.bottom())).abs()
+            };
+            assert!((actual - gap).abs() < 0.01, "gap {gap} actual {actual}");
+            assert_eq!(
+                [arranged[0].size, arranged[1].size],
+                [original[0].size, original[1].size]
+            );
+            assert_eq!(
+                [arranged[0].scale, arranged[1].scale],
+                [original[0].scale, original[1].scale]
+            );
+            shortcut(&mut harness, CMD, egui::Key::Z);
+            assert_eq!(snapshot(&harness), original);
+        }
+    }
+    scenario.assertion("row and column respect gap0/24 and proportions, undo restores, setting alone does not rearrange", true);
+    for key in [
+        egui::Key::ArrowLeft,
+        egui::Key::ArrowRight,
+        egui::Key::ArrowUp,
+        egui::Key::ArrowDown,
+    ] {
+        harness.state_mut().canvas.select_placements(&ids);
+        let original = snapshot(&harness);
+        harness.key_press(key);
+        harness.step();
+        assert_eq!(
+            harness
+                .state()
+                .canvas
+                .placement_for_id(other.id())
+                .unwrap()
+                .state
+                .geometry,
+            other.state.geometry
+        );
+        let ra = harness
+            .state()
+            .canvas
+            .placement_for_id(ids[0])
+            .unwrap()
+            .visual_bounds();
+        let rb = harness
+            .state()
+            .canvas
+            .placement_for_id(ids[1])
+            .unwrap()
+            .visual_bounds();
+        let overlap = ra.intersect(rb);
+        assert!(overlap.width() <= 0.01 || overlap.height() <= 0.01);
+        shortcut(&mut harness, CMD, egui::Key::Z);
+        assert_eq!(snapshot(&harness), original);
+    }
+    scenario.assertion(
+        "four arrow settle commands preserve unselected image, avoid overlap and undo exactly",
+        true,
+    );
+    for modifiers in [CMD, egui::Modifiers { shift: true, ..CMD }] {
+        harness.state_mut().canvas.select_placements(&ids);
+        let original = snapshot(&harness);
+        let target = if modifiers.shift {
+            original
+                .iter()
+                .map(|g| g.size.x * g.size.y * g.scale * g.scale)
+                .sum::<f32>()
+                / 2.0
+        } else {
+            crate::placement::DEFAULT_PLACEMENT_TARGET_AREA
+        };
+        shortcut(&mut harness, modifiers, egui::Key::L);
+        for (after, before) in snapshot(&harness).iter().zip(original) {
+            assert!((after.size.x * after.size.y * after.scale * after.scale - target).abs() < 1.0);
+            assert_eq!(after.size, before.size);
+        }
+        shortcut(&mut harness, CMD, egui::Key::Z);
+        assert_eq!(snapshot(&harness), original);
+    }
+    scenario.assertion("default and selection average-area shortcuts hit their targets, preserve aspect ratios and undo", true);
+    scenario.capture_screen("screen-001-after-layouts", &mut harness);
     finish(scenario);
 }

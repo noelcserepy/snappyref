@@ -242,7 +242,15 @@ impl BoardLifecycle<'_> {
         }
         self.canvas
             .restore_canvas_stack_order(document.stack_order.clone());
-        self.queue_opened_board_images(ctx, document.placements.clone())?;
+        self.queue_opened_board_images(
+            ctx,
+            document
+                .placements
+                .iter()
+                .filter(|placement| placement.is_loaded())
+                .cloned()
+                .collect(),
+        )?;
         self.save_user_session()?;
         Ok(())
     }

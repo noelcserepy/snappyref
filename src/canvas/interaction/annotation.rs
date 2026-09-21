@@ -1,8 +1,8 @@
 use eframe::egui;
 
 use super::super::{
-    ANNOTATION_HIT_RADIUS, ActiveGesture, AnnotationDraftState, AnnotationDragState, CanvasState,
-    PendingAnnotation,
+    ANNOTATION_HIT_RADIUS, ActiveGesture, AnnotationDraftState, AnnotationDragState,
+    AnnotationEndpoint, CanvasState, PendingAnnotation,
 };
 use super::{normalized_textbox_rect, textbox_screen_rect, textbox_world_rect};
 use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasTextSize, SegmentGeometry};
@@ -12,6 +12,7 @@ pub(crate) fn begin_annotation_drag(
     rect: egui::Rect,
     annotation_id: i64,
     pointer_pos: egui::Pos2,
+    endpoint: Option<AnnotationEndpoint>,
 ) {
     state.finish_textbox_edit();
     state.interaction.selected_placement_ids.clear();
@@ -48,11 +49,32 @@ pub(crate) fn begin_annotation_drag(
         .collect::<Vec<_>>();
 
     state.interaction.gesture = Some(ActiveGesture::AnnotationDrag(AnnotationDragState {
-        annotation_ids,
         pointer_start_world: state.screen_to_world(pointer_pos, rect),
         pointer_start_screen: pointer_pos,
         starting_segments,
+        endpoint,
     }));
+}
+
+pub(crate) fn annotation_endpoint_at_pointer(
+    state: &CanvasState,
+    rect: egui::Rect,
+    annotation: &CanvasAnnotation,
+    pointer: egui::Pos2,
+) -> Option<AnnotationEndpoint> {
+    if annotation.kind == CanvasAnnotationKind::Textbox {
+        return None;
+    }
+    let (start, end) = annotation_screen_points(state, rect, annotation);
+    let start_distance = pointer.distance(start);
+    let end_distance = pointer.distance(end);
+    if start_distance.min(end_distance) > ANNOTATION_HIT_RADIUS {
+        None
+    } else if start_distance <= end_distance {
+        Some(AnnotationEndpoint::Start)
+    } else {
+        Some(AnnotationEndpoint::End)
+    }
 }
 
 pub(crate) fn hit_test_annotation(
