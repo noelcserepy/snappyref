@@ -2,6 +2,7 @@ mod board_lifecycle;
 mod completion;
 mod editing_interaction;
 mod inspect_scenarios;
+mod jev_pilot;
 mod performance_reporting;
 mod placement_creation;
 mod semantic_search;

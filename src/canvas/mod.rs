@@ -7,6 +7,14 @@ mod geometry;
 mod groups;
 pub(crate) mod guide_snap;
 mod interaction;
+#[cfg(test)]
+pub(crate) fn inspect_hit_test_canvas_item(
+    canvas: &CanvasState,
+    viewport: egui::Rect,
+    pointer: egui::Pos2,
+) -> Option<CanvasHit> {
+    interaction::hit_test_canvas_item(canvas, viewport, pointer)
+}
 mod render;
 mod state;
 
