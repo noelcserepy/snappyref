@@ -364,6 +364,35 @@ impl CanvasState {
         self.prune_cached_pixels_to_selected_items();
     }
 
+    /// Outside member editing a Group is selected as a whole, so removing one
+    /// member drops the Group and every member with it.
+    pub(in crate::canvas) fn remove_from_selection(&mut self, placement_id: i64) {
+        let group = self
+            .group_for_member(placement_id)
+            .filter(|_| self.interaction.editing_group_id.is_none());
+        match group {
+            Some(group_id) => {
+                let members = self
+                    .groups()
+                    .iter()
+                    .find(|group| group.id == group_id)
+                    .map(|group| group.members.clone())
+                    .unwrap_or_default();
+                self.interaction
+                    .selected_placement_ids
+                    .retain(|id| !members.contains(id));
+                self.interaction
+                    .selected_group_ids
+                    .retain(|id| *id != group_id);
+            }
+            None => self
+                .interaction
+                .selected_placement_ids
+                .retain(|id| *id != placement_id),
+        }
+        self.prune_cached_pixels_to_selected_items();
+    }
+
     pub(in crate::canvas) fn add_to_selection(&mut self, placement_id: i64) {
         self.finish_textbox_edit();
         if !self

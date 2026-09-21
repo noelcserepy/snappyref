@@ -12,6 +12,7 @@ pub(crate) fn begin_annotation_drag(
     rect: egui::Rect,
     annotation_id: i64,
     pointer_pos: egui::Pos2,
+    endpoint: Option<AnnotationEndpoint>,
 ) {
     state.finish_textbox_edit();
     state.interaction.selected_placement_ids.clear();
@@ -47,12 +48,6 @@ pub(crate) fn begin_annotation_drag(
         })
         .collect::<Vec<_>>();
 
-    let endpoint = state
-        .single_selected_annotation_id()
-        .and_then(|id| state.annotation_by_id(id))
-        .and_then(|annotation| {
-            annotation_endpoint_at_pointer(state, rect, annotation, pointer_pos)
-        });
     state.interaction.gesture = Some(ActiveGesture::AnnotationDrag(AnnotationDragState {
         pointer_start_world: state.screen_to_world(pointer_pos, rect),
         pointer_start_screen: pointer_pos,

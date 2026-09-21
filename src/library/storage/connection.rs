@@ -69,18 +69,25 @@ impl Library {
         let mut connection = self.connection()?;
         let separator = std::path::MAIN_SEPARATOR;
         let pattern = format!("%{separator}originals{separator}%");
-        let stored: Option<String> = connection
+        // Probe for any managed original stored under another root before
+        // scanning, so an unmoved Library pays one indexed-free lookup at open.
+        let current_prefix = format!("{}{separator}", self.originals_dir.to_string_lossy());
+        let stale: Option<i64> = connection
             .query_row(
-                "SELECT original_path FROM assets WHERE original_path LIKE ?1 LIMIT 1",
-                [&pattern],
+                "SELECT id FROM assets
+                 WHERE original_path LIKE ?1
+                   AND SUBSTR(original_path, 1, ?2) <> ?3
+                 LIMIT 1",
+                params![
+                    &pattern,
+                    current_prefix.chars().count() as i64,
+                    &current_prefix
+                ],
                 |row| row.get(0),
             )
             .optional()
             .map_err(|error| format!("failed to locate managed originals: {error}"))?;
-        let Some(stored) = stored else {
-            return Ok(());
-        };
-        if PathBuf::from(stored).parent() == Some(self.originals_dir.as_path()) {
+        if stale.is_none() {
             return Ok(());
         }
         let paths = connection
@@ -92,28 +99,29 @@ impl Library {
             .map_err(|error| error.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| error.to_string())?;
+        let relocations = paths
+            .into_iter()
+            .filter_map(|(id, stored)| {
+                let stored = PathBuf::from(stored);
+                let parent = stored.parent()?;
+                if parent == self.originals_dir || parent.file_name()? != "originals" {
+                    return None;
+                }
+                let relocated = self.originals_dir.join(stored.file_name()?);
+                relocated.is_file().then_some((id, relocated))
+            })
+            .collect::<Vec<_>>();
+        if relocations.is_empty() {
+            return Ok(());
+        }
         let transaction = write_transaction(&mut connection, "managed original relocation")?;
-        for (id, stored) in paths {
-            let stored = PathBuf::from(stored);
-            if stored
-                .parent()
-                .and_then(|parent| parent.file_name())
-                .is_none_or(|name| name != "originals")
-            {
-                continue;
-            }
-            let Some(filename) = stored.file_name() else {
-                continue;
-            };
-            let relocated = self.originals_dir.join(filename);
-            if relocated.is_file() {
-                transaction
-                    .execute(
-                        "UPDATE assets SET original_path = ?1 WHERE id = ?2",
-                        params![relocated.to_string_lossy(), id],
-                    )
-                    .map_err(|error| format!("failed to relocate managed original: {error}"))?;
-            }
+        for (id, relocated) in relocations {
+            transaction
+                .execute(
+                    "UPDATE assets SET original_path = ?1 WHERE id = ?2",
+                    params![relocated.to_string_lossy(), id],
+                )
+                .map_err(|error| format!("failed to relocate managed original: {error}"))?;
         }
         transaction
             .commit()

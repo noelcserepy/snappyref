@@ -95,15 +95,11 @@ pub(super) fn replace_board_groups(
     Ok(())
 }
 
-pub(super) fn prune_archived_group_members(transaction: &Transaction<'_>) -> Result<(), String> {
-    let board_ids = transaction
-        .prepare("SELECT board_id FROM board_groups")
-        .map_err(|error| error.to_string())?
-        .query_map([], |row| row.get::<_, i64>(0))
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    for board_id in board_ids {
+pub(super) fn prune_archived_group_members(
+    transaction: &Transaction<'_>,
+    board_ids: &std::collections::HashSet<i64>,
+) -> Result<(), String> {
+    for &board_id in board_ids {
         let live_ids = transaction
             .prepare("SELECT id FROM board_items WHERE board_id = ?1 AND archived = 0")
             .map_err(|error| error.to_string())?
@@ -215,7 +211,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod release_tests {
+mod archive_tests {
     use super::*;
     use crate::data::{Placement, PlacementState};
     use eframe::egui;

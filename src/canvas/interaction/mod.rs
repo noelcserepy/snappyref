@@ -165,12 +165,15 @@ pub(super) fn handle_input(
         }
     }
 
-    if let Some(pointer_pos) = pointer_pos
-        && let Some(annotation_id) = state.single_selected_annotation_id()
-        && let Some(annotation) = state.annotation_by_id(annotation_id)
-        && annotation::annotation_endpoint_at_pointer(state, rect, annotation, pointer_pos)
-            .is_some()
-    {
+    // Endpoint handles only exist on the annotation that was already the single
+    // selection, so a first click on an unselected line drags its body.
+    let hovered_endpoint = pointer_pos.and_then(|pointer_pos| {
+        let annotation_id = state.single_selected_annotation_id()?;
+        let annotation = state.annotation_by_id(annotation_id)?;
+        annotation::annotation_endpoint_at_pointer(state, rect, annotation, pointer_pos)
+            .map(|endpoint| (annotation_id, endpoint))
+    });
+    if hovered_endpoint.is_some() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     }
 
@@ -262,19 +265,19 @@ pub(super) fn handle_input(
                         if state.interaction.editing_text_annotation_id.is_some() {
                             state.finish_textbox_edit();
                         }
+                        let endpoint = hovered_endpoint
+                            .filter(|(id, _)| *id == annotation_id)
+                            .map(|(_, endpoint)| endpoint);
                         state.interaction.selected_placement_ids.clear();
                         state.interaction.selected_annotation_ids = vec![annotation_id];
-                        begin_annotation_drag(state, rect, annotation_id, pointer_pos);
+                        begin_annotation_drag(state, rect, annotation_id, pointer_pos, endpoint);
                         return;
                     }
                 }
                 CanvasHit::Placement(placement_id) => {
                     if shift_held {
                         if state.is_selected(placement_id) {
-                            state
-                                .interaction
-                                .selected_placement_ids
-                                .retain(|id| *id != placement_id);
+                            state.remove_from_selection(placement_id);
                             state.interaction.end_gesture();
                             return;
                         }

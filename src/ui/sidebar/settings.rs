@@ -458,7 +458,7 @@ fn paint_switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
 }
 
 #[cfg(test)]
-mod release_tests {
+mod tests {
     use super::*;
     use egui_kittest::{Harness, kittest::Queryable};
 

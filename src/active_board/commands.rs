@@ -182,7 +182,12 @@ pub(crate) fn delete_selected_from_board(
     let selected_groups = context.canvas.selected_group_ids().len();
     if selected_groups > 0 {
         context.canvas.ungroup_selected();
-        status = Some(format!("Deleted {selected_groups} groups"));
+        let noun = if selected_groups == 1 {
+            "group"
+        } else {
+            "groups"
+        };
+        status = Some(format!("Deleted {selected_groups} {noun}"));
     }
     let annotation_ids = context.canvas.delete_selected_annotations();
     if !annotation_ids.is_empty() {

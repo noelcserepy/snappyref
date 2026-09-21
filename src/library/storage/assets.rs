@@ -526,7 +526,16 @@ impl Library {
         let mut connection = self.connection()?;
         let transaction = write_transaction(&mut connection, "asset archive")?;
 
+        let mut affected_board_ids = std::collections::HashSet::new();
         for asset_id in asset_ids {
+            let board_ids = transaction
+                .prepare_cached("SELECT DISTINCT board_id FROM board_items WHERE asset_id = ?1")
+                .map_err(|error| format!("failed to prepare placement board lookup: {error}"))?
+                .query_map(params![asset_id], |row| row.get::<_, i64>(0))
+                .map_err(|error| format!("failed to read placement boards: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("failed to collect placement boards: {error}"))?;
+            affected_board_ids.extend(board_ids);
             transaction
                 .execute(
                     "UPDATE assets SET archived = 1 WHERE id = ?1",
@@ -557,7 +566,7 @@ impl Library {
                 })?;
         }
 
-        super::groups::prune_archived_group_members(&transaction)?;
+        super::groups::prune_archived_group_members(&transaction, &affected_board_ids)?;
 
         transaction
             .commit()
