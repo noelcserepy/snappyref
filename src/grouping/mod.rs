@@ -1,5 +1,5 @@
 //! Deterministic grouping edits. Geometry supplies size observations; callers own pixels,
-//! persistence and history. Operation names match specs/grouping.qnt.
+//! persistence and history. Operation names match specs/grouping/spec.qnt.
 #![allow(non_snake_case)]
 use std::collections::{BTreeMap, BTreeSet};
 
