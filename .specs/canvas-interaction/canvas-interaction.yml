@@ -91,11 +91,11 @@ interface:
         group-shortcuts-text-safe: Group shortcuts must not execute while the user is editing text.
         group-context-menu: The context menu must offer Group, Ungroup, and Add to group for applicable selections.
         group-selection: Outside member editing, selecting a Group member must select the Group, and dragging the Group must move its members together.
-        group-member-editing: Double-clicking a Group member must enter member editing. Escape must return to Group selection.
-        group-member-reorder: Dragging a member within its Group during member editing must change its ordered position rather than leave it freely positioned outside the layout.
+        group-member-editing: Double-click or Command+click a member to edit it. Escape returns to Group selection. The member dock exposes Fixed or Fill axes, absolute, earlier, later, and detach.
+        group-member-reorder: Flowing member drags reorder by nearest slot. Row and Wrap use Left and Right arrows; Column uses Up and Down. Wrap vertical arrows use the same column in adjacent rows. Free and absolute drags keep manual positions.
         group-member-detach: During member editing, dropping a Placement with its center outside the Group container must remove it from the Group and keep its dropped position. Remaining members must reflow. The entire drop must be one undoable edit. Empty Groups must survive.
-        group-controls: A selected Group must expose Row, Column, and Wrap flow controls, spacing, padding, and inline name editing.
-        group-resize-and-scale: Container-resize interaction must request Group reflow from Spatial Layout. Explicit uniform scaling must remain a separate action.
+        group-controls: One 52 pixel bottom dock exposes name, count, Row, Column, Wrap, Free, gap, Wrap row gap, padding, alignment with Auto spacing popover, W and H with Hug toggles, Clip, and Ungroup.
+        group-resize-and-scale: Edge or corner drag sets touched axes Fixed. Double-clicking a handle requests Hug on its axes; Wrap width refuses. Command+Alt drag uniformly scales container, members, absolute offsets, gaps and padding.
         group-picker-search: Add to group must show a keyboard-searchable picker of destination Groups on the active Board, including their names and empty Groups.
         group-picker-repeat: The picker must initially highlight the last-used destination when it remains available on the active Board. Enter must confirm the highlighted destination.
         group-picker-choice: Typing must filter destinations, and keyboard navigation must allow choosing another destination before confirmation.
@@ -116,7 +116,7 @@ interface:
     provisional-interaction: Provisional Placements support the same selection and transform interactions as committed Placements.
     document-change-routing: Canvas Interaction must route durable Board edits through Board Document rather than write storage during continuous input handling.
     view-change-reporting: Canvas viewport and background changes must produce view-changed without entering Board undo history.
-    group-intake-explicit: A remembered Group destination must not automatically capture Search results, imports, or pastes. Add to group operates on existing selected Placements.
+    group-intake-explicit: Remembered destinations never capture intake. Selecting a group or member explicitly targets clipboard paste. Loose image and textbox drag-in inserts at the nearest slot. Search and imports remain on the board.
     group-picker-not-radial: Destination selection must use the searchable picker rather than a radial or mouse-wheel selector.
 
   requires:

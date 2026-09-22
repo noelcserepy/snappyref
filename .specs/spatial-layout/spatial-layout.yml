@@ -84,7 +84,7 @@ interface:
       input:
         request:
           type: GroupLayoutRequest
-          description: The ordered Placement geometries, container geometry, Row, Column, or Wrap flow, spacing, padding, and change being applied, including any newly appended members.
+          description: Ordered image and textbox geometries, container geometry, flow, axis modes, member sizing intent, gaps, padding, alignment, clipping, and the requested change.
 
       outcomes:
         laid-out:
@@ -99,21 +99,21 @@ interface:
         row-flow: Row must place members in their supplied order along one horizontal row.
         column-flow: Column must place members in their supplied order along one vertical column.
         wrap-flow: Wrap must place members left to right in supplied order, starting a new row when the next member does not fit the available width.
-        wrap-height: Wrap must grow or shrink its content-driven height to contain its rows and padding without changing its fixed width.
-        group-spacing: The Group's spacing must determine edge-to-edge gaps between neighboring members and rows. Padding must inset content from the container edges.
-        ordered-not-packed: Layout must preserve the supplied member order rather than sort by size, fill earlier holes, or optimize packing density.
-        append-stable: Appending members with otherwise unchanged container, configuration, and existing member sizes must preserve all existing member positions.
+        wrap-height: Hug height contains the Wrap row stack plus padding. Fixed height stays fixed and allows overflow.
+        group-gap: Numeric primary gap controls neighbor distance and Wrap row gap controls row distance. Both allow negative values. Auto distributes primary leftover after Fill. Padding insets usable capacity.
+        ordered-not-packed: Row, Column, and Wrap preserve member order. Wrap uses zero minimum width for Fill members, then divides each row leftover among Fill members. Free preserves manual positions.
+        append-stable: Adding preserves existing positions only when members are Fixed, gap is numeric, and both alignments are Start. Auto spacing, Fill, and other alignment may move existing members.
         append-location: Appended members must continue at the end of the layout, filling the last Wrap row before starting another row.
         remove-closes-gap: Removing a member must close its space in the ordered flow. Reordering must lay out the new supplied order.
-        size-preserved: Creation and reflow must preserve member sizes and aspect ratios except for incoming fitting or an explicit member-size or uniform-scale change.
-        incoming-fit: A newly appended Placement wider than the destination's available width must scale down proportionally to fit that width.
-        incoming-fit-isolated: Incoming fitting must never enlarge the incoming Placement or change the sizes of existing members.
-        resize-not-scale: Resizing the container must change layout space and reflow members without scaling their dimensions.
+        size-preserved: Fixed members keep sizes during reflow. Fill derives sizes from available cells. Images keep their ratio; textboxes stretch independently.
+        incoming-fit: Fit only newly arriving all-Fixed, non-absolute members to a Fixed usable width in Row, Column, or Wrap. Preserve image ratios. Free and Hug width do not fit intake.
+        incoming-fit-isolated: Incoming fitting never enlarges an arrival or changes existing member stored sizes or modes. Existing Fill geometry may change with layout.
+        resize-not-scale: Resizing sets the touched axis Fixed and reflows. Fixed members preserve dimensions; Fill recomputes its available share.
         fixed-member-overflow: A member wider than the available width after container resizing must retain its size and overflow rather than shrink automatically.
-        uniform-scale-distinct: Explicit uniform scaling must scale the container, members, spacing, and padding together while preserving relative geometry, rather than perform a container resize.
+        uniform-scale-distinct: Explicit uniform scaling must scale the container, members, numeric and row gaps, and padding together while preserving relative geometry, rather than perform a container resize.
         empty-valid: An empty Group must have a valid layout and retain the configuration needed for later additions.
         deterministic: The same request must produce the same Group layout.
-        invalid-geometry-rejected: Non-finite geometry, negative spacing or padding, or a non-positive available width must produce rejected.
+        invalid-geometry-rejected: Non-finite dimensions, gaps or padding, negative padding, and non-positive container dimensions produce rejected. Negative numeric and row gaps are valid.
 
       caller_obligations: {}
 
@@ -144,7 +144,10 @@ interface:
         non-empty-selection: Supply at least one Placement.
 
   guarantees:
-    one-gap-meaning: Placement Gap has the same edge-to-edge meaning in snapping, arrangement, settling, and initial placement. Group spacing uses that same meaning with a Group-owned value.
+    group-sizing: Fill requires a Fixed parent axis. Hug freezes Fill at its current size and restores the last numeric primary gap. Fixed overflow never shrinks Fixed members.
+    group-gap-and-alignment: Numeric gaps and Wrap row gaps may be negative. Fill consumes leftover before Between, Evenly, or Around distributes it. Nine-position alignment places remaining content and the Wrap row stack.
+    group-absolute-and-clip: Absolute members retain relative offsets, do not contribute to Hug, and paint above flowing members. Clip crops paint to the container without changing layout. The group hit area is its container.
+    one-gap-meaning: Placement Gap has the same edge-to-edge meaning in snapping, arrangement, settling, and initial placement. Group gap uses that same meaning with a Group-owned value.
     geometry-only: Spatial Layout must not mutate Asset content, Board history, or persistence.
     repeatable-results: Repeating an already satisfied arrangement, Group layout, or settle request must produce unchanged.
 
@@ -157,7 +160,7 @@ decisions:
       - "[[#/interface/operations/snap]]"
       - "[[#/interface/operations/arrange]]"
       - "[[#/interface/operations/settle]]"
-      - "[[#/interface/operations/layout-group/behavior/group-spacing]]"
+      - "[[#/interface/operations/layout-group/behavior/group-gap]]"
       - "[[#/interface/guarantees/one-gap-meaning]]"
     reasons:
       - Different import, snap, and arrangement gaps made Placement spacing unpredictable.
@@ -165,7 +168,7 @@ decisions:
     consequences:
       - A zero value permits direct edge contact.
       - Initial placement and later layout use the same spacing policy.
-      - Group layout reads its saved spacing and padding rather than changing other Groups or ungrouped layout settings.
+      - Group layout reads its saved gaps and padding rather than changing other Groups or ungrouped layout settings.
     reconsider_when:
       - A spatial operation needs a distinct user-visible spacing concept.
     explored_paths:
@@ -175,7 +178,7 @@ decisions:
     sources: []
 
   group-layout-model:
-    current: Use ordered Row, Column, or Wrap flow for Groups. Container resizing reflows fixed-size members, while uniform scaling remains a separate action.
+    current: Groups support Row, Column, Wrap, and Free. Axes independently Hug or stay Fixed. Wrap width stays Fixed. Uniform scale remains a separate operation.
     affects:
       - "[[#/interface/operations/layout-group]]"
     reasons:

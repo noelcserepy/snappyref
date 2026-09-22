@@ -149,6 +149,7 @@ interface:
       caller_obligations: {}
 
   guarantees:
+    explicit-group-paste: Clipboard intake captures the selected group or member at reservation. It appends to the group or inserts after the member. Other source intake never uses a remembered group destination.
     real-placement-preview: Provisional content uses Placements, not a second preview or draft object.
     logical-placement-continuity: Content resolution and commit must preserve the visible Placement that the user has already manipulated.
     one-provisional-batch: At most one provisional Placement batch is active at a time.

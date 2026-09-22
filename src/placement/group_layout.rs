@@ -1,15 +1,18 @@
 //! Ordered Group geometry. Document callers own membership, history, and persistence.
 use std::collections::HashSet;
 
+#[cfg(test)]
 use eframe::egui::{Pos2, vec2};
 
-use crate::data::{Group, GroupFlow, PlacementId, RectGeometry};
+#[cfg(test)]
+use crate::data::GroupFlow;
+use crate::data::{Group, PlacementId, RectGeometry};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct GroupLayout {
     pub container: RectGeometry,
     pub members: Vec<(PlacementId, RectGeometry)>,
-    pub spacing: f32,
+    pub gap: f32,
     pub padding: f32,
 }
 
@@ -21,7 +24,8 @@ pub(crate) enum GroupLayoutError {
 
 /// Reflows fixed-size members from the container's top-left. Only incoming
 /// members may shrink to fit. Existing oversized members deliberately overflow.
-pub(crate) fn layout_group(
+#[cfg(test)]
+fn layout_group(
     group: &Group,
     members: &[(PlacementId, RectGeometry)],
     incoming: &[PlacementId],
@@ -31,52 +35,90 @@ pub(crate) fn layout_group(
     if incoming.iter().any(|id| !group.members.contains(id)) {
         return Err(GroupLayoutError::InvalidMembership);
     }
-    let bounds = group.container.unrotated_bounds();
-    let width = bounds.width() - 2.0 * group.padding;
-    let origin = bounds.min + vec2(group.padding, group.padding);
-    let mut result = GroupLayout {
-        container: group.container,
-        members: Vec::with_capacity(members.len()),
-        spacing: group.spacing,
-        padding: group.padding,
+    let pixels = super::group_pixels::Pixels {
+        rects: members.iter().copied().collect(),
+        ..Default::default()
     };
-    let (mut x, mut y, mut row_height) = (0.0_f32, 0.0_f32, 0.0_f32);
-    let mut row_has_member = false;
-    let mut content_height = 0.0_f32;
-    for &(id, mut geometry) in members {
+    let mut board = crate::grouping::Board::default();
+    board
+        .groups
+        .insert(group.id, super::group_pixels::config(group));
+    for &(id, geometry) in members {
+        let mode = group.layout.members.get(&id).copied().unwrap_or_default();
         let mut size = geometry.visual_bounds().size();
-        if incoming.contains(&id) && size.x > width {
-            resize_member(&mut geometry, width / size.x)?;
-            size = geometry.visual_bounds().size();
+        if incoming.contains(&id)
+            && !mode.absolute
+            && !mode.fill[0]
+            && !mode.fill[1]
+            && group.layout.fixed[0]
+            && group.flow != GroupFlow::Free
+            && size.x > board.groups[&group.id].size[0]
+        {
+            size *= board.groups[&group.id].size[0] / size.x;
         }
-        if group.flow == GroupFlow::Wrap && row_has_member && x + size.x > width {
-            x = 0.0;
-            y += row_height + group.spacing;
-            row_height = 0.0;
-        }
-        geometry.center = origin + vec2(x, y) + size * 0.5;
-        content_height = content_height.max(y + size.y);
-        row_height = row_height.max(size.y);
-        match group.flow {
-            GroupFlow::Row | GroupFlow::Wrap => x += size.x + group.spacing,
-            GroupFlow::Column => y += size.y + group.spacing,
-        }
-        row_has_member = true;
-        if !valid_geometry(geometry) {
-            return Err(GroupLayoutError::InvalidGeometry);
-        }
-        result.members.push((id, geometry));
+        board.members.insert(
+            id,
+            crate::grouping::Member {
+                kind: "Image".into(),
+                size: size.into(),
+                fill: (0..2).filter(|&a| mode.fill[a]).collect(),
+                absolute: mode.absolute,
+            },
+        );
     }
-    // Empty Groups keep their existing usable height and all configuration.
+    let layout = pixels.layout(&board, group.id);
+    let bounds = group.container.unrotated_bounds();
+    let mut origin = bounds.min;
+    let mut size = bounds.size();
     if !members.is_empty() {
-        let height = content_height + 2.0 * group.padding;
-        result.container.size.y = height / result.container.scale;
-        result.container.center = Pos2::new(bounds.center().x, bounds.min.y + height * 0.5);
+        for a in 0..2 {
+            if !group.layout.fixed[a] && !board.flowing(group.id).is_empty() {
+                size[a] = layout.content[a].max(1.0) + group.padding * 2.0;
+            }
+        }
+        if group.flow == GroupFlow::Free
+            && let Some(member_bounds) = board
+                .flowing(group.id)
+                .iter()
+                .map(|m| pixels.rects[m].visual_bounds())
+                .reduce(|a, b| a.union(b))
+        {
+            for a in 0..2 {
+                if !group.layout.fixed[a] {
+                    origin[a] = member_bounds.min[a] - group.padding;
+                }
+            }
+        }
     }
-    if !valid_geometry(result.container) {
-        return Err(GroupLayoutError::InvalidGeometry);
+    let container = RectGeometry::from_bounds(
+        eframe::egui::Rect::from_min_size(origin, size),
+        group.container.z_index,
+    );
+    let mut output = Vec::new();
+    for &(id, mut geometry) in members {
+        let mode = group.layout.members.get(&id).copied().unwrap_or_default();
+        if !mode.absolute && group.flow != GroupFlow::Free {
+            let desired = layout.sizes[&id];
+            let current = geometry.visual_bounds().size();
+            let factor = if current.x > 0.0 {
+                desired.x / current.x
+            } else {
+                1.0
+            };
+            if factor > 0.0 {
+                resize_member(&mut geometry, factor)?;
+            }
+            geometry.center =
+                origin + vec2(group.padding, group.padding) + layout.offsets[&id] + desired * 0.5;
+        }
+        output.push((id, geometry));
     }
-    Ok(result)
+    Ok(GroupLayout {
+        container,
+        members: output,
+        gap: group.gap,
+        padding: group.padding,
+    })
 }
 
 /// Scales around the container's top-left without reflowing its ordered layout.
@@ -101,7 +143,7 @@ pub(crate) fn scale_group(
             .iter()
             .map(|&(id, geometry)| transform(geometry).map(|geometry| (id, geometry)))
             .collect::<Result<_, GroupLayoutError>>()?,
-        spacing: group.spacing * factor,
+        gap: group.gap * factor,
         padding: group.padding * factor,
     };
     if !valid_geometry(result.container)
@@ -109,7 +151,7 @@ pub(crate) fn scale_group(
             .members
             .iter()
             .any(|&(_, geometry)| !valid_geometry(geometry))
-        || !result.spacing.is_finite()
+        || !result.gap.is_finite()
         || !result.padding.is_finite()
     {
         return Err(GroupLayoutError::InvalidGeometry);
@@ -121,6 +163,11 @@ fn resize_member(geometry: &mut RectGeometry, factor: f32) -> Result<(), GroupLa
     // RectGeometry clamps base dimensions to one and scale to .01. Normalize
     // explicitly so fitting tiny references still preserves their aspect ratio.
     let displayed = geometry.scaled_size() * factor;
+    if displayed.min_elem() == 0.0 {
+        geometry.size = displayed;
+        geometry.scale = 1.0;
+        return Ok(());
+    }
     if !displayed.is_finite() || displayed.min_elem() < 0.01 {
         return Err(GroupLayoutError::InvalidGeometry);
     }
@@ -133,8 +180,8 @@ fn resize_member(geometry: &mut RectGeometry, factor: f32) -> Result<(), GroupLa
 fn valid_geometry(geometry: RectGeometry) -> bool {
     geometry.center.is_finite()
         && geometry.size.is_finite()
-        && geometry.size.x > 0.0
-        && geometry.size.y > 0.0
+        && geometry.size.x >= 0.0
+        && geometry.size.y >= 0.0
         && geometry.scale.is_finite()
         && geometry.scale >= 0.01
         && geometry.rotation.is_finite()
@@ -147,8 +194,7 @@ fn validate(
 ) -> Result<(), GroupLayoutError> {
     if !valid_geometry(group.container)
         || group.container.rotation != 0.0
-        || !group.spacing.is_finite()
-        || group.spacing < 0.0
+        || !group.gap.is_finite()
         || !group.padding.is_finite()
         || group.padding < 0.0
         || group.container.scaled_size().x - 2.0 * group.padding <= 0.0
@@ -199,7 +245,11 @@ mod tests {
                 0,
             ),
             flow: GroupFlow::default(),
-            spacing: 5.0,
+            layout: crate::data::GroupLayoutSettings {
+                row_gap: 5.0,
+                ..Default::default()
+            },
+            gap: 5.0,
             padding: 10.0,
         };
         (group, members)
@@ -252,7 +302,7 @@ mod tests {
             }
             group.container = layout.container;
             let scaled = scale_group(&group, &layout.members, 2.0).unwrap();
-            assert_eq!(scaled.spacing, 10.0);
+            assert_eq!(scaled.gap, 10.0);
             assert_eq!(scaled.padding, 20.0);
             assert_eq!(
                 scaled.container.scaled_size(),
@@ -263,6 +313,27 @@ mod tests {
                 (layout.members[1].1.center - layout.members[0].1.center) * 2.0
             );
         }
+        let (mut group, members) = fixture(&[(100.0, 100.0), (100.0, 100.0)]);
+        group.container.size.y = 40.0;
+        group.layout.fixed = [true, true];
+        group.layout.auto = "Between".into();
+        group.layout.members = (0..2)
+            .map(|id| {
+                (
+                    id,
+                    crate::data::MemberLayout {
+                        fill: [true, true],
+                        absolute: false,
+                    },
+                )
+            })
+            .collect();
+        let fitted = layout_group(&group, &members, &[]).unwrap();
+        assert_eq!(fitted.members[0].1.scaled_size(), vec2(20.0, 20.0));
+        assert_eq!(
+            fitted.members[1].1.center.x - fitted.members[0].1.center.x,
+            50.0
+        );
     }
 
     #[test]
@@ -289,8 +360,8 @@ mod tests {
             layout_group(&group, &members, &[]).unwrap().container,
             group.container
         );
-        for spacing in [-1.0, f32::NAN, f32::INFINITY] {
-            group.spacing = spacing;
+        for gap in [f32::NAN, f32::INFINITY] {
+            group.gap = gap;
             assert_eq!(
                 layout_group(&group, &members, &[]),
                 Err(GroupLayoutError::InvalidGeometry)
@@ -301,7 +372,7 @@ mod tests {
             scale_group(&tiny, &members, 0.001),
             Err(GroupLayoutError::InvalidGeometry)
         );
-        group.spacing = 0.0;
+        group.gap = 0.0;
         group.padding = 60.0;
         assert_eq!(
             layout_group(&group, &members, &[]),

@@ -42,6 +42,26 @@ pub(crate) fn hit_test_canvas_item(
         .ordered_canvas_items_back_to_front()
         .into_iter()
         .rev()
+        .filter(|item| {
+            let id = match *item {
+                CanvasStackItem::Placement(id) | CanvasStackItem::Annotation(id) => id,
+            };
+            state
+                .group_member_geometry(id)
+                .is_none_or(|r| r.scaled_size().min_elem() > 0.0)
+                && state.group_for_member(id).is_none_or(|g| {
+                    state
+                        .groups()
+                        .iter()
+                        .find(|group| group.id == g)
+                        .is_some_and(|group| {
+                            group
+                                .container
+                                .unrotated_bounds()
+                                .contains(state.screen_to_world(pointer_pos, rect))
+                        })
+                })
+        })
         .find_map(|item| match item {
             CanvasStackItem::Placement(placement_id) => state
                 .placement_by_id(placement_id)

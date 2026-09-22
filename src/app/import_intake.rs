@@ -139,7 +139,8 @@ impl SnappyRefApp {
                     return;
                 }
                 let source_count = sources.len();
-                self.enqueue_import_sources(sources, screen_rect, desired_world);
+                let destination = self.canvas.group_paste_context();
+                self.enqueue_sources_at(sources, screen_rect, desired_world, destination);
                 if pureref {
                     self.status = if source_count == 1 {
                         "Queued PureRef paste: 1 image".to_owned()
@@ -159,6 +160,15 @@ impl SnappyRefApp {
         screen_rect: egui::Rect,
         desired_world: egui::Pos2,
     ) {
+        self.enqueue_sources_at(sources, screen_rect, desired_world, None);
+    }
+    fn enqueue_sources_at(
+        &mut self,
+        sources: Vec<ImportSource>,
+        screen_rect: egui::Rect,
+        desired_world: egui::Pos2,
+        destination: Option<(i64, i64)>,
+    ) {
         let config = self.import_request_config();
         let trace = self.import_trace();
         let result = self.placement_creation.accept_sources(
@@ -177,6 +187,7 @@ impl SnappyRefApp {
             desired_world,
             config,
             trace,
+            destination,
         );
         match result {
             Ok(Some(status)) | Err(status) => self.status = status,

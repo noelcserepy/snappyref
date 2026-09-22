@@ -241,6 +241,35 @@ impl PlacementCreation {
         queue_id: Option<u64>,
         id: Option<i64>,
     ) -> Result<(), String> {
+        if queue_id.is_some()
+            && let (Some(board_id), Some(id)) = (board_id, id)
+        {
+            let mut inactive = CanvasState::default();
+            let canvas = if board_id == context.board_id {
+                &mut *context.canvas
+            } else {
+                if let Some(library) = context.library {
+                    let document = context.editing.accepted_board_document(library, board_id)?;
+                    for placement in document.placements {
+                        inactive.add_unresolved_placement(placement);
+                    }
+                    for annotation in document.annotations {
+                        inactive.add_annotation(annotation);
+                    }
+                    inactive.restore_groups(document.groups);
+                    inactive.restore_canvas_stack_order(document.stack_order);
+                }
+                &mut inactive
+            };
+            if canvas.group_for_member(id).is_some()
+                && canvas.placement_for_id(id).is_some_and(|p| p.is_loaded())
+            {
+                canvas.finish_group_arrival(id)?;
+                context
+                    .editing
+                    .resolve_document_changes(board_id, canvas.take_document_changes())?;
+            }
+        }
         for batch in self.batches.finish_queue_id(board_id, queue_id, id) {
             let mut inactive_canvas = CanvasState::default();
             let canvas = if batch.target_board_id == context.board_id {
@@ -255,6 +284,9 @@ impl PlacementCreation {
                 for placement in document.placements {
                     inactive_canvas.add_unresolved_placement(placement);
                 }
+                for annotation in document.annotations {
+                    inactive_canvas.add_annotation(annotation);
+                }
                 inactive_canvas.restore_groups(document.groups);
                 inactive_canvas.restore_canvas_stack_order(document.stack_order);
                 &mut inactive_canvas
@@ -262,7 +294,9 @@ impl PlacementCreation {
             let ids = batch
                 .placement_ids
                 .into_iter()
-                .filter(|id| canvas.placement_for_id(*id).is_some())
+                .filter(|id| {
+                    canvas.placement_for_id(*id).is_some() && canvas.group_for_member(*id).is_none()
+                })
                 .collect::<Vec<_>>();
             if ids.is_empty() {
                 continue;
@@ -316,6 +350,7 @@ impl PlacementCreation {
         anchor: egui::Pos2,
         config: super::content_resolution::ContentResolutionRequestConfig,
         trace: Option<crate::image_preparation::ImagePrepTrace>,
+        destination: Option<(i64, i64)>,
     ) -> Result<Option<String>, String> {
         let Some(worker) = context.worker else {
             return Ok(None);
@@ -330,7 +365,23 @@ impl PlacementCreation {
             placement_target_area: context.settings.placement_target_area,
             gap: context.settings.placement_gap,
         };
-        let (created, action) = if provisional_ids.len() == sources.len() {
+        let before_groups = context.canvas.groups().to_vec();
+        let before_members = if destination.is_some() {
+            context.canvas.committed_placements()
+        } else {
+            Vec::new()
+        };
+        let before_annotations = if destination.is_some() {
+            context
+                .canvas
+                .all_annotation_ids()
+                .into_iter()
+                .filter_map(|id| context.canvas.annotation_for_id(id))
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let (created, mut action) = if provisional_ids.len() == sources.len() {
             let committed = super::lifecycle::commit_loading_provisional_batch(
                 library,
                 context.canvas,
@@ -365,6 +416,50 @@ impl PlacementCreation {
             );
             (batch.created, batch.history_action)
         };
+        if destination.is_some() {
+            let ids = created
+                .iter()
+                .map(|item| item.placement.id())
+                .collect::<Vec<_>>();
+            context
+                .canvas
+                .paste_group_members(destination, &ids, false)?;
+            if let Some(crate::active_board::history::HistoryAction::Document(action)) = &mut action
+            {
+                use crate::active_board::history::HistoryChange;
+                action.groups = Some(HistoryChange {
+                    before: Some(before_groups),
+                    after: Some(context.canvas.groups().to_vec()),
+                });
+                for change in &mut action.placements {
+                    if let Some(after) = &mut change.after
+                        && let Some(current) = context.canvas.placement_for_id(after.id())
+                    {
+                        *after = current;
+                    }
+                }
+                for before in before_members {
+                    if let Some(after) = context.canvas.placement_for_id(before.id())
+                        && before.state.geometry != after.state.geometry
+                    {
+                        action.placements.push(HistoryChange {
+                            before: Some(before),
+                            after: Some(after),
+                        });
+                    }
+                }
+                for before in before_annotations {
+                    if let Some(after) = context.canvas.annotation_for_id(before.id)
+                        && before != after
+                    {
+                        action.annotations.push(HistoryChange {
+                            before: Some(before),
+                            after: Some(after),
+                        });
+                    }
+                }
+            }
+        }
         context
             .editing
             .accept_created_batch(context.canvas, context.board_id, action)?;

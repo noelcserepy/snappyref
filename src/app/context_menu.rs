@@ -97,6 +97,12 @@ impl SnappyRefApp {
         let selected_annotation_count = self.canvas.selected_annotation_ids().len();
         let has_selection = self.canvas.has_selection();
         let has_selected_image = selected_item_count > 0;
+        let has_group_member = has_selected_image
+            || self.canvas.selected_annotation_ids().iter().any(|&id| {
+                self.canvas
+                    .annotation_for_id(id)
+                    .is_some_and(|a| a.kind == crate::data::CanvasAnnotationKind::Textbox)
+            });
         let exactly_one_image_only = selected_item_count == 1 && selected_annotation_count == 0;
 
         vec![
@@ -104,7 +110,7 @@ impl SnappyRefApp {
                 action: ContextMenuAction::Group,
                 label: "Group",
                 shortcut: Some(platform_shortcut_label("⌘G", "Ctrl+G")),
-                enabled: has_selected_image,
+                enabled: has_group_member,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Ungroup,
@@ -116,7 +122,7 @@ impl SnappyRefApp {
                 action: ContextMenuAction::AddToGroup,
                 label: "Add to group",
                 shortcut: Some("G"),
-                enabled: has_selected_image,
+                enabled: has_group_member,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Copy,

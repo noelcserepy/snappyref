@@ -36,34 +36,55 @@ impl CanvasState {
             return;
         };
         self.interaction.selected_group_ids = vec![id];
-        self.interaction.selected_placement_ids = group.members;
-        self.interaction.selected_annotation_ids.clear();
+        self.interaction.selected_placement_ids = group
+            .members
+            .iter()
+            .copied()
+            .filter(|id| self.placement_for_id(*id).is_some())
+            .collect();
+        self.interaction.selected_annotation_ids = group
+            .members
+            .iter()
+            .copied()
+            .filter(|id| self.annotation_for_id(*id).is_some())
+            .collect();
         self.interaction.editing_group_id = None;
     }
     pub(super) fn expand_group_selection(&mut self) {
         if self.interaction.editing_group_id.is_some() {
             return;
         }
-        let selected = self.interaction.selected_placement_ids.clone();
-        for group in self.document.groups.iter() {
-            if group.members.iter().any(|id| selected.contains(id)) {
-                if !self.interaction.selected_group_ids.contains(&group.id) {
-                    self.interaction.selected_group_ids.push(group.id);
-                }
-                for id in &group.members {
-                    if !self.interaction.selected_placement_ids.contains(id) {
-                        self.interaction.selected_placement_ids.push(*id);
+        let selected = self
+            .selected_placement_ids()
+            .into_iter()
+            .chain(self.selected_annotation_ids())
+            .collect::<Vec<_>>();
+        let groups = self
+            .groups()
+            .iter()
+            .filter(|g| g.members.iter().any(|id| selected.contains(id)))
+            .cloned()
+            .collect::<Vec<_>>();
+        for group in groups {
+            if !self.interaction.selected_group_ids.contains(&group.id) {
+                self.interaction.selected_group_ids.push(group.id);
+            }
+            for id in group.members {
+                if self.placement_for_id(id).is_some() {
+                    if !self.interaction.selected_placement_ids.contains(&id) {
+                        self.interaction.selected_placement_ids.push(id);
                     }
+                } else if !self.interaction.selected_annotation_ids.contains(&id) {
+                    self.interaction.selected_annotation_ids.push(id);
                 }
             }
         }
     }
+
     pub fn create_group(&mut self, id: GroupId) -> Result<Option<GroupId>, String> {
-        self.create_named_group(
-            id,
-            format!("Group {}", self.groups().len() + 1),
-            &self.selected_placement_ids(),
-        )
+        let mut selected = self.selected_placement_ids();
+        selected.extend(self.selected_annotation_ids());
+        self.create_named_group(id, format!("Group {}", self.groups().len() + 1), &selected)
     }
     pub(crate) fn create_named_group(
         &mut self,
@@ -75,43 +96,38 @@ impl CanvasState {
         if name.is_empty() {
             return Err("Group name cannot be blank".into());
         }
-        let members: Vec<_> = selected
+        let Some(bounds) = selected
             .iter()
-            .copied()
-            .filter(|id| {
-                self.placement_for_id(*id)
-                    .is_some_and(|p| p.lifecycle == crate::data::PlacementLifecycle::Committed)
-            })
-            .collect();
-        if members.is_empty() {
+            .filter_map(|&m| self.group_member_geometry(m))
+            .map(|r| r.visual_bounds())
+            .reduce(|a, b| a.union(b))
+        else {
+            return Ok(None);
+        };
+        let mut state = self.grouping_state();
+        if let crate::grouping::Outcome::Rejected(reason) =
+            state.create(id, selected, bounds.width().max(1.0))
+        {
+            return Err(reason.into());
+        }
+        if !state.board.groups.contains_key(&id) {
             return Ok(None);
         }
-        let bounds = members
-            .iter()
-            .filter_map(|id| self.placement_for_id(*id))
-            .map(|p| p.state.geometry.visual_bounds())
-            .reduce(|a, b| a.union(b))
-            .unwrap();
         let padding = self.placement_gap;
-        let size = egui::vec2(
-            bounds.width().max(1.) + padding * 2.,
-            bounds.height().max(1.) + padding * 2.,
-        );
         let group = Group {
             id,
             name,
             members: Vec::new(),
-            container: RectGeometry::new(bounds.center(), size, 1., 0., 0),
+            container: RectGeometry::from_bounds(bounds.expand(padding), 0),
             flow: GroupFlow::Wrap,
-            spacing: self.placement_gap,
+            gap: padding,
             padding,
+            layout: crate::data::GroupLayoutSettings {
+                row_gap: padding,
+                ..Default::default()
+            },
         };
-        let before = self.document.groups.clone();
-        self.document.groups.push(group);
-        if let Err(error) = self.add_members_to_group(id, &members) {
-            self.document.groups = before;
-            return Err(error);
-        }
+        self.apply_group_state(state, Some(group))?;
         self.select_group(id);
         Ok(Some(id))
     }
@@ -120,224 +136,205 @@ impl CanvasState {
         destination: GroupId,
         ids: &[i64],
     ) -> Result<bool, String> {
-        let Some(target) = self.groups().iter().find(|g| g.id == destination) else {
-            return Err("Group no longer exists".into());
-        };
-        let incoming: Vec<_> = ids
-            .iter()
-            .copied()
-            .filter(|id| !target.members.contains(id))
-            .fold(Vec::new(), |mut out, id| {
-                if !out.contains(&id) {
-                    out.push(id);
+        let before = self.groups().to_vec();
+        self.group_edit(|state| {
+            for &m in ids {
+                let result = state.add(destination, m);
+                if result != crate::grouping::Outcome::Ok {
+                    return result;
                 }
-                out
-            });
-        if incoming.is_empty() {
-            return Ok(false);
-        }
-        if incoming.iter().any(|id| {
-            self.placement_for_id(*id)
-                .is_none_or(|p| p.lifecycle != crate::data::PlacementLifecycle::Committed)
-        }) {
-            return Err("Only existing Board placements can be grouped".into());
-        }
-        let mut groups = self.document.groups.clone();
-        for group in &mut groups {
-            if group.id == destination {
-                group.members.extend(&incoming);
-            } else {
-                group.members.retain(|id| !incoming.contains(id));
             }
-        }
-        self.apply_group_layouts(groups, &incoming, Some(destination))?;
-        Ok(true)
-    }
-    fn apply_group_layouts(
-        &mut self,
-        mut groups: Vec<Group>,
-        incoming: &[i64],
-        destination: Option<GroupId>,
-    ) -> Result<(), String> {
-        let mut layouts = Vec::new();
-        for group in &mut groups {
-            if self.groups().iter().any(|old| old == group) {
-                continue;
-            }
-            let members = group
-                .members
-                .iter()
-                .map(|id| {
-                    self.placement_for_id(*id)
-                        .map(|p| (*id, p.state.geometry))
-                        .ok_or_else(|| "Missing Group member".to_owned())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let layout = crate::placement::group_layout::layout_group(
-                group,
-                &members,
-                if destination == Some(group.id) {
-                    incoming
-                } else {
-                    &[]
-                },
-            )
-            .map_err(|e| format!("Invalid Group layout: {e:?}"))?;
-            group.container = layout.container;
-            layouts.extend(layout.members);
-        }
-        for (id, geometry) in layouts {
-            if let Some(image) = self
-                .document
-                .placements
-                .iter_mut()
-                .find(|p| p.state.id == id)
-            {
-                image.state.geometry = geometry;
-            }
-            self.mark_dirty(id);
-        }
-        self.replace_groups(groups);
-        Ok(())
+            crate::grouping::Outcome::Ok
+        })?;
+        Ok(self.groups() != before)
     }
     pub fn edit_group(&mut self, group: Group) -> Result<(), String> {
-        let mut groups = self.document.groups.clone();
-        let Some(existing) = groups.iter_mut().find(|g| g.id == group.id) else {
-            return Err("Group no longer exists".into());
-        };
-        let old_members: std::collections::HashSet<_> = existing.members.iter().copied().collect();
-        let new_members: std::collections::HashSet<_> = group.members.iter().copied().collect();
-        if old_members != new_members || new_members.len() != group.members.len() {
-            return Err("Use Add to group to change membership".into());
+        if ![group.gap, group.padding, group.layout.row_gap]
+            .iter()
+            .all(|v| v.is_finite())
+            || group.padding < 0.0
+            || !group.container.size.is_finite()
+            || group.container.size.min_elem() <= 0.0
+        {
+            return Err("invalid_value".into());
         }
-        *existing = group;
-        self.apply_group_layouts(groups, &[], None)
+        let old = self
+            .groups()
+            .iter()
+            .find(|g| g.id == group.id)
+            .cloned()
+            .ok_or("group_missing")?;
+        if old.members != group.members {
+            return Err("Use reorder to change membership".into());
+        }
+        let g = group.id;
+        self.group_edit(|s| {
+            let mut result = crate::grouping::Outcome::Ok;
+            macro_rules! edit {
+                ($op:expr) => {
+                    if result == crate::grouping::Outcome::Ok {
+                        result = $op;
+                    }
+                };
+            }
+            if old.flow != group.flow {
+                edit!(s.setFlow(g, group.flow.as_str()));
+            }
+            if old.gap != group.gap || old.layout.auto != group.layout.auto {
+                edit!(s.setGap(g, &group.layout.auto, group.gap));
+            }
+            for a in 0..2 {
+                if old.layout.fixed[a] != group.layout.fixed[a] {
+                    edit!(s.setAxisMode(g, a, group.layout.fixed[a]));
+                }
+                if old.container.scaled_size()[a] != group.container.scaled_size()[a]
+                    || (old.padding != group.padding && s.board.groups[&g].fixed.contains(&a))
+                {
+                    edit!(s.resizeEdge(
+                        g,
+                        a,
+                        group.container.scaled_size()[a] - group.padding * 2.0
+                    ));
+                }
+            }
+            edit!(s.configure(
+                g,
+                group.layout.clip,
+                group.layout.align[0],
+                group.layout.align[1],
+                group.padding,
+                group.layout.row_gap
+            ));
+            result
+        })?;
+        if let Some(saved) = self.document.groups.iter_mut().find(|g| g.id == group.id)
+            && saved.name != group.name
+        {
+            saved.name = group.name;
+            self.document.groups_dirty = true;
+        }
+        Ok(())
     }
     pub fn ungroup_selected(&mut self) -> bool {
-        let selected = self.selected_group_ids();
-        let mut groups = self.document.groups.clone();
-        groups.retain(|g| !selected.contains(&g.id));
-        let changed = groups.len() != self.groups().len();
-        self.replace_groups(groups);
+        let ids = self.selected_group_ids();
+        let changed = !ids.is_empty()
+            && self
+                .group_edit(|s| {
+                    for id in ids {
+                        s.ungroup(id);
+                    }
+                    crate::grouping::Outcome::Ok
+                })
+                .is_ok();
         self.interaction.selected_group_ids.clear();
         self.interaction.editing_group_id = None;
         changed
     }
     pub(super) fn remove_group_members(&mut self, ids: &[i64]) {
-        let mut groups = self.document.groups.clone();
-        for group in &mut groups {
-            group.members.retain(|id| !ids.contains(id));
-        }
-        let _ = self.apply_group_layouts(groups, &[], None);
+        let _ = self.group_edit(|s| {
+            for &m in ids {
+                s.deleteMember(m);
+            }
+            crate::grouping::Outcome::Ok
+        });
     }
     pub(crate) fn reflow_dirty_group_members(&mut self) {
         if self.document.groups_dirty {
             return;
         }
-        let dirty = self.document.dirty_placement_ids.clone();
-        let representatives = self
-            .groups()
+        let dirty = self
+            .document
+            .dirty_placement_ids
             .iter()
-            .filter_map(|group| group.members.iter().find(|id| dirty.contains(id)).copied())
+            .chain(&self.document.dirty_annotation_ids)
+            .copied()
             .collect::<Vec<_>>();
-        for id in representatives {
-            self.reflow_group_for_member(id);
+        if dirty.iter().any(|&id| self.group_for_member(id).is_some()) {
+            let mut s = self.grouping_state();
+            let ids = s.board.groups.keys().copied().collect::<Vec<_>>();
+            for g in ids {
+                let c = s.board.groups[&g].clone();
+                s.configure(g, c.clip, c.align[0], c.align[1], c.padding, c.rowGap);
+            }
+            let _ = self.apply_group_state(s, None);
         }
     }
     pub(super) fn reflow_group_for_member(&mut self, id: i64) {
-        let Some(group_id) = self.group_for_member(id) else {
-            return;
-        };
-        let group = self
-            .groups()
-            .iter()
-            .find(|g| g.id == group_id)
-            .unwrap()
-            .clone();
-        let members = group
-            .members
-            .iter()
-            .filter_map(|id| self.placement_for_id(*id).map(|p| (*id, p.state.geometry)))
-            .collect::<Vec<_>>();
-        let Ok(layout) = crate::placement::group_layout::layout_group(&group, &members, &[]) else {
-            return;
-        };
-        for (id, geometry) in layout.members {
-            if let Some(image) = self
-                .document
-                .placements
-                .iter_mut()
-                .find(|p| p.state.id == id)
-            {
-                image.state.geometry = geometry;
+        if self.group_for_member(id).is_some() {
+            let mut s = self.grouping_state();
+            let ids = s.board.groups.keys().copied().collect::<Vec<_>>();
+            for g in ids {
+                let c = s.board.groups[&g].clone();
+                s.configure(g, c.clip, c.align[0], c.align[1], c.padding, c.rowGap);
             }
-            self.mark_dirty(id);
-        }
-        if layout.container != group.container {
-            self.document
-                .groups
-                .iter_mut()
-                .find(|g| g.id == group_id)
-                .unwrap()
-                .container = layout.container;
-            self.document.groups_dirty = true;
+            let _ = self.apply_group_state(s, None);
         }
     }
     pub(super) fn finish_group_member_drag(&mut self, ids: &[i64]) {
-        let Some(group_id) = self.interaction.editing_group_id else {
+        if self.interaction.editing_group_id.is_none() && !self.selected_group_ids().is_empty() {
             return;
-        };
-        let mut groups = self.groups().to_vec();
-        let Some(group) = groups.iter_mut().find(|g| g.id == group_id) else {
-            return;
-        };
-        // Judge every dropped center against the container before any reflow.
-        let bounds = group.container.unrotated_bounds();
-        for id in ids {
-            if !group.members.contains(id) {
-                continue;
-            }
-            let Some(placement) = self.placement_for_id(*id) else {
+        }
+        for &m in ids {
+            let Some(rect) = self.group_member_geometry(m) else {
                 continue;
             };
-            let point = placement.state.geometry.center;
-            group.members.retain(|member| member != id);
-            if !bounds.contains(point) {
-                continue;
-            }
-            let position = group
-                .members
+            let owner = self.group_for_member(m);
+            if let Some(g) = owner {
+                let group = self.groups().iter().find(|x| x.id == g).unwrap();
+                let mode = group.layout.members.get(&m).copied().unwrap_or_default();
+                if mode.absolute {
+                    self.reflow_group_for_member(m);
+                    continue;
+                }
+                if !group.container.unrotated_bounds().contains(rect.center) {
+                    let _ = self.group_edit(|s| s.detach(g, m));
+                } else if group.flow == GroupFlow::Free {
+                    self.reflow_group_for_member(m);
+                } else {
+                    let slot = self.group_insertion_slot(g, m, rect.center);
+                    let _ = self.group_edit(|s| s.reorder(g, m, slot));
+                }
+            } else if let Some(g) = self
+                .groups()
                 .iter()
-                .position(|member| {
-                    self.placement_for_id(*member).is_some_and(|p| {
-                        let other = p.state.geometry.center;
-                        match group.flow {
-                            GroupFlow::Row => point.x < other.x,
-                            GroupFlow::Column => point.y < other.y,
-                            GroupFlow::Wrap => {
-                                point.y < other.y - p.state.geometry.scaled_size().y / 2.
-                                    || ((point.y - other.y).abs()
-                                        < p.state.geometry.scaled_size().y / 2.
-                                        && point.x < other.x)
-                            }
-                        }
-                    })
-                })
-                .unwrap_or(group.members.len());
-            group.members.insert(position, *id);
+                .rev()
+                .find(|g| g.container.unrotated_bounds().contains(rect.center))
+                .map(|g| g.id)
+            {
+                let slot = self.group_insertion_slot(g, m, rect.center);
+                let _ = self.group_edit(|s| s.dragIn(g, m, slot));
+            }
         }
-        let remaining_member = group.members.first().copied();
-        if !self
-            .selected_placement_ids()
-            .iter()
-            .any(|id| group.members.contains(id))
+        if self.interaction.editing_group_id.is_some()
+            && !ids
+                .iter()
+                .any(|&m| self.group_for_member(m) == self.interaction.editing_group_id)
         {
             self.interaction.editing_group_id = None;
         }
-        self.replace_groups(groups);
-        if let Some(id) = remaining_member {
-            self.reflow_group_for_member(id);
-        }
+    }
+    fn group_insertion_slot(&self, g: i64, m: i64, point: egui::Pos2) -> i64 {
+        let group = self.groups().iter().find(|x| x.id == g).unwrap();
+        let members = group
+            .members
+            .iter()
+            .copied()
+            .filter(|&id| id != m)
+            .collect::<Vec<_>>();
+        members
+            .iter()
+            .position(|&id| {
+                self.group_member_geometry(id)
+                    .is_some_and(|r| match group.flow {
+                        GroupFlow::Column => point.y < r.center.y,
+                        GroupFlow::Wrap => {
+                            point.y < r.visual_bounds().min.y
+                                || (point.y <= r.visual_bounds().max.y && point.x < r.center.x)
+                        }
+                        _ => point.x < r.center.x,
+                    })
+            })
+            .unwrap_or(members.len()) as i64
     }
 }
 
@@ -388,7 +385,8 @@ impl CanvasState {
             group.container.center =
                 after.center + (group.container.center - before.center) * factor;
             group.container.size *= factor;
-            group.spacing *= factor;
+            group.gap *= factor;
+            group.layout.row_gap *= factor;
             group.padding *= factor;
             self.interaction.group_transform_changed = true;
         }
@@ -410,7 +408,7 @@ pub(super) struct GroupPicker {
 
 impl CanvasState {
     pub fn open_group_picker(&mut self) {
-        if self.selected_placement_ids().is_empty() {
+        if self.selected_placement_ids().is_empty() && self.selected_annotation_ids().is_empty() {
             return;
         }
         self.interaction.group_picker = Some(GroupPicker {
@@ -422,7 +420,12 @@ impl CanvasState {
                 .or_else(|| self.groups().first().map(|g| g.id))
                 .map(GroupPickerChoice::Existing),
             focus: true,
-            members: self.selected_placement_ids(),
+            members: self
+                .selected_placement_ids()
+                .into_iter()
+                .chain(self.selected_annotation_ids())
+                .filter(|&id| self.group_member_geometry(id).is_some())
+                .collect(),
         });
     }
 
@@ -614,6 +617,59 @@ impl CanvasState {
     }
     pub(super) fn paint_groups(&self, painter: &egui::Painter, viewport: egui::Rect) {
         use crate::ui::theme;
+        if painter.ctx().input(|i| i.pointer.primary_down())
+            && self.interaction.gesture.is_some()
+            && self.selected_group_ids().is_empty()
+            && let Some(pointer) = painter.ctx().input(|i| i.pointer.latest_pos())
+        {
+            let point = self.screen_to_world(pointer, viewport);
+            if let Some(group) = self.groups().iter().rev().find(|g| {
+                g.flow != GroupFlow::Free && g.container.unrotated_bounds().contains(point)
+            }) && let Some(m) = self
+                .selected_placement_ids()
+                .into_iter()
+                .chain(self.selected_annotation_ids())
+                .next()
+            {
+                let members = group
+                    .members
+                    .iter()
+                    .copied()
+                    .filter(|&id| {
+                        id != m
+                            && !group
+                                .layout
+                                .members
+                                .get(&id)
+                                .is_some_and(|mode| mode.absolute)
+                    })
+                    .collect::<Vec<_>>();
+                let slot = self.group_insertion_slot(group.id, m, point) as usize;
+                if let Some(r) = members
+                    .get(slot)
+                    .or_else(|| members.last())
+                    .and_then(|&id| self.group_member_geometry(id))
+                {
+                    let bounds = r.visual_bounds();
+                    let at_end = slot >= members.len();
+                    let (a, b) = if group.flow == GroupFlow::Column {
+                        let y = if at_end { bounds.max.y } else { bounds.min.y };
+                        (egui::pos2(bounds.min.x, y), egui::pos2(bounds.max.x, y))
+                    } else {
+                        let x = if at_end { bounds.max.x } else { bounds.min.x };
+                        (egui::pos2(x, bounds.min.y), egui::pos2(x, bounds.max.y))
+                    };
+                    painter.line_segment(
+                        [
+                            self.world_to_screen(a, viewport),
+                            self.world_to_screen(b, viewport),
+                        ],
+                        egui::Stroke::new(2.0_f32, theme::ACCENT),
+                    );
+                }
+            }
+        }
+
         for group in self.groups() {
             let bounds = group.container.unrotated_bounds();
             let rect = egui::Rect::from_min_max(
@@ -679,110 +735,391 @@ impl CanvasState {
                 }
             }
         }
-        let id = *self.interaction.selected_group_ids.first()?;
-        if self.interaction.selected_group_ids.len() != 1 {
+        let active = self
+            .interaction
+            .editing_group_id
+            .or_else(|| self.interaction.selected_group_ids.first().copied());
+        let cache = egui::Id::new("group-dock-last");
+        if let Some(id) = active {
+            ui.ctx().data_mut(|d| d.insert_temp(cache, id));
+        }
+        let entrance = ui.ctx().animate_bool_with_time(
+            egui::Id::new("group-dock-visible"),
+            active.is_some(),
+            theme::MOTION_SETTLE_SECONDS,
+        );
+        if entrance == 0.0 && active.is_none() {
             return None;
         }
+        let id = active.or_else(|| ui.ctx().data(|d| d.get_temp::<i64>(cache)))?;
         let mut group = self.groups().iter().find(|g| g.id == id)?.clone();
-        let origin = self.world_to_screen(group.container.unrotated_bounds().min, viewport);
-        let position = egui::pos2(
-            origin.x.clamp(
-                viewport.left() + theme::SPACE_3,
-                (viewport.right() - 460.).max(viewport.left() + theme::SPACE_3),
-            ),
-            (origin.y - 90.).max(viewport.top() + theme::SPACE_3),
-        );
+        let member = self.interaction.editing_group_id.and_then(|_| {
+            self.selected_placement_ids()
+                .into_iter()
+                .chain(self.selected_annotation_ids())
+                .find(|m| group.members.contains(m))
+        });
         let mut changed = false;
-        let response = egui::Area::new(egui::Id::new(("group-controls", id)))
-            .fixed_pos(position)
+        let mut ungroup = false;
+        let mut member_action = None;
+        let popover_id = egui::Id::new(("group-align", id));
+        let mut align_open = ui
+            .ctx()
+            .data(|d| d.get_temp::<bool>(popover_id))
+            .unwrap_or(false);
+        let mut align_anchor = None;
+        let response = egui::Area::new(egui::Id::new("group-controls"))
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .fixed_pos(egui::pos2(
+                viewport.center().x,
+                viewport.bottom() - theme::SPACE_3 + (1.0 - entrance) * 52.0,
+            ))
             .order(egui::Order::Foreground)
             .show(ui.ctx(), |ui| {
+                ui.set_opacity(entrance);
+                if active.is_none() {
+                    ui.disable();
+                }
                 egui::Frame::new()
-                    .fill(theme::SURFACE)
+                    .fill(theme::PALETTE_SURFACE)
                     .corner_radius(theme::RADIUS_PANEL)
-                    .inner_margin(theme::SPACE_2)
+                    .inner_margin(theme::SPACE_3)
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("Name");
-                            let mut name = self
-                                .interaction
-                                .group_name_edit
-                                .as_ref()
-                                .filter(|(group_id, _)| *group_id == id)
-                                .map(|(_, name)| name.clone())
-                                .unwrap_or_else(|| group.name.clone());
-                            let name_response = ui.add(
-                                egui::TextEdit::singleline(&mut name)
-                                    .id(egui::Id::new(("group-name", id)))
-                                    .desired_width(160.),
-                            );
-                            if name_response.has_focus() {
-                                self.interaction.group_name_edit = Some((id, name.clone()));
-                            }
-                            if name_response.lost_focus() {
-                                if !name.trim().is_empty() && group.name != name.trim() {
-                                    group.name = name.trim().to_owned();
-                                    changed = true;
-                                }
-                                self.interaction.group_name_edit = None;
-                            }
-                            for (flow, label) in [
-                                (GroupFlow::Row, "Row"),
-                                (GroupFlow::Column, "Column"),
-                                (GroupFlow::Wrap, "Wrap"),
-                            ] {
-                                changed |=
-                                    ui.selectable_value(&mut group.flow, flow, label).changed();
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Spacing");
-                            changed |= ui
-                                .add(
-                                    egui::DragValue::new(&mut group.spacing)
-                                        .range(0.0..=1000.0)
-                                        .speed(1.),
-                                )
-                                .changed();
-                            ui.label("Padding");
-                            changed |= ui
-                                .add(
-                                    egui::DragValue::new(&mut group.padding)
-                                        .range(0.0..=(group.container.size.x / 2. - 1.).max(0.))
-                                        .speed(1.),
-                                )
-                                .changed();
-                            let mut width = group.container.size.x;
-                            ui.label("Width");
-                            if ui
-                                .add(
-                                    egui::DragValue::new(&mut width)
-                                        .range((group.padding * 2. + 1.)..=100000.)
-                                        .speed(2.),
-                                )
-                                .changed()
-                            {
-                                group.container.center.x += (width - group.container.size.x) / 2.;
-                                group.container.size.x = width;
-                                changed = true;
-                            }
-                        });
+                        ui.set_width((viewport.width() - theme::SPACE_6 * 2.0).max(160.0));
+                        egui::ScrollArea::horizontal()
+                            .max_height(theme::CONTROL_HEIGHT)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.set_height(theme::CONTROL_HEIGHT);
+                                    ui.spacing_mut().item_spacing.x = theme::SPACE_2;
+                                    if let Some(m) = member {
+                                        let mode = group
+                                            .layout
+                                            .members
+                                            .get(&m)
+                                            .copied()
+                                            .unwrap_or_default();
+                                        ui.label(format!(
+                                            "{} / {}",
+                                            group.name,
+                                            group.members.iter().position(|&id| id == m).unwrap()
+                                                + 1
+                                        ));
+                                        for (a, label) in [(0, "W"), (1, "H")] {
+                                            ui.label(label);
+                                            if ui.selectable_label(!mode.fill[a], "Fixed").clicked()
+                                            {
+                                                member_action = Some((0, a, false));
+                                            }
+                                            if ui
+                                                .add_enabled(
+                                                    group.layout.fixed[a],
+                                                    egui::Button::new("Fill")
+                                                        .selected(mode.fill[a]),
+                                                )
+                                                .clicked()
+                                            {
+                                                member_action = Some((0, a, true));
+                                            }
+                                        }
+                                        if ui.selectable_label(mode.absolute, "Absolute").clicked()
+                                        {
+                                            member_action = Some((1, 0, false));
+                                        }
+                                        if ui.button("Earlier").clicked() {
+                                            member_action = Some((2, 0, false));
+                                        }
+                                        if ui.button("Later").clicked() {
+                                            member_action = Some((2, 0, true));
+                                        }
+                                        if ui.button("Detach").clicked() {
+                                            member_action = Some((3, 0, false));
+                                        }
+                                        ui.label(
+                                            egui::RichText::new("Esc leaves member editing")
+                                                .small()
+                                                .color(theme::TEXT_MUTED),
+                                        );
+                                    } else {
+                                        let mut name = self
+                                            .interaction
+                                            .group_name_edit
+                                            .as_ref()
+                                            .filter(|(g, _)| *g == id)
+                                            .map(|(_, name)| name.clone())
+                                            .unwrap_or_else(|| group.name.clone());
+                                        let edit = ui.add(
+                                            egui::TextEdit::singleline(&mut name)
+                                                .id(egui::Id::new(("group-name", id)))
+                                                .desired_width(110.0),
+                                        );
+                                        if edit.has_focus() {
+                                            self.interaction.group_name_edit =
+                                                Some((id, name.clone()));
+                                        }
+                                        if edit.lost_focus() {
+                                            if !name.trim().is_empty() && group.name != name.trim()
+                                            {
+                                                group.name = name.trim().into();
+                                                changed = true;
+                                            }
+                                            self.interaction.group_name_edit = None;
+                                        }
+                                        ui.label(
+                                            egui::RichText::new(group.members.len().to_string())
+                                                .color(theme::TEXT_MUTED),
+                                        );
+                                        for (flow, label) in [
+                                            (GroupFlow::Row, "Row"),
+                                            (GroupFlow::Column, "Column"),
+                                            (GroupFlow::Wrap, "Wrap"),
+                                            (GroupFlow::Free, "Free"),
+                                        ] {
+                                            let button = ui.add(
+                                                egui::Button::new(format!("   {label}"))
+                                                    .selected(group.flow == flow),
+                                            );
+                                            button.widget_info(|| {
+                                                egui::WidgetInfo::labeled(
+                                                    egui::WidgetType::Button,
+                                                    ui.is_enabled(),
+                                                    label,
+                                                )
+                                            });
+                                            let cells: &[(f32, f32)] = match flow {
+                                                GroupFlow::Row => {
+                                                    &[(0.0, 3.0), (3.0, 3.0), (6.0, 3.0)]
+                                                }
+                                                GroupFlow::Column => {
+                                                    &[(3.0, 0.0), (3.0, 3.0), (3.0, 6.0)]
+                                                }
+                                                GroupFlow::Wrap => &[
+                                                    (0.0, 0.0),
+                                                    (4.0, 0.0),
+                                                    (0.0, 5.0),
+                                                    (4.0, 5.0),
+                                                ],
+                                                GroupFlow::Free => {
+                                                    &[(0.0, 1.0), (5.0, 0.0), (3.0, 6.0)]
+                                                }
+                                            };
+                                            let origin = egui::pos2(
+                                                button.rect.left() + 4.0,
+                                                button.rect.center().y - 4.0,
+                                            );
+                                            for &(x, y) in cells {
+                                                ui.painter().rect_filled(
+                                                    egui::Rect::from_min_size(
+                                                        origin + egui::vec2(x, y),
+                                                        egui::vec2(2.0, 2.0),
+                                                    ),
+                                                    theme::RADIUS_NONE,
+                                                    if group.flow == flow {
+                                                        theme::ACCENT
+                                                    } else {
+                                                        theme::TEXT_MUTED
+                                                    },
+                                                );
+                                            }
+                                            if button.clicked() && group.flow != flow {
+                                                group.flow = flow;
+                                                changed = true;
+                                            }
+                                        }
+                                        ui.add_enabled_ui(group.flow != GroupFlow::Free, |ui| {
+                                            ui.label("Gap");
+                                            changed |= ui
+                                                .add_enabled(
+                                                    group.layout.auto == "Number",
+                                                    egui::DragValue::new(&mut group.gap).speed(1.0),
+                                                )
+                                                .changed();
+                                            if group.flow == GroupFlow::Wrap {
+                                                ui.label("Row gap");
+                                                changed |= ui
+                                                    .add(
+                                                        egui::DragValue::new(
+                                                            &mut group.layout.row_gap,
+                                                        )
+                                                        .speed(1.0),
+                                                    )
+                                                    .changed();
+                                            }
+                                        });
+                                        ui.label("Padding");
+                                        changed |= ui
+                                            .add(
+                                                egui::DragValue::new(&mut group.padding)
+                                                    .range(0.0..=10000.0)
+                                                    .speed(1.0),
+                                            )
+                                            .changed();
+                                        let align = ui.add_enabled(
+                                            group.flow != GroupFlow::Free,
+                                            egui::Button::new("Align    "),
+                                        );
+                                        align.widget_info(|| {
+                                            egui::WidgetInfo::labeled(
+                                                egui::WidgetType::Button,
+                                                ui.is_enabled(),
+                                                "Align",
+                                            )
+                                        });
+                                        for y in 0..3 {
+                                            for x in 0..3 {
+                                                ui.painter().circle_filled(
+                                                    egui::pos2(
+                                                        align.rect.right() - 13.0 + x as f32 * 3.0,
+                                                        align.rect.center().y - 3.0
+                                                            + y as f32 * 3.0,
+                                                    ),
+                                                    1.0,
+                                                    if group.layout.align == [x, y] {
+                                                        theme::ACCENT
+                                                    } else {
+                                                        theme::TEXT_MUTED
+                                                    },
+                                                );
+                                            }
+                                        }
+                                        if align.clicked() {
+                                            align_open = !align_open;
+                                        }
+                                        align_anchor = Some(align.rect.center_top());
+                                        for (a, label) in [(0, "W"), (1, "H")] {
+                                            ui.label(label);
+                                            if group.layout.fixed[a] {
+                                                let mut dimension =
+                                                    group.container.scaled_size()[a];
+                                                if ui
+                                                    .add(
+                                                        egui::DragValue::new(&mut dimension)
+                                                            .range(
+                                                                (group.padding * 2.0 + 1.0)
+                                                                    ..=100000.0,
+                                                            )
+                                                            .speed(1.0),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    group.container.size[a] =
+                                                        dimension / group.container.scale;
+                                                    changed = true;
+                                                }
+                                            }
+                                            let permitted = a != 0 || group.flow != GroupFlow::Wrap;
+                                            if ui
+                                                .add_enabled(
+                                                    permitted,
+                                                    egui::Button::new("Hug")
+                                                        .selected(!group.layout.fixed[a]),
+                                                )
+                                                .clicked()
+                                            {
+                                                group.layout.fixed[a] = !group.layout.fixed[a];
+                                                changed = true;
+                                            }
+                                        }
+                                        changed |= ui
+                                            .toggle_value(&mut group.layout.clip, "Clip")
+                                            .changed();
+                                        ungroup = ui.button("Ungroup").clicked();
+                                    }
+                                });
+                            });
                     });
             });
-        if changed {
-            let before = self.groups().iter().find(|g| g.id == id).cloned();
-            if self.edit_group(group).is_ok() && ui.input(|i| i.pointer.primary_down()) {
-                if self.interaction.group_controls_start.is_none() {
-                    self.interaction.group_controls_start = before;
-                }
-                self.document.groups_dirty = false;
-                if let Some(before) = &self.interaction.group_controls_start {
-                    self.document
-                        .dirty_placement_ids
-                        .retain(|id| !before.members.contains(id));
-                }
+        if align_open
+            && member.is_none()
+            && let Some(anchor) = align_anchor
+        {
+            let popup = egui::Area::new(popover_id)
+                .pivot(egui::Align2::CENTER_BOTTOM)
+                .fixed_pos(anchor - egui::vec2(0.0, theme::SPACE_4))
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::new()
+                        .fill(theme::PALETTE_SURFACE)
+                        .inner_margin(theme::SPACE_3)
+                        .corner_radius(theme::RADIUS_PANEL)
+                        .show(ui, |ui| {
+                            for y in 0..3 {
+                                ui.horizontal(|ui| {
+                                    for x in 0..3 {
+                                        let primary = usize::from(group.flow == GroupFlow::Column);
+                                        let enabled = group.layout.auto == "Number"
+                                            || [x, y][primary] == group.layout.align[primary];
+                                        if ui
+                                            .add_enabled(
+                                                enabled,
+                                                egui::Button::new("•")
+                                                    .selected(group.layout.align == [x, y])
+                                                    .min_size(egui::vec2(28.0, 28.0)),
+                                            )
+                                            .on_hover_text(format!(
+                                                "Align {}, {}",
+                                                ["left", "center", "right"][x],
+                                                ["top", "center", "bottom"][y]
+                                            ))
+                                            .clicked()
+                                        {
+                                            group.layout.align = [x, y];
+                                            changed = true;
+                                        }
+                                    }
+                                });
+                            }
+                            for (value, label) in [
+                                ("Number", "Off"),
+                                ("Between", "Between"),
+                                ("Evenly", "Evenly"),
+                                ("Around", "Around"),
+                            ] {
+                                changed |= ui
+                                    .selectable_value(
+                                        &mut group.layout.auto,
+                                        value.to_owned(),
+                                        label,
+                                    )
+                                    .changed();
+                            }
+                        });
+                });
+            if ui.input(|i| {
+                i.key_pressed(egui::Key::Escape)
+                    || (i.pointer.any_pressed()
+                        && i.pointer.interact_pos().is_some_and(|p| {
+                            !popup.response.rect.contains(p) && !response.response.rect.contains(p)
+                        }))
+            }) {
+                align_open = false;
             }
         }
+        ui.ctx().data_mut(|d| d.insert_temp(popover_id, align_open));
+        if let (Some(m), Some((action, a, value))) = (member, member_action) {
+            let direction = if group.flow == GroupFlow::Column {
+                if value { "Down" } else { "Up" }
+            } else if value {
+                "Right"
+            } else {
+                "Left"
+            };
+            let slot =
+                self.group_insertion_slot(id, m, self.group_member_geometry(m).unwrap().center);
+            let _ = self.group_edit(|s| match action {
+                0 => s.setMemberMode(id, m, a, value),
+                1 => s.toggleAbsolute(id, m, slot),
+                2 => s.arrow(id, m, direction),
+                _ => s.detach(id, m),
+            });
+        }
+        if changed {
+            let _ = self.edit_group(group);
+        }
+        if ungroup {
+            self.ungroup_selected();
+        }
+
         Some(response.response.rect)
     }
 }
@@ -797,7 +1134,7 @@ pub(super) struct GroupGesture {
 #[derive(Clone, Copy)]
 enum GroupGestureKind {
     Move,
-    Resize,
+    Resize([i8; 2]),
     Scale,
 }
 impl CanvasState {
@@ -808,35 +1145,159 @@ impl CanvasState {
         input: egui::Rect,
         overlay: Option<egui::Rect>,
     ) -> bool {
+        if !ui.ctx().egui_wants_keyboard_input()
+            && let Some(g) = self.interaction.editing_group_id
+            && let Some(m) = self
+                .selected_placement_ids()
+                .into_iter()
+                .chain(self.selected_annotation_ids())
+                .next()
+        {
+            for (key, direction) in [
+                (egui::Key::ArrowLeft, "Left"),
+                (egui::Key::ArrowRight, "Right"),
+                (egui::Key::ArrowUp, "Up"),
+                (egui::Key::ArrowDown, "Down"),
+            ] {
+                if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key)) {
+                    let _ = self.group_edit(|s| s.arrow(g, m, direction));
+                }
+            }
+        }
         let pointer = ui.input(|i| i.pointer.latest_pos());
+        if ui.input(|i| {
+            i.modifiers.command
+                && !i.modifiers.alt
+                && i.pointer.button_pressed(egui::PointerButton::Primary)
+        }) && let Some(p) = pointer
+            && input.contains(p)
+            && !overlay.is_some_and(|r| r.contains(p))
+            && let Some(hit) = super::interaction::hit_test_canvas_item(self, viewport, p)
+        {
+            let m = match hit {
+                super::CanvasHit::Placement(id) | super::CanvasHit::Annotation(id) => id,
+            };
+            if let Some(g) = self.group_for_member(m) {
+                self.interaction.editing_group_id = Some(g);
+                self.interaction.selected_group_ids.clear();
+                self.interaction.selected_placement_ids.clear();
+                self.interaction.selected_annotation_ids.clear();
+                if self.placement_for_id(m).is_some() {
+                    self.interaction.selected_placement_ids.push(m);
+                } else {
+                    self.interaction.selected_annotation_ids.push(m);
+                }
+            }
+        }
         let released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+        if released
+            && !self
+                .interaction
+                .group_gesture
+                .as_ref()
+                .is_some_and(|gesture| matches!(gesture.kind, GroupGestureKind::Resize(_)))
+            && ui.input(|i| {
+                i.pointer
+                    .button_double_clicked(egui::PointerButton::Primary)
+            })
+            && let Some(p) = pointer
+            && input.contains(p)
+            && !overlay.is_some_and(|r| r.contains(p))
+            && let Some(hit) = super::interaction::hit_test_canvas_item(self, viewport, p)
+        {
+            let m = match hit {
+                super::CanvasHit::Placement(id) | super::CanvasHit::Annotation(id) => id,
+            };
+            if let Some(g) = self.group_for_member(m)
+                && self.interaction.editing_group_id != Some(g)
+            {
+                self.interaction.group_gesture = None;
+                self.interaction.editing_group_id = Some(g);
+                self.interaction.selected_group_ids.clear();
+                self.interaction.selected_placement_ids.clear();
+                self.interaction.selected_annotation_ids.clear();
+                if self.placement_for_id(m).is_some() {
+                    self.interaction.selected_placement_ids.push(m);
+                } else {
+                    self.interaction.selected_annotation_ids.push(m);
+                }
+                return true;
+            }
+        }
+
         if released && self.interaction.group_transform_changed {
             self.document.groups_dirty = true;
             self.interaction.group_transform_changed = false;
         }
         if let Some(gesture) = self.interaction.group_gesture.clone() {
+            if released
+                && ui.input(|i| {
+                    i.pointer
+                        .button_double_clicked(egui::PointerButton::Primary)
+                })
+                && let GroupGestureKind::Resize(edges) = gesture.kind
+            {
+                let id = gesture.group.id;
+                let _ = self.group_edit(|s| {
+                    for (a, edge) in edges.iter().enumerate() {
+                        if *edge != 0 {
+                            let result = s.hugAxis(id, a);
+                            if result != crate::grouping::Outcome::Ok {
+                                return result;
+                            }
+                        }
+                    }
+                    crate::grouping::Outcome::Ok
+                });
+                self.interaction.group_gesture = None;
+                return true;
+            }
             if let Some(pointer) = pointer {
                 let delta = self.screen_to_world(pointer, viewport) - gesture.start;
                 let mut group = gesture.group.clone();
                 match gesture.kind {
-                    GroupGestureKind::Resize => {
-                        let width = (group.container.size.x + delta.x).max(group.padding * 2. + 1.);
-                        group.container.center.x += (width - group.container.size.x) / 2.;
-                        group.container.size.x = width;
+                    GroupGestureKind::Resize(edges) => {
+                        for a in 0..2 {
+                            if edges[a] != 0 {
+                                group.container.size[a] = (group.container.size[a]
+                                    + delta[a] * edges[a] as f32)
+                                    .max(group.padding * 2.0 + 1.0);
+                                group.layout.fixed[a] = true;
+                            }
+                        }
+                        let id = group.id;
                         let _ = self.edit_group(group);
+                        if let Some(current) = self.groups().iter().find(|g| g.id == id).cloned() {
+                            let before = gesture.group.container.unrotated_bounds();
+                            let after = current.container.unrotated_bounds();
+                            let mut offset = egui::Vec2::ZERO;
+                            for a in 0..2 {
+                                if edges[a] < 0 {
+                                    offset[a] = before.max[a] - after.max[a];
+                                }
+                            }
+                            if offset != egui::Vec2::ZERO {
+                                self.document
+                                    .groups
+                                    .iter_mut()
+                                    .find(|g| g.id == id)
+                                    .unwrap()
+                                    .container
+                                    .center += offset;
+                                for m in &current.members {
+                                    if let Some(mut r) = self.group_member_geometry(*m) {
+                                        r.center += offset;
+                                        self.set_group_member_geometry(*m, r);
+                                    }
+                                }
+                            }
+                        }
                     }
                     GroupGestureKind::Move => {
                         group.container.center += delta;
                         for (id, mut geometry) in gesture.members.clone() {
                             geometry.center += delta;
-                            if let Some(image) = self
-                                .document
-                                .placements
-                                .iter_mut()
-                                .find(|p| p.state.id == id)
-                            {
-                                image.state.geometry = geometry;
-                            }
+                            self.set_group_member_geometry(id, geometry);
                         }
                         if let Some(target) =
                             self.document.groups.iter_mut().find(|g| g.id == group.id)
@@ -853,17 +1314,11 @@ impl CanvasState {
                             factor,
                         ) {
                             group.container = layout.container;
-                            group.spacing = layout.spacing;
+                            group.gap = layout.gap;
+                            group.layout.row_gap *= factor;
                             group.padding = layout.padding;
                             for (id, geometry) in layout.members {
-                                if let Some(image) = self
-                                    .document
-                                    .placements
-                                    .iter_mut()
-                                    .find(|p| p.state.id == id)
-                                {
-                                    image.state.geometry = geometry;
-                                }
+                                self.set_group_member_geometry(id, geometry);
                             }
                             if let Some(target) =
                                 self.document.groups.iter_mut().find(|g| g.id == group.id)
@@ -879,6 +1334,9 @@ impl CanvasState {
                     self.document
                         .dirty_placement_ids
                         .retain(|dirty| dirty != id);
+                    self.document
+                        .dirty_annotation_ids
+                        .retain(|dirty| dirty != id);
                 }
             }
             if released {
@@ -890,7 +1348,11 @@ impl CanvasState {
                 {
                     self.document.groups_dirty = true;
                     for (id, _) in gesture.members {
-                        self.mark_dirty(id);
+                        if self.placement_for_id(id).is_some() {
+                            self.mark_dirty(id);
+                        } else {
+                            self.mark_annotation_for_persistence(id);
+                        }
                     }
                 }
                 self.interaction.group_gesture = None;
@@ -910,11 +1372,49 @@ impl CanvasState {
                 self.world_to_screen(bounds.max, viewport),
             );
             let selected = self.interaction.selected_group_ids.contains(&group.id);
-            let resize = selected && pointer.distance(rect.right_bottom()) < 12.;
+            let edges = [
+                if (pointer.x - rect.left()).abs() < 6.0 {
+                    -1
+                } else if (pointer.x - rect.right()).abs() < 6.0 {
+                    1
+                } else {
+                    0
+                },
+                if (pointer.y - rect.top()).abs() < 6.0 {
+                    -1
+                } else if (pointer.y - rect.bottom()).abs() < 6.0 {
+                    1
+                } else {
+                    0
+                },
+            ];
+            let resize = selected && rect.expand(6.0).contains(pointer) && edges != [0, 0];
+            if resize
+                && ui.input(|i| {
+                    i.pointer
+                        .button_double_clicked(egui::PointerButton::Primary)
+                })
+            {
+                let g = group.id;
+                let _ = self.group_edit(|s| {
+                    for (a, edge) in edges.iter().enumerate() {
+                        if *edge != 0 {
+                            let result = s.hugAxis(g, a);
+                            if result != crate::grouping::Outcome::Ok {
+                                return result;
+                            }
+                        }
+                    }
+                    crate::grouping::Outcome::Ok
+                });
+                return true;
+            }
             let scale = selected
                 && ui.input(|i| i.modifiers.command && i.modifiers.alt)
                 && rect.contains(pointer);
-            let body = !hit_member
+            let hit_group_member=super::interaction::hit_test_canvas_item(self,viewport,pointer).is_some_and(|hit|matches!(hit,super::CanvasHit::Annotation(m)|super::CanvasHit::Placement(m) if group.members.contains(&m)));
+            let body = (!hit_member
+                || (hit_group_member && self.interaction.editing_group_id != Some(group.id)))
                 && (rect.contains(pointer)
                     || egui::Rect::from_min_max(rect.min - egui::vec2(0., 24.), rect.right_top())
                         .contains(pointer));
@@ -928,7 +1428,7 @@ impl CanvasState {
                 let members = group
                     .members
                     .iter()
-                    .filter_map(|id| self.placement_for_id(*id).map(|p| (*id, p.state.geometry)))
+                    .filter_map(|id| self.group_member_geometry(*id).map(|r| (*id, r)))
                     .collect();
                 self.select_group(group.id);
                 self.interaction.group_gesture = Some(GroupGesture {
@@ -938,7 +1438,7 @@ impl CanvasState {
                     kind: if scale {
                         GroupGestureKind::Scale
                     } else if resize {
-                        GroupGestureKind::Resize
+                        GroupGestureKind::Resize(edges)
                     } else {
                         GroupGestureKind::Move
                     },

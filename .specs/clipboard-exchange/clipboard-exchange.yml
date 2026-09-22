@@ -66,7 +66,7 @@ interface:
 
   guarantees:
     internal-round-trip: Copy and paste within SnappyRef, including between Boards, must preserve supported item kinds, relative geometry, relative stack order, and Group structure while assigning new durable identities at paste.
-    group-membership-remapped: Pasting a copied Group must map its ordered membership to the newly pasted Placements rather than link to members of the source Group.
+    group-membership-remapped: Pasting a copied Group remaps ordered image and textbox membership and member layout intent to fresh identities. No copied member references source identities.
     external-content-normalized: Paths, URLs, PureRef content, and native pixels leave Clipboard Exchange as typed source or document intent.
     system-clipboard-boundary: Platform clipboard formats and ownership remain inside Clipboard Exchange.
     empty-repeat-safe: Reading or writing an empty clipboard selection makes no Board change.

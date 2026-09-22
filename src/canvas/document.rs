@@ -782,6 +782,7 @@ impl CanvasState {
     }
 
     pub(super) fn remove_annotation_locally(&mut self, annotation_id: i64) {
+        self.remove_group_members(&[annotation_id]);
         let existed = self
             .document
             .annotations
@@ -887,6 +888,43 @@ impl CanvasState {
             if !ordered.contains(&item) {
                 ordered.push(item);
             }
+        }
+        for group in self.groups() {
+            let item_id = |item: &CanvasStackItem| match *item {
+                CanvasStackItem::Placement(id) | CanvasStackItem::Annotation(id) => id,
+            };
+            let Some(slot) = ordered
+                .iter()
+                .position(|item| group.members.contains(&item_id(item)))
+            else {
+                continue;
+            };
+            let members = ordered
+                .iter()
+                .filter(|item| group.members.contains(&item_id(item)))
+                .copied()
+                .collect::<Vec<_>>();
+            ordered.retain(|item| !group.members.contains(&item_id(item)));
+            let paint = group
+                .members
+                .iter()
+                .filter(|m| {
+                    !group
+                        .layout
+                        .members
+                        .get(m)
+                        .is_some_and(|mode| mode.absolute)
+                })
+                .chain(group.members.iter().filter(|m| {
+                    group
+                        .layout
+                        .members
+                        .get(m)
+                        .is_some_and(|mode| mode.absolute)
+                }))
+                .filter_map(|id| members.iter().find(|item| item_id(item) == *id).copied())
+                .collect::<Vec<_>>();
+            ordered.splice(slot..slot, paint);
         }
         ordered
     }

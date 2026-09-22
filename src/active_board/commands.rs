@@ -44,7 +44,20 @@ pub(crate) fn paste_board_payload_at(
     payload: &ClipboardBoardSelection,
     requested_anchor_world: egui::Pos2,
 ) -> Result<PasteCommandOutcome, String> {
+    paste_payload(context, payload, requested_anchor_world, false)
+}
+fn paste_payload(
+    context: &mut ActiveBoardCommandContext<'_>,
+    payload: &ClipboardBoardSelection,
+    requested_anchor_world: egui::Pos2,
+    duplicate: bool,
+) -> Result<PasteCommandOutcome, String> {
     validate_clipboard_payload(payload)?;
+    let group_context = if payload.groups.is_empty() {
+        context.canvas.group_paste_context()
+    } else {
+        None
+    };
     let Some(library) = context.library else {
         return Err("Storage unavailable".to_owned());
     };
@@ -124,7 +137,13 @@ pub(crate) fn paste_board_payload_at(
             members: group
                 .members
                 .iter()
-                .map(|index| pasted_placement_ids[*index])
+                .map(|member| {
+                    if member.kind == "placement" {
+                        pasted_placement_ids[member.index]
+                    } else {
+                        pasted_annotation_ids[member.index]
+                    }
+                })
                 .collect(),
             container: RectGeometry::new(
                 group.bounds().center() + delta,
@@ -134,7 +153,28 @@ pub(crate) fn paste_board_payload_at(
                 0,
             ),
             flow: group.flow,
-            spacing: group.spacing,
+            layout: {
+                let mut layout = group.layout.clone();
+                layout.members = group
+                    .members
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, member)| {
+                        group.layout.members.get(&(i as i64)).copied().map(|mode| {
+                            (
+                                if member.kind == "placement" {
+                                    pasted_placement_ids[member.index]
+                                } else {
+                                    pasted_annotation_ids[member.index]
+                                },
+                                mode,
+                            )
+                        })
+                    })
+                    .collect();
+                layout
+            },
+            gap: group.gap,
             padding: group.padding,
         });
     }
@@ -143,6 +183,15 @@ pub(crate) fn paste_board_payload_at(
         .canvas
         .select_content(&pasted_placement_ids, &pasted_annotation_ids);
     context.canvas.select_pasted_groups(pasted_group_ids);
+    context.canvas.paste_group_members(
+        group_context,
+        &pasted_placement_ids
+            .iter()
+            .chain(&pasted_annotation_ids)
+            .copied()
+            .collect::<Vec<_>>(),
+        duplicate,
+    )?;
     move_pasted_content_to_front(
         context.canvas,
         &pasted_placement_ids,
@@ -170,7 +219,7 @@ pub(crate) fn duplicate_selection(
         context.placement_gap.max(12.0),
         context.placement_gap.max(12.0),
     );
-    let mut outcome = paste_board_payload_at(context, &payload, bounds.center() + offset)?;
+    let mut outcome = paste_payload(context, &payload, bounds.center() + offset, true)?;
     outcome.status = outcome.status.replacen("Pasted", "Duplicated", 1);
     Ok(Some(outcome))
 }
@@ -374,7 +423,13 @@ mod group_tests {
         }
         let mut malformed: ClipboardBoardSelection =
             serde_json::from_str(&payload.payload_json).unwrap();
-        malformed.groups[0].members = vec![0, 0];
+        malformed.groups[0].members = vec![
+            crate::sources::clipboard::ClipboardStackEntry {
+                kind: "placement".into(),
+                index: 0
+            };
+            2
+        ];
         let before = context.canvas.all_placement_ids();
         assert!(paste_board_payload_at(&mut context, &malformed, egui::Pos2::ZERO).is_err());
         assert_eq!(context.canvas.all_placement_ids(), before);
@@ -430,7 +485,11 @@ mod group_tests {
                     0,
                 ),
                 flow: crate::data::GroupFlow::Wrap,
-                spacing: 7.,
+                layout: crate::data::GroupLayoutSettings {
+                    row_gap: 5.0,
+                    ..Default::default()
+                },
+                gap: 7.,
                 padding: 10.,
             }]);
             source
@@ -461,7 +520,7 @@ mod group_tests {
             source.apply_placement_history_state(Some(scaled));
             let mut group = source.groups()[0].clone();
             group.container = layout.container;
-            group.spacing = layout.spacing;
+            group.gap = layout.gap;
             group.padding = layout.padding;
             source.replace_groups(vec![group]);
             source.select_group(group_id);
@@ -502,7 +561,7 @@ mod group_tests {
                 expected.center - source.groups()[0].container.center
             );
             assert_eq!(pasted_group.padding, source.groups()[0].padding);
-            assert_eq!(pasted_group.spacing, source.groups()[0].spacing);
+            assert_eq!(pasted_group.gap, source.groups()[0].gap);
             let mut source_context = ActiveBoardCommandContext {
                 canvas: &mut source,
                 library: Some(&library),

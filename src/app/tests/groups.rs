@@ -65,7 +65,7 @@ fn inspect_group_operations_writes_artifact() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut items = Vec::new();
     let mut ids = Vec::new();
-    scenario.event("seed", serde_json::json!({"placements": 3, "purpose": "Group shortcuts, movement, editing, picker and controls"}));
+    scenario.event("seed", serde_json::json!({"placements": 3, "purpose": "Group shortcuts, membership, bottom dock, Free layout and clipping"}));
     for (i, color) in [
         [78, 126, 226, 255],
         [226, 160, 78, 255],
@@ -465,6 +465,38 @@ fn inspect_group_operations_writes_artifact() {
         "picker does not duplicate placements",
         harness.state().canvas.all_placement_ids().len() == 3,
     );
+    harness.state_mut().canvas.select_group(group_id);
+    harness.step();
+    harness.get_by_label("Free").click();
+    harness.step();
+    scenario.assertion(
+        "Free is available in the bottom dock",
+        harness
+            .state()
+            .canvas
+            .groups()
+            .iter()
+            .find(|g| g.id == group_id)
+            .unwrap()
+            .flow
+            == crate::data::GroupFlow::Free,
+    );
+    harness.get_by_label("Clip").click();
+    harness.step();
+    scenario.assertion(
+        "Clip is a saved group setting",
+        harness
+            .state()
+            .canvas
+            .groups()
+            .iter()
+            .find(|g| g.id == group_id)
+            .unwrap()
+            .layout
+            .clip,
+    );
+    harness.get_by_label("Wrap").click();
+    harness.step();
     scenario.capture_screen("screen-004-complete", &mut harness);
     let report = scenario.finish();
     assert!(
@@ -691,6 +723,12 @@ fn inspect_group_picker_rename_and_create_writes_artifact() {
         harness.state().canvas.groups()
     );
     scenario.assertion(
+        "new Wrap group keeps Fixed width and Hug height",
+        created.layout.fixed == [true, false]
+            && created.layout.align == [0, 0]
+            && !created.layout.clip,
+    );
+    scenario.assertion(
         "create is one undoable durable edit",
         library.load_groups().unwrap().len() == 2,
     );
@@ -717,7 +755,7 @@ fn inspect_group_picker_rename_and_create_writes_artifact() {
 }
 
 #[test]
-fn copied_legacy_group_survives_dedupe_and_reopen() {
+fn copied_group_survives_dedupe_and_reopen() {
     let root = TempRoot::new("clipboard-legacy-dedupe");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let other = library.fixture_board("B").unwrap();

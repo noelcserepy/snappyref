@@ -554,6 +554,7 @@ pub(super) fn handle_input(
             },
             Some(ActiveGesture::TextboxTransform(transform_state)) => match transform_state {
                 TextboxTransformState::Moving { annotation_ids, .. } => {
+                    state.finish_group_member_drag(&annotation_ids);
                     for annotation_id in annotation_ids {
                         state.mark_annotation_dirty(annotation_id);
                     }
@@ -614,6 +615,15 @@ pub(super) fn handle_input(
             .annotation_by_id(annotation_id)
             .is_some_and(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)
     {
+        if let Some(g) = state.group_for_member(annotation_id)
+            && state.interaction.editing_group_id != Some(g)
+        {
+            state.interaction.editing_group_id = Some(g);
+            state.interaction.selected_group_ids.clear();
+            state.interaction.selected_placement_ids.clear();
+            state.interaction.selected_annotation_ids = vec![annotation_id];
+            return;
+        }
         state.begin_textbox_edit(annotation_id);
         return;
     }

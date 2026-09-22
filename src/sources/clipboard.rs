@@ -370,10 +370,11 @@ pub(crate) struct ClipboardBoardSelection {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ClipboardGroup {
     pub(crate) name: String,
-    pub(crate) members: Vec<usize>,
+    pub(crate) members: Vec<ClipboardStackEntry>,
     pub(crate) container: [f32; 4],
     pub(crate) flow: crate::data::GroupFlow,
-    pub(crate) spacing: f32,
+    pub(crate) layout: crate::data::GroupLayoutSettings,
+    pub(crate) gap: f32,
     pub(crate) padding: f32,
 }
 impl ClipboardGroup {
@@ -545,7 +546,24 @@ pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<Clipbo
                 members: group
                     .members
                     .iter()
-                    .map(|id| placement_ids.iter().position(|member| member == id))
+                    .map(|id| {
+                        placement_ids
+                            .iter()
+                            .position(|member| member == id)
+                            .map(|index| ClipboardStackEntry {
+                                kind: "placement".into(),
+                                index,
+                            })
+                            .or_else(|| {
+                                annotation_ids
+                                    .iter()
+                                    .position(|member| member == id)
+                                    .map(|index| ClipboardStackEntry {
+                                        kind: "annotation".into(),
+                                        index,
+                                    })
+                            })
+                    })
                     .collect::<Option<Vec<_>>>()?,
                 container: [
                     group.container.center.x,
@@ -554,7 +572,24 @@ pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<Clipbo
                     group.container.scaled_size().y,
                 ],
                 flow: group.flow,
-                spacing: group.spacing,
+                layout: {
+                    let mut layout = group.layout.clone();
+                    layout.members = group
+                        .members
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, id)| {
+                            group
+                                .layout
+                                .members
+                                .get(id)
+                                .copied()
+                                .map(|mode| (index as i64, mode))
+                        })
+                        .collect();
+                    layout
+                },
+                gap: group.gap,
                 padding: group.padding,
             })
         })
@@ -613,16 +648,35 @@ pub(crate) fn validate_clipboard_payload(payload: &ClipboardBoardSelection) -> R
         if group.container.iter().any(|n| !n.is_finite())
             || group.container[2] <= 0.
             || group.container[3] <= 0.
-            || !group.spacing.is_finite()
-            || group.spacing < 0.
+            || !group.gap.is_finite()
             || !group.padding.is_finite()
             || group.padding < 0.
             || group.padding * 2. >= group.container[2]
+            || !group.layout.row_gap.is_finite()
+            || group.layout.align.iter().any(|&a| a > 2)
+            || !["Number", "Between", "Evenly", "Around"].contains(&group.layout.auto.as_str())
+            || (group.flow == crate::data::GroupFlow::Wrap && !group.layout.fixed[0])
+            || (group.flow != crate::data::GroupFlow::Free
+                && group.layout.auto != "Number"
+                && !group.layout.fixed[usize::from(group.flow == crate::data::GroupFlow::Column)])
+            || group
+                .layout
+                .members
+                .values()
+                .any(|m| (0..2).any(|a| m.fill[a] && !group.layout.fixed[a]))
         {
             return Err(invalid());
         }
-        for index in &group.members {
-            if *index >= payload.placements.len() || !membership.insert(*index) {
+        for member in &group.members {
+            let valid = match member.kind.as_str() {
+                "placement" => member.index < payload.placements.len(),
+                "annotation" => payload
+                    .annotations
+                    .get(member.index)
+                    .is_some_and(|a| a.kind == "textbox"),
+                _ => false,
+            };
+            if !valid || !membership.insert((member.kind.clone(), member.index)) {
                 return Err(invalid());
             }
         }

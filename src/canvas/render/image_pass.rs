@@ -31,9 +31,10 @@ pub(crate) fn paint_images(
         .iter()
         .filter_map(|image| {
             let image_rect = placement_screen_rect(state, rect, image);
-            image_rect
-                .intersects(cull_rect)
-                .then_some((image.state.id, image_rect))
+            (image_rect.width() > 0.0
+                && image_rect.height() > 0.0
+                && image_rect.intersects(cull_rect))
+            .then_some((image.state.id, image_rect))
         })
         .collect::<Vec<_>>();
     metrics.visible_images = visible_images.len();
@@ -200,7 +201,7 @@ pub(crate) fn paint_images(
 
 pub(crate) fn paint_canvas_items(
     painter: &egui::Painter,
-    ui: &egui::Ui,
+    ui: &mut egui::Ui,
     rect: egui::Rect,
     state: &mut CanvasState,
     render_state: Option<&eframe::egui_wgpu::RenderState>,
@@ -235,6 +236,9 @@ pub(crate) fn optimized_image_pass_eligible_for_state(state: &CanvasState) -> bo
 }
 
 fn canvas_stack_matches_existing_layering(state: &CanvasState) -> bool {
+    if state.groups().iter().any(|g| g.layout.clip) {
+        return false;
+    }
     if state
         .document
         .placements
@@ -263,7 +267,7 @@ fn canvas_stack_matches_existing_layering(state: &CanvasState) -> bool {
 
 fn paint_canvas_items_interleaved(
     painter: &egui::Painter,
-    ui: &egui::Ui,
+    ui: &mut egui::Ui,
     rect: egui::Rect,
     state: &mut CanvasState,
     allow_lod_promotion: bool,
@@ -283,13 +287,41 @@ fn paint_canvas_items_interleaved(
     let mut visible_placement_ids = Vec::new();
 
     for item in state.ordered_canvas_items_back_to_front() {
+        let id = match item {
+            CanvasStackItem::Placement(id) | CanvasStackItem::Annotation(id) => id,
+        };
+        let clip = state
+            .group_for_member(id)
+            .and_then(|g| {
+                state
+                    .groups()
+                    .iter()
+                    .find(|group| group.id == g && group.layout.clip)
+            })
+            .map(|g| {
+                let bounds = g.container.unrotated_bounds();
+                egui::Rect::from_min_max(
+                    state.world_to_screen(bounds.min, rect),
+                    state.world_to_screen(bounds.max, rect),
+                )
+                .intersect(painter.clip_rect())
+            })
+            .unwrap_or_else(|| painter.clip_rect());
+        let clipped = painter.with_clip_rect(clip);
+        let painter = &clipped;
+        let mut item_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+        item_ui.set_clip_rect(clip);
+        let ui = &item_ui;
         match item {
             CanvasStackItem::Placement(placement_id) => {
                 let Some(image) = state.rendered_placement_by_id(placement_id) else {
                     continue;
                 };
                 let image_rect = placement_screen_rect(state, rect, image.placement);
-                if !image_rect.intersects(image_cull_rect) {
+                if image_rect.width() <= 0.0
+                    || image_rect.height() <= 0.0
+                    || !image_rect.intersects(image_cull_rect)
+                {
                     continue;
                 }
                 metrics.visible_images += 1;
@@ -345,7 +377,9 @@ fn paint_canvas_items_interleaved(
                 let Some(annotation) = state.annotation_by_id(annotation_id).cloned() else {
                     continue;
                 };
-                if annotation_should_paint(state, rect, annotation_cull_rect, &annotation) {
+                if !matches!(annotation.geometry,crate::data::CanvasAnnotationGeometry::Rect(r) if r.scaled_size().min_elem()<=0.0)
+                    && annotation_should_paint(state, rect, annotation_cull_rect, &annotation)
+                {
                     paint_annotation(painter, ui, rect, state, &annotation);
                 }
             }

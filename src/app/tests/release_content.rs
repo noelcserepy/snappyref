@@ -45,7 +45,7 @@ fn group_copy_duplicate_delete_ungroup_and_paste_history_preserve_structure() {
     let mut group = app.canvas.groups()[0].clone();
     group.name = "Faces".into();
     group.flow = crate::data::GroupFlow::Column;
-    group.spacing = 17.;
+    group.gap = 17.;
     group.padding = 23.;
     app.canvas.edit_group(group).unwrap();
     app.persist_canvas_changes();
@@ -61,7 +61,7 @@ fn group_copy_duplicate_delete_ungroup_and_paste_history_preserve_structure() {
     assert!(duplicate.members.iter().all(|id| !ids.contains(id)));
     assert_eq!(duplicate.name, original.name);
     assert_eq!(duplicate.flow, original.flow);
-    assert_eq!((duplicate.spacing, duplicate.padding), (17., 23.));
+    assert_eq!((duplicate.gap, duplicate.padding), (17., 23.));
     let mut edited = duplicate.clone();
     edited.name = "Independent".into();
     edited.flow = crate::data::GroupFlow::Row;
@@ -121,7 +121,7 @@ fn group_copy_duplicate_delete_ungroup_and_paste_history_preserve_structure() {
         (
             pasted.name.as_str(),
             pasted.flow,
-            pasted.spacing,
+            pasted.gap,
             pasted.padding
         ),
         ("Faces", original.flow, 17., 23.)
@@ -634,7 +634,11 @@ fn group_picker_arrows_remember_destination_and_cancel_typed_shortcuts() {
                 0,
             ),
             flow: crate::data::GroupFlow::Wrap,
-            spacing: 12.,
+            gap: 12.,
+            layout: crate::data::GroupLayoutSettings {
+                row_gap: 12.0,
+                ..Default::default()
+            },
             padding: 16.,
         })
         .collect();
