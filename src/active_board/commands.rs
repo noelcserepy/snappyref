@@ -238,6 +238,7 @@ pub(crate) fn delete_selected_from_board(
         };
         status = Some(format!("Deleted {selected_groups} {noun}"));
     }
+    let placement_ids = context.canvas.selected_placement_ids();
     let annotation_ids = context.canvas.delete_selected_annotations();
     if !annotation_ids.is_empty() {
         let noun = if annotation_ids.len() == 1 {
@@ -248,7 +249,7 @@ pub(crate) fn delete_selected_from_board(
         status = Some(format!("Deleted {} {noun}", annotation_ids.len()));
     }
 
-    let archived_ids = context.canvas.delete_selected_placements();
+    let archived_ids = context.canvas.delete_placements(&placement_ids);
     if archived_ids.is_empty() {
         return Ok(status);
     }

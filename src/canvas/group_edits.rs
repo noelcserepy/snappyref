@@ -7,10 +7,10 @@ use eframe::egui::{self, Vec2};
 
 impl CanvasState {
     pub(super) fn group_member_geometry(&self, id: i64) -> Option<RectGeometry> {
-        self.placement_for_id(id)
+        self.placement_by_id(id)
             .map(|p| p.state.geometry)
             .or_else(|| {
-                self.annotation_for_id(id).and_then(|a| match a.geometry {
+                self.annotation_by_id(id).and_then(|a| match a.geometry {
                     CanvasAnnotationGeometry::Rect(r) => Some(r),
                     _ => None,
                 })
@@ -79,7 +79,9 @@ impl CanvasState {
                 }
             }
         }
-        State::init(board, pixels, self.placement_gap)
+        let mut state = State::init(board, pixels, self.placement_gap);
+        state.dock = self.current_group_dock();
+        state
     }
     pub(super) fn group_edit(
         &mut self,
@@ -109,6 +111,7 @@ impl CanvasState {
                 .ok_or("group_missing")?;
             let old_origin = group.container.unrotated_bounds().min;
             let old_padding = group.padding;
+            group.name = config.name.clone();
             group.members = config.order.clone();
             group.flow = match config.flow.as_str() {
                 "Row" => GroupFlow::Row,
@@ -215,6 +218,8 @@ impl CanvasState {
             }
         }
         self.replace_groups(groups);
+        self.accept_group_dock(state.dock);
+
         Ok(())
     }
 }
@@ -255,6 +260,14 @@ impl CanvasState {
             return Ok(());
         };
         let mut state = self.grouping_state();
+        let selection = if anchor == -1 {
+            state.selectGroup(g)
+        } else {
+            state.editMember(anchor)
+        };
+        if let Outcome::Rejected(reason) = selection {
+            return Err(reason.into());
+        }
         for &id in ids {
             if let Some(member) = state.board.members.get(&id).cloned() {
                 state.geometry.intake.insert(id, member);
@@ -275,10 +288,7 @@ impl CanvasState {
             }
             anchor = id;
         }
-        self.apply_group_state(state, None)?;
-        self.interaction.editing_group_id = Some(g);
-        self.interaction.selected_group_ids.clear();
-        Ok(())
+        self.apply_group_state(state, None)
     }
 }
 

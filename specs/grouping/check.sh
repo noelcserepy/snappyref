@@ -5,6 +5,7 @@ cd "$(dirname "$0")/../.."
 quint typecheck specs/grouping/spec.qnt
 quint test specs/grouping/spec.qnt
 python3 - <<'PYTHON'
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -16,7 +17,7 @@ result = subprocess.run([
     "--max-steps=60", "--seed=0x1", "--verbosity=1", "--invariants",
     *re.findall(r"^\s*val (inv_\w+)", source, re.MULTILINE), "--witnesses",
     *witnesses,
-], text=True, capture_output=True)
+], text=True, capture_output=True, env={k: v for k, v in os.environ.items() if k != "FORCE_COLOR"})
 print(result.stdout, end="")
 print(result.stderr, end="")
 result.check_returncode()

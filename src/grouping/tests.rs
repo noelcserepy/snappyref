@@ -108,10 +108,19 @@ fn observation(s: &State<QuintGeometry>) -> Value {
     let groups = map(s.board.groups.iter().map(|(&id, g)| (id, json!({
         "order": g.order, "flow": g.flow, "fixed": set(g.fixed.iter().map(|&a| a as i64)), "size": dimensions(g.size),
         "gap": g.gap, "number": g.number as i64, "rowGap": g.rowGap as i64, "padding": g.padding as i64,
-        "align": map(g.align.iter().enumerate().map(|(a, n)| (a as Id, json!(n)))), "clip": g.clip, "name": g.name,
+        "align": map(g.align.iter().enumerate().map(|(a, n)| (a as Id, json!(n)))), "clip": g.clip, "name": g.name.parse::<i64>().unwrap(),
     }))));
     let members = map(s.board.members.iter().map(|(&id, m)| (id, json!({"kind": m.kind, "size": dimensions(m.size), "fill": set(m.fill.iter().map(|&a| a as i64)), "absolute": m.absolute}))));
-    json!({"board": {"groups": groups, "live": set(s.board.live.iter().copied()), "members": members},
+    let panel = match s.dock.panel {
+        Panel::Hidden => json!({"tag":"Hidden", "value": []}),
+        Panel::GroupDock { group, align_open } => {
+            json!({"tag":"GroupDock", "value":{"group":group,"alignOpen":align_open}})
+        }
+        Panel::MemberDock { group, member } => {
+            json!({"tag":"MemberDock", "value":{"group":group,"member":member}})
+        }
+    };
+    json!({"dock":{"panel":panel,"textFocus":s.dock.text_focus}, "board": {"groups": groups, "live": set(s.board.live.iter().copied()), "members": members},
         "outcome": match s.outcome { Outcome::Ok => json!({"tag":"Ok", "value":[]}), Outcome::Rejected(r) => json!({"tag":"Rejected", "value":r}) },
         "event": s.event, "effects": {"refusal": s.effects.refusal, "incoming": s.effects.incoming, "empty": s.effects.empty, "resize": s.effects.resize, "append": s.effects.append}})
 }
@@ -144,6 +153,51 @@ fn replay_every_grouping_trace() {
             let text = |k: &str| picks[k]["value"].as_str().unwrap();
             match op {
                 "init" => {}
+                "selectGroup" => {
+                    s.selectGroup(n("g"));
+                }
+                "editMember" => {
+                    s.editMember(n("m"));
+                }
+                "clearSelection" => {
+                    s.clearSelection();
+                }
+                "toggleAlign" => {
+                    s.toggleAlign();
+                }
+                "dismissAlign" => {
+                    s.dismissAlign();
+                }
+                "focusText" => {
+                    s.focusText(flag("active"));
+                }
+                "escape" => {
+                    s.escape();
+                }
+                "useDock" => {
+                    s.useDock(control(&picks["c"]["value"]));
+                }
+                "pressKey" => {
+                    let xs: Vec<_> = picks["selection"]["value"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|n| n.as_i64().unwrap())
+                        .collect();
+                    s.pressKey(text("key"), n("identity"), &xs, f("width"));
+                }
+                "doubleClickHandle" => {
+                    s.doubleClickHandle(a("a"));
+                }
+                "doubleClickCorner" => {
+                    s.doubleClickCorner();
+                }
+                "dropMember" => {
+                    s.dropMember(n("g"), n("m"), n("slot"), flag("outside"));
+                }
+                "uniformScale" => {
+                    s.uniformScale();
+                }
                 "create" => {
                     let xs: Vec<_> = picks["selection"]["value"]
                         .as_array()
@@ -213,7 +267,7 @@ fn replay_every_grouping_trace() {
                 }
                 _ => panic!("Unknown operation {op}"),
             }
-            let expected = json!({"board": decode(&expected["board"]), "outcome": decode(&expected["outcome"]), "event": expected["event"], "effects": expected["effects"]});
+            let expected = json!({"dock": decode(&expected["dock"]), "board": decode(&expected["board"]), "outcome": decode(&expected["outcome"]), "event": expected["event"], "effects": expected["effects"]});
             assert_eq!(
                 observation(&s),
                 expected,
@@ -414,7 +468,7 @@ fn emptyAndUngroupTest() {
     s.detach(0, 0);
     assert!(s.board.groups[&0].order.is_empty());
     assert_eq!(s.board.groups[&0].size[0], 3.0);
-    assert_eq!(s.board.groups[&0].name, 0);
+    assert_eq!(s.board.groups[&0].name, "0");
     s.add(0, 0);
     s.toggleAbsolute(0, 0, 0);
     s.ungroup(0);
@@ -470,4 +524,236 @@ fn columnArrowsTest() {
     s.arrow(0, 0, "Down");
     assert_eq!(s.board.groups[&0].order, [2, 0]);
     assert_eq!(s.outcome, Outcome::Ok);
+}
+
+fn control(v: &Value) -> Control {
+    let x = &v["value"];
+    let n = || x.as_i64().unwrap();
+    let a = || x[0].as_u64().unwrap() as usize;
+    match v["tag"].as_str().unwrap() {
+        "Name" => Control::Name(if n() < 0 {
+            String::new()
+        } else {
+            n().to_string()
+        }),
+        "Flow" => Control::Flow(x.as_str().unwrap().into()),
+        "Gap" => Control::Gap(n() as f32),
+        "RowGap" => Control::RowGap(n() as f32),
+        "Padding" => Control::Padding(n() as f32),
+        "Align" => Control::Align([a(), x[1].as_u64().unwrap() as usize]),
+        "Auto" => Control::Auto(x.as_str().unwrap().into()),
+        "Dimension" => Control::Dimension(a(), x[1].as_i64().unwrap() as f32),
+        "Hug" => Control::Hug(n() as usize),
+        "Clip" => Control::Clip,
+        "Ungroup" => Control::Ungroup,
+        "MemberMode" => Control::MemberMode(a(), x[1].as_bool().unwrap()),
+        "Absolute" => Control::Absolute(n()),
+        "Earlier" => Control::Earlier,
+        "Later" => Control::Later,
+        "Detach" => Control::Detach,
+        tag => panic!("Unknown control {tag}"),
+    }
+}
+
+#[test]
+fn dockEscapeTest() {
+    let mut s = init();
+    s.create(0, &[0, 2], 3.0);
+    s.toggleAlign();
+    s.useDock(Control::Align([2, 1]));
+    assert!(s.dock.align_shown());
+    s.escape();
+    assert!(s.dock.group_shown() && !s.dock.align_shown());
+    s.editMember(2);
+    assert_eq!(s.dockMemberNumber(), 2);
+    s.escape();
+    assert!(s.dock.group_shown());
+    s.escape();
+    assert_eq!(s.dock.panel, Panel::Hidden);
+}
+#[test]
+fn dockControlsTest() {
+    let mut s = init();
+    s.create(0, &[0, 2], 3.0);
+    for c in [
+        Control::Name("1".into()),
+        Control::Gap(-1.0),
+        Control::RowGap(-1.0),
+        Control::Padding(0.0),
+        Control::Dimension(1, 3.0),
+        Control::Clip,
+    ] {
+        assert_eq!(s.useDock(c), Outcome::Ok);
+    }
+    let g = &s.board.groups[&0];
+    assert_eq!(
+        (&g.name, g.number, g.rowGap, g.padding, g.clip),
+        (&"1".to_string(), -1.0, -1.0, 0.0, true)
+    );
+    assert!(g.fixed.contains(&1));
+    s.useDock(Control::Flow("Free".into()));
+    assert!(!s.controlEnabled(&Control::Gap(1.0)));
+    assert!(!s.controlShown(&Control::RowGap(1.0)));
+    assert_eq!(
+        s.useDock(Control::Gap(1.0)),
+        Outcome::Rejected("control_inactive")
+    );
+}
+#[test]
+fn dockAutoTest() {
+    let mut s = init();
+    s.create(0, &[0, 2], 3.0);
+    s.useDock(Control::Gap(-1.0));
+    s.toggleAlign();
+    s.useDock(Control::Align([2, 0]));
+    s.useDock(Control::Auto("Between".into()));
+    assert!(s.dock.align_shown());
+    assert!(!s.controlEnabled(&Control::Gap(0.0)));
+    assert!(s.controlEnabled(&Control::Align([2, 1])));
+    assert!(!s.controlEnabled(&Control::Align([0, 1])));
+    assert_eq!(
+        s.useDock(Control::Align([0, 1])),
+        Outcome::Rejected("primary_alignment_inactive")
+    );
+    s.useDock(Control::Align([2, 1]));
+    s.useDock(Control::Auto("Number".into()));
+    assert_eq!(s.board.groups[&0].number, -1.0);
+    assert_eq!(s.board.groups[&0].align, [2, 1]);
+    s.useDock(Control::Flow("Free".into()));
+    assert!(!s.dock.align_shown());
+}
+#[test]
+fn dockSizingTest() {
+    let mut s = init();
+    s.create(0, &[2], 3.0);
+    assert_eq!(
+        s.useDock(Control::Hug(0)),
+        Outcome::Rejected("wrap_width_fixed")
+    );
+    assert!(!s.controlEnabled(&Control::Hug(0)));
+    s.useDock(Control::Hug(1));
+    assert!(s.board.groups[&0].fixed.contains(&1));
+    s.editMember(2);
+    s.useDock(Control::MemberMode(1, true));
+    assert!(s.board.members[&2].fill.contains(&1));
+    s.escape();
+    s.useDock(Control::Hug(1));
+    s.editMember(2);
+    assert!(!s.board.members[&2].fill.contains(&1));
+    assert!(!s.controlEnabled(&Control::MemberMode(1, true)));
+    assert_eq!(
+        s.useDock(Control::MemberMode(1, true)),
+        Outcome::Rejected("fixed_axis_required")
+    );
+}
+#[test]
+fn dockAbsoluteTest() {
+    let mut s = init();
+    s.create(0, &[0, 2], 3.0);
+    s.editMember(0);
+    s.useDock(Control::MemberMode(0, true));
+    s.useDock(Control::Absolute(0));
+    assert!(s.board.members[&0].fill.contains(&0));
+    assert!(!s.controlEnabled(&Control::MemberMode(0, false)));
+    assert!(!s.controlEnabled(&Control::Later));
+    s.useDock(Control::Absolute(0));
+    assert!(s.controlEnabled(&Control::Later));
+    s.useDock(Control::Later);
+    assert_eq!(s.dockMemberNumber(), 2);
+    assert!(!s.controlEnabled(&Control::Later));
+    s.useDock(Control::Earlier);
+    assert_eq!(s.dockMemberNumber(), 1);
+    s.useDock(Control::Detach);
+    assert_eq!(s.dock.panel, Panel::Hidden);
+    assert_eq!(s.board.owner(0), None);
+}
+#[test]
+fn dockTextFocusTest() {
+    let mut s = init();
+    s.create(0, &[0, 2], 3.0);
+    s.toggleAlign();
+    s.focusText(true);
+    assert_eq!(
+        s.pressKey("Primary+G", 1, &[0], 1.0),
+        Outcome::Rejected("text_owns_key")
+    );
+    s.pressKey("Escape", 1, &[], 1.0);
+    assert!(s.dock.align_shown() && !s.dock.text_focus);
+    s.escape();
+    assert!(s.dock.group_shown() && !s.dock.align_shown());
+    s.dismissAlign();
+    assert!(s.dock.group_shown());
+}
+#[test]
+fn dockClipboardTest() {
+    let mut s = init();
+    s.create(0, &[0, 2], 3.0);
+    s.editMember(0);
+    s.pressKey("Primary+D", 1, &[], 1.0);
+    assert_eq!(s.dock.member(), Some(1));
+    assert_eq!(s.dockMemberNumber(), 2);
+    s.pressKey("Delete", 1, &[], 1.0);
+    assert!(s.dock.group_shown());
+    s.editMember(2);
+    s.pressKey("Primary+V", 1, &[], 1.0);
+    assert_eq!(s.dock.member(), Some(1));
+    assert_eq!(s.board.groups[&0].order, [0, 2, 1]);
+    s.escape();
+    s.pressKey("Primary+Shift+G", 1, &[], 1.0);
+    assert_eq!(s.dock.panel, Panel::Hidden);
+}
+#[test]
+fn dockSelectionTest() {
+    let mut s = init();
+    s.create(0, &[0], 3.0);
+    s.create(1, &[2], 3.0);
+    s.toggleAlign();
+    s.selectGroup(0);
+    assert!(!s.dock.align_shown());
+    s.editMember(0);
+    s.add(1, 0);
+    assert_eq!(s.dock.group(), Some(1));
+    assert_eq!(s.dock.member(), Some(0));
+    s.clearSelection();
+    assert_eq!(s.dock.panel, Panel::Hidden);
+}
+#[test]
+fn dockAutoFromHugTest() {
+    let mut s = init();
+    s.create(0, &[2], 3.0);
+    s.useDock(Control::Flow("Column".into()));
+    s.toggleAlign();
+    s.useDock(Control::Auto("Around".into()));
+    assert!(s.board.groups[&0].fixed.contains(&1));
+    s.useDock(Control::Hug(1));
+    assert_eq!(s.board.groups[&0].gap, "Number");
+    assert!(s.dock.align_shown());
+}
+#[test]
+fn dockEmptyTest() {
+    let mut s = init();
+    s.create(0, &[0], 3.0);
+    s.editMember(0);
+    s.pressKey("Delete", 1, &[], 1.0);
+    assert!(s.dock.group_shown());
+    assert_eq!(s.dockCount(), 0);
+    s.useDock(Control::Ungroup);
+    assert_eq!(s.dock.panel, Panel::Hidden);
+}
+#[test]
+fn dockCornerAndDropTest() {
+    let mut s = init();
+    s.create(0, &[0, 2], 3.0);
+    s.useDock(Control::Dimension(1, 3.0));
+    s.doubleClickCorner();
+    assert_eq!(s.board.groups[&0].fixed, BTreeSet::from([0]));
+    s.editMember(0);
+    s.useDock(Control::Absolute(0));
+    s.dropMember(0, 0, 0, true);
+    assert!(s.dock.member().is_some());
+    assert_eq!(s.board.owner(0), Some(0));
+    s.useDock(Control::Absolute(0));
+    s.dropMember(0, 0, 0, true);
+    assert_eq!(s.dock.panel, Panel::Hidden);
+    assert_eq!(s.board.owner(0), None);
 }

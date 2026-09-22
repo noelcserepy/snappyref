@@ -261,7 +261,10 @@ fn unloaded_placements_use_visual_bounds_for_layout_hit_test_and_delete() {
             hit_test_canvas_item(&state, canvas_rect, canvas_rect.center()),
             Some(crate::canvas::CanvasHit::Placement(101))
         );
-        assert_eq!(state.delete_selected_placements(), vec![101]);
+        assert_eq!(
+            state.delete_placements(&state.selected_placement_ids()),
+            vec![101]
+        );
         assert!(state.placement_for_id(101).is_none());
     });
 }

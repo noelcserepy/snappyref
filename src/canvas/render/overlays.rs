@@ -198,6 +198,7 @@ pub(super) fn selected_placement_border_paint_ids(
                 return false;
             };
             state.is_selected(*placement_id)
+                && state.group_for_member(*placement_id).is_none()
                 && placement_screen_rect(state, rect, image).intersects(cull_rect)
                 && (image.lifecycle == PlacementLifecycle::Provisional
                     || state.selection_border_visible(now_seconds))
@@ -210,6 +211,13 @@ pub(crate) fn paint_selection_bounds(
     rect: egui::Rect,
     state: &CanvasState,
 ) {
+    if state.interaction.editing_group_id.is_some() {
+        state.paint_edited_group_member(painter, rect);
+        return;
+    }
+    if !state.interaction.selected_group_ids.is_empty() {
+        return;
+    }
     if !state.selection_border_visible(painter.ctx().input(|input| input.time)) {
         return;
     }

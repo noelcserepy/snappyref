@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 mod document;
 mod geometry;
+mod group_dock;
 mod group_edits;
 mod groups;
 pub(crate) mod guide_snap;

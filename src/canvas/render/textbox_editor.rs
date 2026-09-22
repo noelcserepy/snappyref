@@ -312,7 +312,8 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
             if output.response.changed() {
                 state.mark_annotation_dirty(annotation_id);
             }
-            if (ui.input(|i| i.key_pressed(egui::Key::Escape)) && output.response.has_focus())
+            if (output.response.has_focus()
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)))
                 || (output.response.lost_focus() && !toolbar_interacting)
             {
                 state.finish_textbox_edit();

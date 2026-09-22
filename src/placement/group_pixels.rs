@@ -225,6 +225,90 @@ pub(crate) fn config(group: &Group) -> grouping::Group {
         padding: group.padding,
         align: group.layout.align,
         clip: group.layout.clip,
-        name: group.id,
+        name: group.name.clone(),
+    }
+}
+
+#[cfg(test)]
+mod dock_geometry_examples {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn board(sizes: &[[f32; 2]], kind: &str) -> Board {
+        let mut group = grouping::Group::new(0, 300.0, 10.0);
+        group.flow = "Row".into();
+        group.fixed = BTreeSet::from([0, 1]);
+        group.size = [300.0, 100.0];
+        group.order = (0..sizes.len() as i64).collect();
+        Board {
+            groups: BTreeMap::from([(0, group)]),
+            live: (0..sizes.len() as i64).collect(),
+            members: sizes
+                .iter()
+                .enumerate()
+                .map(|(i, &size)| (i as i64, grouping::Member::fixed(kind, size)))
+                .collect(),
+        }
+    }
+    #[test]
+    fn grouping_numeric_fill_and_overflow_examples() {
+        let mut b = board(
+            &[[100.0, 20.0], [80.0, 20.0], [20.0, 20.0], [20.0, 20.0]],
+            "Textbox",
+        );
+        for m in [2, 3] {
+            b.members.get_mut(&m).unwrap().fill.insert(0);
+        }
+        let p = Pixels::default();
+        let layout = p.layout(&b, 0);
+        assert_eq!(layout.sizes[&2].x, 45.0);
+        assert_eq!(layout.sizes[&3].x, 45.0);
+        b.groups.get_mut(&0).unwrap().size[0] = 180.0;
+        let layout = p.layout(&b, 0);
+        assert_eq!(layout.sizes[&2].x, 0.0);
+        assert_eq!(layout.sizes[&0].x, 100.0);
+    }
+    #[test]
+    fn grouping_image_aspect_fit_example() {
+        let mut b = board(&[[400.0, 200.0]], "Image");
+        let g = b.groups.get_mut(&0).unwrap();
+        g.size = [100.0, 100.0];
+        g.align = [1, 1];
+        b.members.get_mut(&0).unwrap().fill = BTreeSet::from([0, 1]);
+        let layout = Pixels::default().layout(&b, 0);
+        assert_eq!(layout.sizes[&0], egui::vec2(100.0, 50.0));
+        assert_eq!(layout.offsets[&0], egui::vec2(0.0, 25.0));
+    }
+    #[test]
+    fn grouping_auto_spacing_examples() {
+        let mut b = board(&[[40.0, 20.0]; 3], "Textbox");
+        for (mode, start, gap) in [
+            ("Between", 0.0, 90.0),
+            ("Evenly", 45.0, 45.0),
+            ("Around", 30.0, 60.0),
+        ] {
+            b.groups.get_mut(&0).unwrap().gap = mode.into();
+            let layout = Pixels::default().layout(&b, 0);
+            for m in 0..3 {
+                assert_eq!(layout.offsets[&m].x, start + m as f32 * (40.0 + gap));
+            }
+        }
+    }
+    #[test]
+    fn grouping_outer_size_excludes_padding() {
+        let group = Group {
+            id: 0,
+            name: "Faces".into(),
+            members: vec![],
+            container: RectGeometry::from_bounds(
+                egui::Rect::from_min_size(Pos2::ZERO, Vec2::splat(100.0)),
+                0,
+            ),
+            flow: crate::data::GroupFlow::Wrap,
+            gap: 24.0,
+            padding: 16.0,
+            layout: Default::default(),
+        };
+        assert_eq!(config(&group).size, [68.0, 68.0]);
     }
 }

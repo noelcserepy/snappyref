@@ -49,6 +49,13 @@ impl CanvasState {
             .filter(|id| self.annotation_for_id(*id).is_some())
             .collect();
         self.interaction.editing_group_id = None;
+        self.interaction.group_dock = crate::grouping::Dock {
+            panel: crate::grouping::Panel::GroupDock {
+                group: id,
+                align_open: false,
+            },
+            text_focus: false,
+        };
     }
     pub(super) fn expand_group_selection(&mut self) {
         if self.interaction.editing_group_id.is_some() {
@@ -127,6 +134,7 @@ impl CanvasState {
                 ..Default::default()
             },
         };
+        state.board.groups.get_mut(&id).unwrap().name = group.name.clone();
         self.apply_group_state(state, Some(group))?;
         self.select_group(id);
         Ok(Some(id))
@@ -281,19 +289,9 @@ impl CanvasState {
             let owner = self.group_for_member(m);
             if let Some(g) = owner {
                 let group = self.groups().iter().find(|x| x.id == g).unwrap();
-                let mode = group.layout.members.get(&m).copied().unwrap_or_default();
-                if mode.absolute {
-                    self.reflow_group_for_member(m);
-                    continue;
-                }
-                if !group.container.unrotated_bounds().contains(rect.center) {
-                    let _ = self.group_edit(|s| s.detach(g, m));
-                } else if group.flow == GroupFlow::Free {
-                    self.reflow_group_for_member(m);
-                } else {
-                    let slot = self.group_insertion_slot(g, m, rect.center);
-                    let _ = self.group_edit(|s| s.reorder(g, m, slot));
-                }
+                let outside = !group.container.unrotated_bounds().contains(rect.center);
+                let slot = self.group_insertion_slot(g, m, rect.center);
+                let _ = self.group_edit(|s| s.dropMember(g, m, slot, outside));
             } else if let Some(g) = self
                 .groups()
                 .iter()
@@ -313,7 +311,7 @@ impl CanvasState {
             self.interaction.editing_group_id = None;
         }
     }
-    fn group_insertion_slot(&self, g: i64, m: i64, point: egui::Pos2) -> i64 {
+    pub(super) fn group_insertion_slot(&self, g: i64, m: i64, point: egui::Pos2) -> i64 {
         let group = self.groups().iter().find(|x| x.id == g).unwrap();
         let members = group
             .members
@@ -339,11 +337,6 @@ impl CanvasState {
 }
 
 impl CanvasState {
-    pub fn leave_group_member_editing(&mut self) {
-        if let Some(id) = self.interaction.editing_group_id {
-            self.select_group(id);
-        }
-    }
     pub(super) fn group_transform_origins(&self) -> Vec<(i64, RectGeometry)> {
         if self.interaction.editing_group_id.is_some() {
             return Vec::new();
@@ -407,6 +400,9 @@ pub(super) struct GroupPicker {
 }
 
 impl CanvasState {
+    pub(crate) fn group_picker_open(&self) -> bool {
+        self.interaction.group_picker.is_some()
+    }
     pub fn open_group_picker(&mut self) {
         if self.selected_placement_ids().is_empty() && self.selected_annotation_ids().is_empty() {
             return;
@@ -445,7 +441,7 @@ impl CanvasState {
         let input_id = egui::Id::new("group-picker-query");
         let just_opened = picker.focus;
         let mut confirmed = None;
-        let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        let mut cancel = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let viewport = ctx.viewport_rect();
         let width = 420.0_f32.min((viewport.width() - theme::SPACE_6 * 2.0).max(180.0));
         let entrance =
@@ -604,7 +600,6 @@ impl CanvasState {
                 Some(GroupPickerChoice::Existing(id)) => {
                     if self.add_members_to_group(id, &picker.members).is_ok() {
                         self.remember_group_destination(id);
-                        self.select_group(id);
                     }
                 }
                 Some(GroupPickerChoice::Create) => {
@@ -686,7 +681,14 @@ impl CanvasState {
             painter.rect_stroke(
                 rect,
                 theme::RADIUS_NONE,
-                egui::Stroke::new(1.0_f32, color),
+                egui::Stroke::new(
+                    1.0_f32,
+                    if self.interaction.editing_group_id == Some(group.id) {
+                        color.gamma_multiply(0.55)
+                    } else {
+                        color
+                    },
+                ),
                 egui::StrokeKind::Outside,
             );
             painter.text(
@@ -698,429 +700,37 @@ impl CanvasState {
             );
         }
     }
-    pub(super) fn show_group_controls(
-        &mut self,
-        ui: &mut egui::Ui,
-        viewport: egui::Rect,
-    ) -> Option<egui::Rect> {
+    pub(super) fn paint_edited_group_member(&self, painter: &egui::Painter, viewport: egui::Rect) {
         use crate::ui::theme;
-        if !ui.input(|i| i.pointer.primary_down())
-            && let Some(before) = self.interaction.group_controls_start.take()
-            && self
+        let dock = self.current_group_dock();
+        if let Some(member) = dock.member()
+            && let Some(geometry) = self.group_member_geometry(member)
+        {
+            let bounds = geometry.visual_bounds();
+            let rect = egui::Rect::from_min_max(
+                self.world_to_screen(bounds.min, viewport),
+                self.world_to_screen(bounds.max, viewport),
+            );
+            painter.rect_stroke(
+                rect,
+                0,
+                egui::Stroke::new(2.0_f32, theme::ACCENT),
+                egui::StrokeKind::Inside,
+            );
+            let group = self
                 .groups()
                 .iter()
-                .find(|g| g.id == before.id)
-                .is_some_and(|g| g != &before)
-        {
-            self.document.groups_dirty = true;
-            for id in before.members {
-                self.mark_dirty(id);
-            }
+                .find(|g| Some(g.id) == dock.group())
+                .unwrap();
+            let ordinal = group.members.iter().position(|&m| m == member).unwrap() + 1;
+            painter.text(
+                rect.left_bottom() + egui::vec2(0.0, 8.0),
+                egui::Align2::LEFT_TOP,
+                format!("MEMBER {ordinal} OF {}", group.members.len()),
+                egui::FontId::proportional(11.0),
+                theme::TEXT_MUTED,
+            );
         }
-        // The editor can disappear when a canvas click selects another item.
-        // Finish its draft here even when it will not render a lost-focus frame.
-        if let Some((id, _)) = &self.interaction.group_name_edit {
-            let editing = self.interaction.selected_group_ids == [*id]
-                && ui
-                    .ctx()
-                    .memory(|m| m.has_focus(egui::Id::new(("group-name", *id))));
-            if !editing {
-                let (id, name) = self.interaction.group_name_edit.take().unwrap();
-                if let Some(mut group) = self.groups().iter().find(|g| g.id == id).cloned()
-                    && !name.trim().is_empty()
-                    && group.name != name.trim()
-                {
-                    group.name = name.trim().to_owned();
-                    let _ = self.edit_group(group);
-                }
-            }
-        }
-        let active = self
-            .interaction
-            .editing_group_id
-            .or_else(|| self.interaction.selected_group_ids.first().copied());
-        let cache = egui::Id::new("group-dock-last");
-        if let Some(id) = active {
-            ui.ctx().data_mut(|d| d.insert_temp(cache, id));
-        }
-        let entrance = ui.ctx().animate_bool_with_time(
-            egui::Id::new("group-dock-visible"),
-            active.is_some(),
-            theme::MOTION_SETTLE_SECONDS,
-        );
-        if entrance == 0.0 && active.is_none() {
-            return None;
-        }
-        let id = active.or_else(|| ui.ctx().data(|d| d.get_temp::<i64>(cache)))?;
-        let mut group = self.groups().iter().find(|g| g.id == id)?.clone();
-        let member = self.interaction.editing_group_id.and_then(|_| {
-            self.selected_placement_ids()
-                .into_iter()
-                .chain(self.selected_annotation_ids())
-                .find(|m| group.members.contains(m))
-        });
-        let mut changed = false;
-        let mut ungroup = false;
-        let mut member_action = None;
-        let popover_id = egui::Id::new(("group-align", id));
-        let mut align_open = ui
-            .ctx()
-            .data(|d| d.get_temp::<bool>(popover_id))
-            .unwrap_or(false);
-        let mut align_anchor = None;
-        let response = egui::Area::new(egui::Id::new("group-controls"))
-            .pivot(egui::Align2::CENTER_BOTTOM)
-            .fixed_pos(egui::pos2(
-                viewport.center().x,
-                viewport.bottom() - theme::SPACE_3 + (1.0 - entrance) * 52.0,
-            ))
-            .order(egui::Order::Foreground)
-            .show(ui.ctx(), |ui| {
-                ui.set_opacity(entrance);
-                if active.is_none() {
-                    ui.disable();
-                }
-                egui::Frame::new()
-                    .fill(theme::PALETTE_SURFACE)
-                    .corner_radius(theme::RADIUS_PANEL)
-                    .inner_margin(theme::SPACE_3)
-                    .show(ui, |ui| {
-                        ui.set_width((viewport.width() - theme::SPACE_6 * 2.0).max(160.0));
-                        egui::ScrollArea::horizontal()
-                            .max_height(theme::CONTROL_HEIGHT)
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.set_height(theme::CONTROL_HEIGHT);
-                                    ui.spacing_mut().item_spacing.x = theme::SPACE_2;
-                                    if let Some(m) = member {
-                                        let mode = group
-                                            .layout
-                                            .members
-                                            .get(&m)
-                                            .copied()
-                                            .unwrap_or_default();
-                                        ui.label(format!(
-                                            "{} / {}",
-                                            group.name,
-                                            group.members.iter().position(|&id| id == m).unwrap()
-                                                + 1
-                                        ));
-                                        for (a, label) in [(0, "W"), (1, "H")] {
-                                            ui.label(label);
-                                            if ui.selectable_label(!mode.fill[a], "Fixed").clicked()
-                                            {
-                                                member_action = Some((0, a, false));
-                                            }
-                                            if ui
-                                                .add_enabled(
-                                                    group.layout.fixed[a],
-                                                    egui::Button::new("Fill")
-                                                        .selected(mode.fill[a]),
-                                                )
-                                                .clicked()
-                                            {
-                                                member_action = Some((0, a, true));
-                                            }
-                                        }
-                                        if ui.selectable_label(mode.absolute, "Absolute").clicked()
-                                        {
-                                            member_action = Some((1, 0, false));
-                                        }
-                                        if ui.button("Earlier").clicked() {
-                                            member_action = Some((2, 0, false));
-                                        }
-                                        if ui.button("Later").clicked() {
-                                            member_action = Some((2, 0, true));
-                                        }
-                                        if ui.button("Detach").clicked() {
-                                            member_action = Some((3, 0, false));
-                                        }
-                                        ui.label(
-                                            egui::RichText::new("Esc leaves member editing")
-                                                .small()
-                                                .color(theme::TEXT_MUTED),
-                                        );
-                                    } else {
-                                        let mut name = self
-                                            .interaction
-                                            .group_name_edit
-                                            .as_ref()
-                                            .filter(|(g, _)| *g == id)
-                                            .map(|(_, name)| name.clone())
-                                            .unwrap_or_else(|| group.name.clone());
-                                        let edit = ui.add(
-                                            egui::TextEdit::singleline(&mut name)
-                                                .id(egui::Id::new(("group-name", id)))
-                                                .desired_width(110.0),
-                                        );
-                                        if edit.has_focus() {
-                                            self.interaction.group_name_edit =
-                                                Some((id, name.clone()));
-                                        }
-                                        if edit.lost_focus() {
-                                            if !name.trim().is_empty() && group.name != name.trim()
-                                            {
-                                                group.name = name.trim().into();
-                                                changed = true;
-                                            }
-                                            self.interaction.group_name_edit = None;
-                                        }
-                                        ui.label(
-                                            egui::RichText::new(group.members.len().to_string())
-                                                .color(theme::TEXT_MUTED),
-                                        );
-                                        for (flow, label) in [
-                                            (GroupFlow::Row, "Row"),
-                                            (GroupFlow::Column, "Column"),
-                                            (GroupFlow::Wrap, "Wrap"),
-                                            (GroupFlow::Free, "Free"),
-                                        ] {
-                                            let button = ui.add(
-                                                egui::Button::new(format!("   {label}"))
-                                                    .selected(group.flow == flow),
-                                            );
-                                            button.widget_info(|| {
-                                                egui::WidgetInfo::labeled(
-                                                    egui::WidgetType::Button,
-                                                    ui.is_enabled(),
-                                                    label,
-                                                )
-                                            });
-                                            let cells: &[(f32, f32)] = match flow {
-                                                GroupFlow::Row => {
-                                                    &[(0.0, 3.0), (3.0, 3.0), (6.0, 3.0)]
-                                                }
-                                                GroupFlow::Column => {
-                                                    &[(3.0, 0.0), (3.0, 3.0), (3.0, 6.0)]
-                                                }
-                                                GroupFlow::Wrap => &[
-                                                    (0.0, 0.0),
-                                                    (4.0, 0.0),
-                                                    (0.0, 5.0),
-                                                    (4.0, 5.0),
-                                                ],
-                                                GroupFlow::Free => {
-                                                    &[(0.0, 1.0), (5.0, 0.0), (3.0, 6.0)]
-                                                }
-                                            };
-                                            let origin = egui::pos2(
-                                                button.rect.left() + 4.0,
-                                                button.rect.center().y - 4.0,
-                                            );
-                                            for &(x, y) in cells {
-                                                ui.painter().rect_filled(
-                                                    egui::Rect::from_min_size(
-                                                        origin + egui::vec2(x, y),
-                                                        egui::vec2(2.0, 2.0),
-                                                    ),
-                                                    theme::RADIUS_NONE,
-                                                    if group.flow == flow {
-                                                        theme::ACCENT
-                                                    } else {
-                                                        theme::TEXT_MUTED
-                                                    },
-                                                );
-                                            }
-                                            if button.clicked() && group.flow != flow {
-                                                group.flow = flow;
-                                                changed = true;
-                                            }
-                                        }
-                                        ui.add_enabled_ui(group.flow != GroupFlow::Free, |ui| {
-                                            ui.label("Gap");
-                                            changed |= ui
-                                                .add_enabled(
-                                                    group.layout.auto == "Number",
-                                                    egui::DragValue::new(&mut group.gap).speed(1.0),
-                                                )
-                                                .changed();
-                                            if group.flow == GroupFlow::Wrap {
-                                                ui.label("Row gap");
-                                                changed |= ui
-                                                    .add(
-                                                        egui::DragValue::new(
-                                                            &mut group.layout.row_gap,
-                                                        )
-                                                        .speed(1.0),
-                                                    )
-                                                    .changed();
-                                            }
-                                        });
-                                        ui.label("Padding");
-                                        changed |= ui
-                                            .add(
-                                                egui::DragValue::new(&mut group.padding)
-                                                    .range(0.0..=10000.0)
-                                                    .speed(1.0),
-                                            )
-                                            .changed();
-                                        let align = ui.add_enabled(
-                                            group.flow != GroupFlow::Free,
-                                            egui::Button::new("Align    "),
-                                        );
-                                        align.widget_info(|| {
-                                            egui::WidgetInfo::labeled(
-                                                egui::WidgetType::Button,
-                                                ui.is_enabled(),
-                                                "Align",
-                                            )
-                                        });
-                                        for y in 0..3 {
-                                            for x in 0..3 {
-                                                ui.painter().circle_filled(
-                                                    egui::pos2(
-                                                        align.rect.right() - 13.0 + x as f32 * 3.0,
-                                                        align.rect.center().y - 3.0
-                                                            + y as f32 * 3.0,
-                                                    ),
-                                                    1.0,
-                                                    if group.layout.align == [x, y] {
-                                                        theme::ACCENT
-                                                    } else {
-                                                        theme::TEXT_MUTED
-                                                    },
-                                                );
-                                            }
-                                        }
-                                        if align.clicked() {
-                                            align_open = !align_open;
-                                        }
-                                        align_anchor = Some(align.rect.center_top());
-                                        for (a, label) in [(0, "W"), (1, "H")] {
-                                            ui.label(label);
-                                            if group.layout.fixed[a] {
-                                                let mut dimension =
-                                                    group.container.scaled_size()[a];
-                                                if ui
-                                                    .add(
-                                                        egui::DragValue::new(&mut dimension)
-                                                            .range(
-                                                                (group.padding * 2.0 + 1.0)
-                                                                    ..=100000.0,
-                                                            )
-                                                            .speed(1.0),
-                                                    )
-                                                    .changed()
-                                                {
-                                                    group.container.size[a] =
-                                                        dimension / group.container.scale;
-                                                    changed = true;
-                                                }
-                                            }
-                                            let permitted = a != 0 || group.flow != GroupFlow::Wrap;
-                                            if ui
-                                                .add_enabled(
-                                                    permitted,
-                                                    egui::Button::new("Hug")
-                                                        .selected(!group.layout.fixed[a]),
-                                                )
-                                                .clicked()
-                                            {
-                                                group.layout.fixed[a] = !group.layout.fixed[a];
-                                                changed = true;
-                                            }
-                                        }
-                                        changed |= ui
-                                            .toggle_value(&mut group.layout.clip, "Clip")
-                                            .changed();
-                                        ungroup = ui.button("Ungroup").clicked();
-                                    }
-                                });
-                            });
-                    });
-            });
-        if align_open
-            && member.is_none()
-            && let Some(anchor) = align_anchor
-        {
-            let popup = egui::Area::new(popover_id)
-                .pivot(egui::Align2::CENTER_BOTTOM)
-                .fixed_pos(anchor - egui::vec2(0.0, theme::SPACE_4))
-                .order(egui::Order::Foreground)
-                .show(ui.ctx(), |ui| {
-                    egui::Frame::new()
-                        .fill(theme::PALETTE_SURFACE)
-                        .inner_margin(theme::SPACE_3)
-                        .corner_radius(theme::RADIUS_PANEL)
-                        .show(ui, |ui| {
-                            for y in 0..3 {
-                                ui.horizontal(|ui| {
-                                    for x in 0..3 {
-                                        let primary = usize::from(group.flow == GroupFlow::Column);
-                                        let enabled = group.layout.auto == "Number"
-                                            || [x, y][primary] == group.layout.align[primary];
-                                        if ui
-                                            .add_enabled(
-                                                enabled,
-                                                egui::Button::new("•")
-                                                    .selected(group.layout.align == [x, y])
-                                                    .min_size(egui::vec2(28.0, 28.0)),
-                                            )
-                                            .on_hover_text(format!(
-                                                "Align {}, {}",
-                                                ["left", "center", "right"][x],
-                                                ["top", "center", "bottom"][y]
-                                            ))
-                                            .clicked()
-                                        {
-                                            group.layout.align = [x, y];
-                                            changed = true;
-                                        }
-                                    }
-                                });
-                            }
-                            for (value, label) in [
-                                ("Number", "Off"),
-                                ("Between", "Between"),
-                                ("Evenly", "Evenly"),
-                                ("Around", "Around"),
-                            ] {
-                                changed |= ui
-                                    .selectable_value(
-                                        &mut group.layout.auto,
-                                        value.to_owned(),
-                                        label,
-                                    )
-                                    .changed();
-                            }
-                        });
-                });
-            if ui.input(|i| {
-                i.key_pressed(egui::Key::Escape)
-                    || (i.pointer.any_pressed()
-                        && i.pointer.interact_pos().is_some_and(|p| {
-                            !popup.response.rect.contains(p) && !response.response.rect.contains(p)
-                        }))
-            }) {
-                align_open = false;
-            }
-        }
-        ui.ctx().data_mut(|d| d.insert_temp(popover_id, align_open));
-        if let (Some(m), Some((action, a, value))) = (member, member_action) {
-            let direction = if group.flow == GroupFlow::Column {
-                if value { "Down" } else { "Up" }
-            } else if value {
-                "Right"
-            } else {
-                "Left"
-            };
-            let slot =
-                self.group_insertion_slot(id, m, self.group_member_geometry(m).unwrap().center);
-            let _ = self.group_edit(|s| match action {
-                0 => s.setMemberMode(id, m, a, value),
-                1 => s.toggleAbsolute(id, m, slot),
-                2 => s.arrow(id, m, direction),
-                _ => s.detach(id, m),
-            });
-        }
-        if changed {
-            let _ = self.edit_group(group);
-        }
-        if ungroup {
-            self.ungroup_selected();
-        }
-
-        Some(response.response.rect)
     }
 }
 
@@ -1145,14 +755,7 @@ impl CanvasState {
         input: egui::Rect,
         overlay: Option<egui::Rect>,
     ) -> bool {
-        if !ui.ctx().egui_wants_keyboard_input()
-            && let Some(g) = self.interaction.editing_group_id
-            && let Some(m) = self
-                .selected_placement_ids()
-                .into_iter()
-                .chain(self.selected_annotation_ids())
-                .next()
-        {
+        if !ui.ctx().egui_wants_keyboard_input() && self.current_group_dock().member().is_some() {
             for (key, direction) in [
                 (egui::Key::ArrowLeft, "Left"),
                 (egui::Key::ArrowRight, "Right"),
@@ -1160,7 +763,7 @@ impl CanvasState {
                 (egui::Key::ArrowDown, "Down"),
             ] {
                 if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key)) {
-                    let _ = self.group_edit(|s| s.arrow(g, m, direction));
+                    let _ = self.group_edit(|s| s.pressKey(direction, 0, &[], 1.0));
                 }
             }
         }
@@ -1237,17 +840,12 @@ impl CanvasState {
                 })
                 && let GroupGestureKind::Resize(edges) = gesture.kind
             {
-                let id = gesture.group.id;
                 let _ = self.group_edit(|s| {
-                    for (a, edge) in edges.iter().enumerate() {
-                        if *edge != 0 {
-                            let result = s.hugAxis(id, a);
-                            if result != crate::grouping::Outcome::Ok {
-                                return result;
-                            }
-                        }
+                    if edges.iter().all(|&edge| edge != 0) {
+                        s.doubleClickCorner()
+                    } else {
+                        s.doubleClickHandle(usize::from(edges[1] != 0))
                     }
-                    crate::grouping::Outcome::Ok
                 });
                 self.interaction.group_gesture = None;
                 return true;
@@ -1395,17 +993,12 @@ impl CanvasState {
                         .button_double_clicked(egui::PointerButton::Primary)
                 })
             {
-                let g = group.id;
                 let _ = self.group_edit(|s| {
-                    for (a, edge) in edges.iter().enumerate() {
-                        if *edge != 0 {
-                            let result = s.hugAxis(g, a);
-                            if result != crate::grouping::Outcome::Ok {
-                                return result;
-                            }
-                        }
+                    if edges.iter().all(|&edge| edge != 0) {
+                        s.doubleClickCorner()
+                    } else {
+                        s.doubleClickHandle(usize::from(edges[1] != 0))
                     }
-                    crate::grouping::Outcome::Ok
                 });
                 return true;
             }
@@ -1424,6 +1017,9 @@ impl CanvasState {
             if (resize || scale || body)
                 && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
             {
+                if scale && self.grouping_state().uniformScale() != crate::grouping::Outcome::Ok {
+                    return true;
+                }
                 let group = group.clone();
                 let members = group
                     .members

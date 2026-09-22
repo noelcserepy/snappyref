@@ -38,7 +38,7 @@ pub struct Group {
     pub padding: f32,
     pub align: [usize; 2],
     pub clip: bool,
-    pub name: Id,
+    pub name: String,
 }
 impl Group {
     pub fn new(name: Id, width: f32, gap: f32) -> Self {
@@ -53,7 +53,7 @@ impl Group {
             padding: gap,
             align: [0, 0],
             clip: false,
-            name,
+            name: name.to_string(),
         }
     }
     pub fn primary(&self) -> usize {
@@ -177,7 +177,11 @@ impl Default for Effects {
         }
     }
 }
+mod dock;
+pub use dock::{Control, Dock, Panel};
+
 pub struct State<G> {
+    pub dock: Dock,
     pub board: Board,
     pub outcome: Outcome,
     pub event: &'static str,
@@ -192,6 +196,7 @@ impl<G: Geometry> State<G> {
     pub fn init(board: Board, geometry: G, default_gap: f32) -> Self {
         Self {
             board,
+            dock: Dock::default(),
             geometry,
             default_gap,
             outcome: Outcome::Ok,
@@ -199,7 +204,48 @@ impl<G: Geometry> State<G> {
             effects: Effects::default(),
         }
     }
-    fn commit(&mut self, mut b: Board, reason: &'static str, op: &'static str) -> Outcome {
+    fn commit(&mut self, b: Board, reason: &'static str, op: &'static str) -> Outcome {
+        let mut dock = self.dock.clone();
+        if reason.is_empty() {
+            let added: Vec<_> = b
+                .groups
+                .keys()
+                .filter(|g| !self.board.groups.contains_key(g))
+                .copied()
+                .collect();
+            if op == "create" && added.len() == 1 {
+                dock = Dock {
+                    panel: Panel::GroupDock {
+                        group: added[0],
+                        align_open: false,
+                    },
+                    text_focus: false,
+                };
+            } else if let Panel::MemberDock { group, .. } = dock.panel {
+                let added: Vec<_> = b.live.difference(&self.board.live).copied().collect();
+                if ["paste", "duplicate"].contains(&op)
+                    && added.len() == 1
+                    && b.owner(added[0]) == Some(group)
+                {
+                    dock = Dock {
+                        panel: Panel::MemberDock {
+                            group,
+                            member: added[0],
+                        },
+                        text_focus: false,
+                    };
+                }
+            }
+        }
+        self.apply(b, reason, op, dock)
+    }
+    fn apply(
+        &mut self,
+        mut b: Board,
+        reason: &'static str,
+        op: &'static str,
+        dock: Dock,
+    ) -> Outcome {
         if !reason.is_empty() {
             b = self.board.clone();
         } else {
@@ -241,6 +287,9 @@ impl<G: Geometry> State<G> {
                     new.len() <= old.order.len() || new.starts_with(&old.order)
                 }),
         };
+        if reason.is_empty() {
+            self.dock = dock.normalized(&b);
+        }
         self.board = b;
         self.event = op;
         self.outcome = if reason.is_empty() {
@@ -330,7 +379,7 @@ impl<G: Geometry> State<G> {
     pub fn create(&mut self, g: Id, selection: &[Id], width: f32) -> Outcome {
         let reason = if self.board.groups.contains_key(&g) {
             "group_exists"
-        } else if width < 1.0 {
+        } else if !width.is_finite() || width <= 0.0 {
             "invalid_value"
         } else {
             ""
@@ -450,34 +499,12 @@ impl<G: Geometry> State<G> {
     pub fn arrow(&mut self, g: Id, m: Id, direction: &str) -> Outcome {
         let reason = self.member_reason(g, m);
         let mut b = self.board.clone();
-        if reason.is_empty() && !b.members[&m].absolute && b.groups[&g].flow != "Free" {
-            let group = &b.groups[&g];
-            let xs = b.flowing(g);
-            let i = xs.iter().position(|&x| x == m).unwrap();
-            let horizontal = ["Left", "Right"].contains(&direction);
-            let delta: i64 = if ["Left", "Up"].contains(&direction) {
-                -1
-            } else {
-                1
-            };
-            let target = if group.flow == "Wrap" && !horizontal {
-                let rows = b.rows(g);
-                let r = rows.iter().position(|row| row.contains(&m)).unwrap();
-                let column = rows[r].iter().position(|&x| x == m).unwrap();
-                rows.get((r as i64 + delta) as usize)
-                    .and_then(|row| row.get(column))
-                    .copied()
-            } else if (group.flow == "Column") != horizontal {
-                xs.get((i as i64 + delta) as usize).copied()
-            } else {
-                None
-            };
-            if let Some(target) = target {
-                let slot = group.order.iter().position(|&x| x == target).unwrap();
-                let order = &mut b.groups.get_mut(&g).unwrap().order;
-                order.retain(|&x| x != m);
-                insert(order, m, slot as i64);
-            }
+        if reason.is_empty()
+            && let Some(slot) = self.arrowTarget(g, m, direction)
+        {
+            let order = &mut b.groups.get_mut(&g).unwrap().order;
+            order.retain(|&x| x != m);
+            insert(order, m, slot as i64);
         }
         self.commit(b, reason, "arrow")
     }

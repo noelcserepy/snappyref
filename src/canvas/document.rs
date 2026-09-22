@@ -682,11 +682,6 @@ impl CanvasState {
         self.move_selected_canvas_items(StackOrderMove::Back)
     }
 
-    pub fn delete_selected_placements(&mut self) -> Vec<i64> {
-        let selected_ids = self.interaction.selected_placement_ids.clone();
-        self.delete_placements(&selected_ids)
-    }
-
     pub fn delete_selected_annotations(&mut self) -> Vec<i64> {
         let selected_ids = self.interaction.selected_annotation_ids.clone();
         if selected_ids.is_empty() {
