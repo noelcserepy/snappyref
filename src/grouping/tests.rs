@@ -119,7 +119,7 @@ fn observation(s: &State<QuintGeometry>) -> Value {
 fn replay_every_grouping_trace() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("specs/traces");
     let mut files: Vec<_> = std::fs::read_dir(dir)
-        .expect("Generate traces with specs/check-grouping.sh")
+        .expect("Generate traces with quint run --mbt into specs/traces (implement-quint-spec)")
         .map(|e| e.unwrap().path())
         .filter(|p| p.to_string_lossy().ends_with(".itf.json"))
         .collect();

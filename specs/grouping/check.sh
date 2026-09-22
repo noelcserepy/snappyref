@@ -1,21 +1,27 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")/../.."
+# Check the plan. Implementation trace replay belongs to implement-quint-spec.
 quint typecheck specs/grouping/spec.qnt
 quint test specs/grouping/spec.qnt
 python3 - <<'PYTHON'
 import re
 import subprocess
 from pathlib import Path
+
 source = Path("specs/grouping/spec.qnt").read_text()
-subprocess.run([
+witnesses = re.findall(r"^\s*val (wit_\w+)", source, re.MULTILINE)
+result = subprocess.run([
     "quint", "run", "specs/grouping/spec.qnt", "--max-samples=10000",
     "--max-steps=60", "--seed=0x1", "--verbosity=1", "--invariants",
     *re.findall(r"^\s*val (inv_\w+)", source, re.MULTILINE), "--witnesses",
-    *re.findall(r"^\s*val (wit_\w+)", source, re.MULTILINE),
-], check=True)
+    *witnesses,
+], text=True, capture_output=True)
+print(result.stdout, end="")
+print(result.stderr, end="")
+result.check_returncode()
+observed = dict(re.findall(r"(wit_\w+) was witnessed in (\d+) trace", result.stdout))
+missing = [name for name in witnesses if int(observed.get(name, 0)) == 0]
+if missing:
+    raise SystemExit("Unreached coverage cases: " + ", ".join(missing))
 PYTHON
-mkdir -p specs/traces
-quint run specs/grouping/spec.qnt --mbt --n-traces=200 --max-samples=200 --max-steps=20 --seed=0x1 --out-itf=specs/traces/short.itf.json --verbosity=0
-quint run specs/grouping/spec.qnt --mbt --n-traces=50 --max-samples=50 --max-steps=60 --seed=0x2 --out-itf=specs/traces/long.itf.json --verbosity=0
-cargo test --locked grouping::tests -- --nocapture

@@ -1,13 +1,14 @@
-// SnappyRef grouping
-// A board has flat, ordered groups of images and textboxes. Edits atomically change
-// membership and valid layout configuration; empty groups remain destinations.
-// Two group identities and three member identities cover transfer, row breaks, and insertion.
-// Integer extents 0..3 represent usable content sizes, not pixels; padding is outside them.
-// Geometry observations saturate at 3; stored-size observations round fractional Fill down.
-// Row partition and rational leftover shares are checked; positions, image ratios, Free bounds,
-// rotation, alignment, Auto distribution and clipping paint are not geometric simulations.
-// UI, storage, history, whole-group transforms and whole-group copy are outside this model.
-// No time is involved. Decisions 16..20 in docs/grouping-target-shape.md settle the interactions noted below.
+// SnappyRef grouping and contextual bottom dock
+// Flat, ordered groups contain images and textboxes; edits preserve valid membership and sizing.
+// The dock shows one selected group or edited member, with state-dependent controls, focus,
+// keyboard routing and one alignment popover. Empty groups remain destinations.
+// Two group identities and three item identities exercise transfer, insertion and row breaks.
+// Integer usable extents 0..3 saturate at 3 and floor fractional Fill; they are not pixel geometry.
+// Exact positions, aspect ratios, rotated/Free bounds, alignment distribution and clipping paint
+// belong to geometry. Appearance, text and local artboard citations live in specs/grouping/ui.md.
+// Full canvas selection, text drafts/parsing, picker internals, storage, history and clipboard
+// encoding stay outside this model. Whole-selection copy/delete/duplicate and scale are requests
+// to their existing owners. No time or animation is modeled.
 module grouping {
   // ---- parameters ----
   pure val GROUPS = Set(0, 1)
@@ -26,11 +27,18 @@ module grouping {
   type Group = { order: List[int], flow: str, fixed: Set[int], size: int -> int,
                  gap: str, number: int, rowGap: int, padding: int,
                  align: int -> int, clip: bool, name: int }
+  type Panel = Hidden | GroupDock({ group: int, alignOpen: bool }) | MemberDock({ group: int, member: int })
+  type Dock = { panel: Panel, textFocus: bool }
+  type Control = Name(int) | Flow(str) | Gap(int) | RowGap(int) | Padding(int)
+    | Align((int, int)) | Auto(str) | Dimension((int, int)) | Hug(int) | Clip | Ungroup
+    | MemberMode((int, bool)) | Absolute(int) | Earlier | Later | Detach
   type Board = { groups: int -> Group, live: Set[int], members: int -> Member }
 
   // ---- state ----
   /// The board owns membership lists; member records never duplicate their owner.
   var board: Board
+  /// One contextual dock, with the popover owned by its group mode. Text focus captures shortcuts.
+  var dock: Dock
   /// Every attempted operation succeeds or rejects without changing the board.
   var outcome: Outcome
   /// Last operation name is observation metadata for operation coverage.
@@ -42,8 +50,8 @@ module grouping {
   /// Input domains are the finite wrappers below: known board identity tokens, valid axes,
   /// gap/flow/arrow enums, and finite integer observations. Identity exhaustion is sample-only.
   /// Missing group/item/member, reused identities, non-positive edge size, Wrap Hug width,
-  /// and Fill on Hug have explicit refusal outcomes. There are no disabled operations.
-  /// Product parsing of non-finite floats, invalid enum tokens, names and cross-board ids is outside scope.
+  /// and Fill on Hug have explicit refusal outcomes. Operations report refusals even when invoked through a dimmed control.
+  /// Product parsing of non-finite floats, invalid enum tokens and cross-board ids is outside scope.
   /// Stored dimensions are observations, not a second source of real layout geometry.
   /// Image aspect-ratio fitting, rotated bounds, Free positions, absolute offsets and Hug envelopes
   /// must come from the implementation's geometry adapter; the model checks the mode/order decisions.
@@ -67,7 +75,7 @@ module grouping {
     b.groups.get(g).order.select(m => not(b.members.get(m).absolute))
   pure def base(b: Board, m: int, a: int): int =
     if (b.members.get(m).fill.contains(a)) 0 else b.members.get(m).size.get(a)
-  /// Decision 17: Wrap forms rows using zero minimum width for Fill members,
+  /// Wrap forms rows using zero minimum width for Fill members,
   /// then divides each row's leftover space.
   pure def rows(b: Board, g: int): List[List[int]] = {
     val group = b.groups.get(g)
@@ -136,10 +144,10 @@ module grouping {
   pure def only(s: Set[int]): int = s.fold(-1, (_, x) => x)
   pure def freeze(b: Board, g: int, m: int): Member =
     b.members.get(m).with("size", AXES.mapBy(a => rendered(b, g, m, a)))
-  /// Decision 18: transfer preserves absolute and sizing intent; incompatible Fill axes
+  /// transfer preserves absolute and sizing intent; incompatible Fill axes
   /// become Fixed at their source size when the destination hugs. Loose intake starts Fixed.
   /// Incoming fit affects only a newly arriving non-absolute member with both axes Fixed.
-  /// Decision 19: fit only to a Fixed width, since a Hug width should absorb its content;
+  /// fit only to a Fixed width, since a Hug width should absorb its content;
   /// a mixed Fill/Fixed image gets its size from layout, not a second fit pass. Free never fits intake.
   pure def attached(b: Board, g: int, m: int, slot: int): Board = {
     if (hasMember(b, g, m)) b
@@ -172,7 +180,7 @@ module grouping {
       else member
     }) }
   }
-  /// Wrap width cannot become Hug. Decision 20: refuse that edit and Fill on a Hug axis,
+  /// Wrap width cannot become Hug; refuse that edit and Fill on a Hug axis,
   /// rather than silently change flow or container mode. Free keeps sizing validity but suspends Auto.
   pure def axisReason(b: Board, g: int, a: int, fixed: bool, dimension: int): str =
     if (not(hasGroup(b, g))) "group_missing"
@@ -182,17 +190,121 @@ module grouping {
   pure def memberReason(b: Board, g: int, m: int): str =
     if (not(hasGroup(b, g))) "group_missing"
     else if (not(hasMember(b, g, m))) "member_missing" else ""
+  /// Resolve the directional slot once. Minus one means no neighboring flowing member.
+  pure def arrowTarget(b: Board, g: int, m: int, direction: str): int = {
+      val group = b.groups.get(g)
+      val xs = flowing(b, g)
+      val i = index(xs, m)
+      val horizontal = direction == "Left" or direction == "Right"
+      val delta = if (direction == "Left" or direction == "Up") -1 else 1
+      val rs = rows(b, g)
+      val r = rs.indices().fold(0, (n, j) => if (hasItem(rs[j], m)) j else n)
+      val adjacent = r + delta
+      val target = if (group.flow == "Wrap" and not(horizontal) and rs.length() > 0) {
+        val column = index(rs[r], m)
+        if (adjacent >= 0 and adjacent < rs.length()) {
+          if (column < rs[adjacent].length()) index(group.order, rs[adjacent][column]) else -1
+        } else -1
+      } else if ((group.flow == "Column") != horizontal and i + delta >= 0 and i + delta < xs.length())
+        index(group.order, xs[i + delta]) else -1
+      if (b.members.get(m).absolute or group.flow == "Free") -1 else target
+  }
+  // ---- dock observations and controls ----
+  /// The artboards show exactly one selected group or one edited member.
+  /// Mixed/multiple selections use Hidden, like no selection; bulk editing is not implied.
+  val groupDockShown = match dock.panel { | GroupDock(_) => true | _ => false }
+  val memberDockShown = match dock.panel { | MemberDock(_) => true | _ => false }
+  val dockGroup = match dock.panel { | GroupDock(p) => p.group | MemberDock(p) => p.group | _ => -1 }
+  val dockMember = match dock.panel { | MemberDock(p) => p.member | _ => -1 }
+  val alignShown = match dock.panel { | GroupDock(p) => p.alignOpen | _ => false }
+  /// Display values are derived, never a second copy of membership or name state.
+  val dockCount = if (dockGroup == -1) 0 else board.groups.get(dockGroup).order.length()
+  val dockName = if (dockGroup == -1) -1 else board.groups.get(dockGroup).name
+  val dockMemberNumber = if (memberDockShown) index(board.groups.get(dockGroup).order, dockMember) + 1 else 0
+  /// Display Hug versus the observed current size; actual pixel values come from geometry.
+  def axisIsHug(a: int): bool = dockGroup != -1 and not(board.groups.get(dockGroup).fixed.contains(a))
+  def memberIsFill(a: int): bool = memberDockShown and board.members.get(dockMember).fill.contains(a)
+  /// Row gap is present only in Wrap. Align options exist only while the popover is open.
+  def controlShown(c: Control): bool = match c {
+    | MemberMode(_) => memberDockShown
+    | Absolute(_) => memberDockShown
+    | Earlier => memberDockShown
+    | Later => memberDockShown
+    | Detach => memberDockShown
+    | Align(_) => alignShown
+    | Auto(_) => alignShown
+    | RowGap(_) => groupDockShown and board.groups.get(dockGroup).flow == "Wrap"
+    | _ => groupDockShown
+  }
+  /// Free/Absolute members retain their settings but cannot edit sizing/order.
+  val memberLayoutEnabled = if (memberDockShown)
+    board.groups.get(dockGroup).flow != "Free" and not(board.members.get(dockMember).absolute) else false
+  /// The alignment button is dim in Free; changing to Free closes the popover.
+  val alignEnabled = groupDockShown and board.groups.get(dockGroup).flow != "Free"
+  /// Design enablement is stated independently from operation rejection below.
+  /// Numeric gap dims in Auto; W/H numeric entry sets Fixed; Hug is a toggle.
+  /// Auto exposes only the counter-axis cells on the saved primary coordinate.
+  def controlEnabled(c: Control): bool = if (not(controlShown(c))) false else match c {
+    | Gap(_) => board.groups.get(dockGroup).flow != "Free" and board.groups.get(dockGroup).gap == "Number"
+    | Align(xy) => board.groups.get(dockGroup).flow != "Free" and
+        (board.groups.get(dockGroup).gap == "Number" or xy._1 == board.groups.get(dockGroup).align.get(0) and board.groups.get(dockGroup).flow != "Column" or
+          xy._2 == board.groups.get(dockGroup).align.get(1) and board.groups.get(dockGroup).flow == "Column")
+    | Auto(_) => board.groups.get(dockGroup).flow != "Free"
+    | Hug(a) => not(a == 0 and board.groups.get(dockGroup).flow == "Wrap")
+    | MemberMode(af) => memberLayoutEnabled and (not(af._2) or board.groups.get(dockGroup).fixed.contains(af._1))
+    | Earlier => memberLayoutEnabled and index(flowing(board, dockGroup), dockMember) > 0
+    | Later => memberLayoutEnabled and index(flowing(board, dockGroup), dockMember) + 1 < flowing(board, dockGroup).length()
+    | _ => true
+  }
+  /// Actual control admission, including payload validity. Valid enum/axis domains come from controls.
+  /// Dimmed/hidden controls reject; they never silently change a different setting to enable themselves.
+  /// Existing Auto selection intentionally fixes its primary axis, as already decided for setGap.
+  def controlReason(c: Control): str = {
+    val memberControl = match c {
+      | MemberMode(_) => true | Absolute(_) => true | Earlier => true | Later => true | Detach => true | _ => false
+    }
+    if ((memberControl and not(memberDockShown)) or (not(memberControl) and not(groupDockShown))) "dock_unavailable"
+    else {
+      val g = board.groups.get(dockGroup)
+      match c {
+        | Name(n) => if (n < 0) "invalid_value" else ""
+        | Gap(_) => if (g.flow == "Free" or g.gap != "Number") "control_inactive" else ""
+        | RowGap(_) => if (g.flow != "Wrap") "control_inactive" else ""
+        | Padding(n) => if (n < 0) "invalid_value" else ""
+        | Align(xy) => if (not(alignShown)) "popover_closed" else if (g.flow == "Free") "control_inactive"
+            else if (g.gap != "Number" and (if (primary(g) == 0) xy._1 else xy._2) != g.align.get(primary(g))) "primary_alignment_inactive" else ""
+        | Auto(_) => if (not(alignShown)) "popover_closed" else if (g.flow == "Free") "control_inactive" else ""
+        | Dimension(an) => axisReason(board, dockGroup, an._1, true, an._2)
+        | Hug(a) => axisReason(board, dockGroup, a, not(g.fixed.contains(a)), 1)
+        | MemberMode(af) => if (g.flow == "Free" or board.members.get(dockMember).absolute) "control_inactive"
+            else if (af._2 and not(g.fixed.contains(af._1))) "fixed_axis_required" else ""
+        | Earlier => if (arrowTarget(board, dockGroup, dockMember, if (g.flow == "Column") "Up" else "Left") < 0) "no_neighbor" else ""
+        | Later => if (arrowTarget(board, dockGroup, dockMember, if (g.flow == "Column") "Down" else "Right") < 0) "no_neighbor" else ""
+        | _ => ""
+      }
+    }
+  }
+  /// All control families, all discrete options. Small numbers stand for valid submitted values.
+  pure val CONTROLS = Set(Name(0), Name(1), Gap(-1), Gap(1), RowGap(-1), RowGap(1), Padding(0), Padding(1),
+      Clip, Ungroup, Earlier, Later, Detach, Absolute(0), Absolute(2))
+    .union(FLOWS.map(f => Flow(f))).union(GAPS.map(g => Auto(g)))
+    .union(AXES.map(a => Hug(a)))
+    .union(AXES.map(a => Set(Dimension((a, 1)), Dimension((a, 3)), MemberMode((a, false)), MemberMode((a, true)))).flatten())
+    .union(0.to(2).map(x => 0.to(2).map(y => Align((x, y)))).flatten())
+
   /// Compare the actual committed board to the previous board. These are transition properties,
   /// not independent stored domain state. A production replay adapter computes the same evidence.
-  action commit(result: Board, reason: str, op: str): bool = {
+  action apply(result: Board, reason: str, op: str, nextDock: Dock): bool = {
     val applied = if (reason == "") settled(result) else board
+    val appliedDock = if (reason == "") normalizeDock(applied, nextDock) else dock
     val intake = Set("add", "dragIn", "paste").contains(op)
     all {
       board' = applied,
+      dock' = appliedDock,
       outcome' = if (reason == "") Ok else Rejected(reason),
       event' = op,
       effects' = {
-        refusal: reason == "" or applied == board,
+        refusal: reason == "" or (applied == board and appliedDock == dock),
         incoming: not(intake) or board.live.forall(m =>
           owners(board, m) == owners(applied, m) implies board.members.get(m) == applied.members.get(m)),
         empty: not(Set("add", "dragIn", "detach", "deleteMember").contains(op)) or
@@ -207,6 +319,35 @@ module grouping {
         }),
       },
     }
+  }
+
+  /// After Detach, the canvas keeps the loose item selected and the dock hides. After Delete,
+  /// the dock returns to the retained group. Transfer keeps editing the member in its destination.
+  pure def normalizeDock(b: Board, d: Dock): Dock = match d.panel {
+    | Hidden => d
+    | GroupDock(p) => if (hasGroup(b, p.group))
+        d.with("panel", GroupDock({ group: p.group, alignOpen: p.alignOpen and b.groups.get(p.group).flow != "Free" }))
+      else { panel: Hidden, textFocus: false }
+    | MemberDock(p) => if (hasMember(b, p.group, p.member)) d
+      else if (owners(b, p.member).size() > 0)
+        { panel: MemberDock({ group: owners(b, p.member).only(), member: p.member }), textFocus: false }
+      else if (not(b.live.contains(p.member)) and hasGroup(b, p.group))
+        { panel: GroupDock({ group: p.group, alignOpen: false }), textFocus: false }
+      else { panel: Hidden, textFocus: false }
+  }
+  /// All board operations maintain a valid dock. Create selects its new group;
+  /// member paste/duplicate selects the new member; group paste keeps the group selected.
+  action commit(result: Board, reason: str, op: str): bool = {
+    val addedGroups = result.groups.keys().exclude(board.groups.keys())
+    val addedItems = result.live.exclude(board.live)
+    val updatedDock = if (op == "create" and addedGroups.size() == 1)
+      { panel: GroupDock({ group: addedGroups.only(), alignOpen: false }), textFocus: false }
+      else match dock.panel {
+        | MemberDock(p) => if (Set("paste", "duplicate").contains(op) and addedItems.size() == 1 and hasMember(result, p.group, addedItems.only()))
+            { panel: MemberDock({ group: p.group, member: addedItems.only() }), textFocus: false } else dock
+        | _ => dock
+      }
+    apply(result, reason, op, if (reason == "") updatedDock else dock)
   }
 
   // ---- operations ----
@@ -285,20 +426,7 @@ module grouping {
     val reason = memberReason(board, g, m)
     val result = if (reason != "") board else {
       val group = board.groups.get(g)
-      val xs = flowing(board, g)
-      val i = index(xs, m)
-      val horizontal = direction == "Left" or direction == "Right"
-      val delta = if (direction == "Left" or direction == "Up") -1 else 1
-      val rs = rows(board, g)
-      val r = rs.indices().fold(0, (n, j) => if (hasItem(rs[j], m)) j else n)
-      val adjacent = r + delta
-      val target = if (group.flow == "Wrap" and not(horizontal) and rs.length() > 0) {
-        val column = index(rs[r], m)
-        if (adjacent >= 0 and adjacent < rs.length()) {
-          if (column < rs[adjacent].length()) index(group.order, rs[adjacent][column]) else -1
-        } else -1
-      } else if ((group.flow == "Column") != horizontal and i + delta >= 0 and i + delta < xs.length())
-        index(group.order, xs[i + delta]) else -1
+      val target = arrowTarget(board, g, m, direction)
       if (board.members.get(m).absolute or group.flow == "Free" or target == -1) board
       else board.with("groups", board.groups.set(g, group.with("order", insert(group.order.select(x => x != m), m, target))))
     }
@@ -527,16 +655,151 @@ module grouping {
     deleteMember(m)
   }
 
+  // ---- dock operations ----
+  /// Single group selection, including an ordinary click on one of its members, shows its dock.
+  /// Switching selection always closes the prior popover and discards field focus.
+  action selectGroup(g: int): bool = apply(board, if (hasGroup(board, g)) "" else "group_missing", "selectGroup",
+    if (hasGroup(board, g)) { panel: GroupDock({ group: g, alignOpen: false }), textFocus: false } else dock)
+  /// Double-click or primary-modifier click enters member editing directly, replacing group controls.
+  action editMember(m: int): bool = {
+    val own = owners(board, m)
+    apply(board, if (own.size() == 0) "member_missing" else "", "editMember",
+      if (own.size() > 0) { panel: MemberDock({ group: own.only(), member: m }), textFocus: false } else dock)
+  }
+  /// Empty-canvas, loose-item and mixed/multiple selection hide the contextual dock.
+  /// Selection identities outside the dock belong to the canvas selection owner.
+  action clearSelection = apply(board, "", "clearSelection", { panel: Hidden, textFocus: false })
+  /// Toggle the sole second level. Choices keep it open; Esc closes it before selection.
+  action toggleAlign = if (alignEnabled)
+    apply(board, "", "toggleAlign", { panel: GroupDock({ group: dockGroup, alignOpen: not(alignShown) }), textFocus: false })
+    else commit(board, "control_inactive", "toggleAlign")
+  /// A pointer press outside both popover and trigger closes the popover
+  /// and still reaches its target. The trigger only calls toggleAlign; it never also dismisses.
+  /// The host then performs the target operation, including selection change. Closed is a no-op.
+  action dismissAlign = apply(board, "", "dismissAlign", if (groupDockShown)
+    dock.with("panel", GroupDock({ group: dockGroup, alignOpen: false })) else dock)
+  /// Focus ownership only; text drafts, caret movement and parsing stay in the widget.
+  /// Enter/blur submits a valid draft via useDock and releases focus; Esc discards it without a board edit.
+  action focusText(active: bool): bool = apply(board, "", "focusText", dock.with("textFocus", active))
+  /// Esc consumes one level: text draft, align popover, member editing, group selection.
+  /// At Hidden it is a no-op here. A separate palette owns Escape while that palette has focus.
+  action escape = apply(board, "", "escape", if (dock.textFocus) dock.with("textFocus", false)
+    else if (alignShown) dock.with("panel", GroupDock({ group: dockGroup, alignOpen: false }))
+    else if (memberDockShown) { panel: GroupDock({ group: dockGroup, alignOpen: false }), textFocus: false }
+    else { panel: Hidden, textFocus: false })
+  /// The one control-to-operation mapping. Unmentioned fields retain their current values.
+  /// W/H edits fix that axis; clicking an active Hug toggle freezes its current size.
+  action useDock(c: Control): bool = {
+    val reason = controlReason(c)
+    if (reason != "") commit(board, reason, "useDock") else {
+      val g = dockGroup
+      val member = dockMember
+      val config = board.groups.get(g)
+      match c {
+        | Name(n) => commit(board.with("groups", board.groups.set(g, config.with("name", n))), "", "rename")
+        | Flow(f) => setFlow(g, f)
+        | Gap(n) => setGap(g, "Number", n)
+        | RowGap(n) => configure(g, config.clip, config.align.get(0), config.align.get(1), config.padding, n)
+        | Padding(n) => configure(g, config.clip, config.align.get(0), config.align.get(1), n, config.rowGap)
+        | Align(xy) => configure(g, config.clip, xy._1, xy._2, config.padding, config.rowGap)
+        | Auto(mode) => setGap(g, mode, config.number)
+        | Dimension(an) => resizeEdge(g, an._1, an._2)
+        | Hug(a) => setAxisMode(g, a, not(config.fixed.contains(a)))
+        | Clip => configure(g, not(config.clip), config.align.get(0), config.align.get(1), config.padding, config.rowGap)
+        | Ungroup => ungroup(g)
+        | MemberMode(af) => setMemberMode(g, member, af._1, af._2)
+        | Absolute(slot) => toggleAbsolute(g, member, slot)
+        | Earlier => arrow(g, member, if (config.flow == "Column") "Up" else "Left")
+        | Later => arrow(g, member, if (config.flow == "Column") "Down" else "Right")
+        | Detach => detach(g, member)
+      }
+    }
+  }
+  /// Arrows operate on the edited flowing member only. Unavailable directions reject,
+  /// including the ends, a missing Wrap column, Free, Absolute and the unused axis in Row/Column.
+  def arrowEnabled(direction: str): bool = if (not(memberLayoutEnabled) or dock.textFocus) false
+    else arrowTarget(board, dockGroup, dockMember, direction) >= 0
+  /// Keyboard aliases resolve the same group/member arguments as the dock.
+  /// Primary is Cmd on macOS, Ctrl on Windows. identity is a fresh group/item id where required;
+  /// selection and width are canvas/clipboard inputs, not an implicit remembered destination.
+  /// G requests the existing separate palette. Whole-group duplicate/copy/delete and uniform scale
+  /// are delegated commands; this model makes no claim about their geometry or clipboard encoding.
+  action pressKey(key: str, identity: int, selection: List[int], width: int): bool = {
+    if (key == "Escape") escape
+    else if (dock.textFocus) commit(board, "text_owns_key", "pressKey")
+    else if (Set("Left", "Right", "Up", "Down").contains(key)) {
+      if (arrowEnabled(key)) arrow(dockGroup, dockMember, key) else commit(board, "no_neighbor", "pressKey")
+    } else if (key == "Primary+G") create(identity, selection, width)
+    else if (key == "Primary+Shift+G") useDock(Ungroup)
+    else if (key == "G") commit(board, "", "requestAddPalette")
+    else if (key == "Primary+V") paste(dockGroup, dockMember, identity, width)
+    else if (key == "Primary+D" and memberDockShown) duplicate(dockMember, identity)
+    else if (key == "Delete" and memberDockShown) deleteMember(dockMember)
+    else if (key == "Primary+D") commit(board, "", "requestDuplicateSelection")
+    else if (key == "Primary+C") commit(board, "", "requestCopySelection")
+    else if (key == "Delete") commit(board, "", "requestDeleteSelection")
+    else commit(board, "unhandled_key", "pressKey")
+  }
+  /// A double-click on an edge handle hugs that axis; Wrap width refuses.
+  action doubleClickHandle(a: int): bool = if (groupDockShown) hugAxis(dockGroup, a)
+    else commit(board, "dock_unavailable", "doubleClickHandle")
+  /// A corner double-click hugs both legal axes, leaving Wrap width Fixed.
+  action doubleClickCorner = if (not(groupDockShown)) commit(board, "dock_unavailable", "hugCorner") else {
+    val g = dockGroup
+    val widthHugged = if (board.groups.get(g).flow == "Wrap") board
+      else axisChanged(board, g, 0, false, measured(board, g, 0))
+    commit(axisChanged(widthHugged, g, 1, false, measured(widthHugged, g, 1)), "", "hugCorner")
+  }
+  /// Outside drops detach flowing/Free non-absolute members. Absolute members
+  /// stay attached and move manually, including outside; explicit Detach still works for them.
+  action dropMember(g: int, m: int, slot: int, outside: bool): bool = {
+    val reason = memberReason(board, g, m)
+    if (reason != "") commit(board, reason, "dropMember")
+    else if (outside and not(board.members.get(m).absolute)) detach(g, m)
+    else reorder(g, m, slot)
+  }
+  /// Model the geometric inside/outside decision rather than continuous pointer coordinates.
+  action dropMember_any = {
+    nondet g = oneOf(GROUPS)
+    nondet m = oneOf(ITEMS)
+    nondet slot = oneOf(0.to(3))
+    nondet outside = oneOf(Set(false, true))
+    dropMember(g, m, slot, outside)
+  }
+  /// Primary+Alt drag delegates the existing whole-group scale; ordinary edge drag is resizeEdge.
+  action uniformScale = if (groupDockShown) commit(board, "", "requestUniformScale")
+    else commit(board, "dock_unavailable", "uniformScale")
+  /// Finite group-selection attempts include missing groups.
+  action selectGroup_any = { nondet g = oneOf(GROUPS) selectGroup(g) }
+  /// Finite double-click/deep-select attempts include loose members.
+  action editMember_any = { nondet m = oneOf(ITEMS) editMember(m) }
+  /// Model focus ownership, including text editing outside this dock.
+  action focusText_any = { nondet active = oneOf(Set(false, true)) focusText(active) }
+  /// Every artboard control and option, plus invalid submitted name/padding/size drafts.
+  action useDock_any = { nondet c = oneOf(CONTROLS.union(Set(Name(-1), Padding(-1), Dimension((0, 0))))) useDock(c) }
+  /// Explore recognized keys and one unhandled key without assigning it new behavior.
+  action pressKey_any = {
+    nondet key = oneOf(Set("Escape", "Left", "Right", "Up", "Down", "Primary+G", "Primary+Shift+G", "G", "Primary+V", "Primary+D", "Primary+C", "Delete", "Shift+A"))
+    nondet identity = oneOf(GROUPS)
+    nondet selection = oneOf(SELECTIONS)
+    nondet width = oneOf(SIZES)
+    pressKey(key, identity, selection, width)
+  }
+  /// Each handle axis can be double-clicked, including forbidden Wrap width.
+  action doubleClickHandle_any = { nondet a = oneOf(AXES) doubleClickHandle(a) }
+
   // ---- init and step ----
   /// Start with one loose image and one loose textbox; the third identity is available for copying.
   action init = all {
     board' = { groups: Map(), live: Set(0, 2), members: Map(
       0 -> defaultMember("Image", 3), 1 -> defaultMember("Image", 1), 2 -> defaultMember("Textbox", 1)) },
+    dock' = { panel: Hidden, textFocus: false },
     outcome' = Ok, event' = "init", effects' = { refusal: true, incoming: true, empty: true, resize: true, append: true },
   }
   /// Explore every operation; parameter choices live exclusively in the wrappers.
   action step = any {
-    create_any, add_any, dragIn_any, paste_any, duplicate_any, reorder_any, arrow_any, detach_any, toggleAbsolute_any, setFlow_any, setGap_any, setAxisMode_any, resizeEdge_any, hugAxis_any, setMemberMode_any, configure_any, ungroup_any, deleteMember_any
+    create_any, add_any, dragIn_any, paste_any, duplicate_any, reorder_any, arrow_any, detach_any, toggleAbsolute_any, setFlow_any, setGap_any, setAxisMode_any, resizeEdge_any, hugAxis_any, setMemberMode_any, configure_any, ungroup_any, deleteMember_any,
+    selectGroup_any, editMember_any, clearSelection, toggleAlign, dismissAlign, focusText_any, escape, useDock_any, pressKey_any, doubleClickHandle_any, doubleClickCorner, dropMember_any, uniformScale
   }
 
   // ---- invariants ----
@@ -604,6 +867,21 @@ module grouping {
   val inv_bounds = board.groups.keys().subseteq(GROUPS) and board.live.subseteq(ITEMS) and
     ITEMS.forall(m => AXES.forall(a => board.members.get(m).size.get(a) >= 0 and board.members.get(m).size.get(a) <= MAX_EXTENT)) and
     board.groups.keys().forall(g => AXES.forall(a => board.groups.get(g).size.get(a) >= 1 and board.groups.get(g).size.get(a) <= MAX_EXTENT))
+
+  /// Dock identity always refers to a live group/member; a Free group never owns an open popover.
+  val inv_dock_selection = match dock.panel {
+    | Hidden => true
+    | GroupDock(p) => hasGroup(board, p.group) and (p.alignOpen implies board.groups.get(p.group).flow != "Free")
+    | MemberDock(p) => hasMember(board, p.group, p.member)
+  }
+  /// The designer-facing enable rules equal actual admission for every valid submitted value.
+  /// Invalid drafts are rejected at submission, not treated as disabled fields.
+  val inv_dock_enabled_iff_accepted = CONTROLS.forall(c => controlEnabled(c) == (controlReason(c) == ""))
+  /// A breadcrumb uses full membership order, including Absolute members; empty groups show zero.
+  val inv_dock_count = if (memberDockShown) dockMemberNumber >= 1 and dockMemberNumber <= dockCount
+    else if (groupDockShown) dockCount == board.groups.get(dockGroup).order.length() else dockCount == 0
+  /// No board shortcut can consume keys that belong to a text field.
+  val inv_text_owns_arrows = dock.textFocus implies Set("Left", "Right", "Up", "Down").forall(k => not(arrowEnabled(k)))
 
   // ---- witnesses ----
   /// create succeeds in a reachable state.
@@ -686,6 +964,92 @@ module grouping {
     share.count > 0 and share.space == 0
   }))
 
+  /// The dock can be hidden, shown for an empty group, and swapped to member editing.
+  val wit_dock_hidden = dock.panel == Hidden
+  /// Empty groups still expose their controls and remain destinations.
+  val wit_dock_empty = groupDockShown and dockCount == 0
+  /// The member artboard mode is reachable with a derived breadcrumb number.
+  val wit_dock_member = memberDockShown and dockMemberNumber > 0
+  /// The alignment grid and Auto row are reachable together.
+  val wit_dock_align = alignShown and controlEnabled(Align((0, 0)))
+  /// Auto makes six alignment cells inactive without changing the saved primary coordinate.
+  val wit_dock_auto_align = alignShown and board.groups.get(dockGroup).gap != "Number"
+  /// Inactive layout controls are still visible in Free.
+  val wit_dock_free_dimmed = groupDockShown and controlShown(Gap(1)) and not(alignEnabled)
+  /// The member selectors can display retained but inactive Fill on Absolute members.
+  val wit_member_absolute_dimmed = memberDockShown and board.members.get(dockMember).absolute and not(controlEnabled(MemberMode((0, true))))
+  /// Every control family has an enabled context, including both sizing axes and reorder directions.
+  val wit_control_name = controlEnabled(Name(0))
+  /// Flow segmentation is available on a selected group.
+  val wit_control_flow = controlEnabled(Flow("Free"))
+  /// Numeric gap is editable with Auto off.
+  val wit_control_gap = controlEnabled(Gap(-1))
+  /// Wrap exposes its independent row gap.
+  val wit_control_row_gap = controlEnabled(RowGap(1))
+  /// Padding is editable even in Free.
+  val wit_control_padding = controlEnabled(Padding(0))
+  /// Auto spacing can be chosen from the open popover.
+  val wit_control_auto = controlEnabled(Auto("Around"))
+  /// Group width and height have usable numeric entries.
+  val wit_control_dimensions = AXES.forall(a => controlEnabled(Dimension((a, 3))))
+  /// Both Hug toggles are reachable outside Wrap.
+  val wit_control_hug = AXES.forall(a => controlEnabled(Hug(a)))
+  /// Clip and Ungroup remain group actions.
+  val wit_control_clip_ungroup = controlEnabled(Clip) and controlEnabled(Ungroup)
+  /// Both member Fill axes can be enabled when the parent fixes both axes.
+  val wit_control_fill = AXES.forall(a => controlEnabled(MemberMode((a, true))))
+  /// Fixed is available without needing a Fixed parent.
+  val wit_control_fixed = AXES.forall(a => controlEnabled(MemberMode((a, false))))
+  /// Absolute and Detach are usable in member editing regardless of layout participation.
+  val wit_control_absolute_detach = controlEnabled(Absolute(0)) and controlEnabled(Detach)
+  /// Earlier has a real predecessor.
+  val wit_control_earlier = controlEnabled(Earlier)
+  /// Later has a real successor.
+  val wit_control_later = controlEnabled(Later)
+  /// Explicit group selection can succeed.
+  val wit_ok_selectGroup = event == "selectGroup" and outcome == Ok
+  /// Deep selection can succeed.
+  val wit_ok_editMember = event == "editMember" and outcome == Ok
+  /// Leaving selection can succeed.
+  val wit_ok_clearSelection = event == "clearSelection" and outcome == Ok
+  /// The alignment trigger can succeed.
+  val wit_ok_toggleAlign = event == "toggleAlign" and outcome == Ok
+  /// Outside dismissal can succeed.
+  val wit_ok_dismissAlign = event == "dismissAlign" and outcome == Ok
+  /// Text focus can be acquired and released.
+  val wit_ok_focusText = event == "focusText" and outcome == Ok
+  /// Esc can unwind the current context.
+  val wit_ok_escape = event == "escape" and outcome == Ok
+  /// The editable name has a real accepting operation.
+  val wit_ok_rename = event == "rename" and outcome == Ok
+  /// The separate Add palette remains reachable by G.
+  val wit_ok_palette = event == "requestAddPalette" and outcome == Ok
+  /// Whole-group scale still routes to its existing owner.
+  val wit_ok_scale = event == "requestUniformScale" and outcome == Ok
+  /// Whole-selection copy remains reachable outside member editing.
+  val wit_ok_copy_selection = event == "requestCopySelection" and outcome == Ok
+  /// Whole-selection duplicate remains reachable outside member editing.
+  val wit_ok_duplicate_selection = event == "requestDuplicateSelection" and outcome == Ok
+  /// Whole-selection delete remains reachable outside member editing.
+  val wit_ok_delete_selection = event == "requestDeleteSelection" and outcome == Ok
+  /// Wrong dock mode refuses rather than editing a stale identity.
+  val wit_rejected_dock_unavailable = outcome == Rejected("dock_unavailable")
+  /// Inactive layout controls refuse rather than mutate a dormant setting.
+  val wit_rejected_control_inactive = outcome == Rejected("control_inactive")
+  /// Hidden popover choices cannot be invoked through the dock.
+  val wit_rejected_popover_closed = outcome == Rejected("popover_closed")
+  /// Auto's primary alignment cells refuse clicks.
+  val wit_rejected_primary_alignment = outcome == Rejected("primary_alignment_inactive")
+  /// Endpoint/unused-axis arrows have no destination.
+  val wit_rejected_no_neighbor = outcome == Rejected("no_neighbor")
+  /// Typing a shortcut in a field cannot edit the board.
+  val wit_rejected_text_key = outcome == Rejected("text_owns_key")
+  /// Unassigned Figma shortcuts stay unassigned.
+  val wit_rejected_unhandled_key = outcome == Rejected("unhandled_key")
+
+  /// Corner hugging can succeed while respecting Wrap's width restriction.
+  val wit_ok_corner = event == "hugCorner" and outcome == Ok
+
   // ---- scenarios ----
   /// Creation includes textbox, ignores lines, starts Wrap/Fixed-width/Hug-height, and re-add is a no-op.
   run creationAndReaddTest = init.then(create(0, [0, 2, 3], 3))
@@ -702,7 +1066,7 @@ module grouping {
     .expect(board.members.get(0).size.get(0) == 2 and board.members.get(2).size.get(0) == 1)
     .then(resizeEdge(0, 0, 1)).expect(board.members.get(0).size.get(0) == 2 and wit_overflow)
   /// Picker append fills the final row; deleting the first member closes its ordered slot.
-  /// Decision 16: append-stable positions apply only with fixed sizes, numeric gaps and Start
+  /// Append-stable positions apply only with fixed sizes, numeric gaps and Start
   /// alignment. Auto or non-Start alignment recomputes positions.
   run wrapAppendAndRemovalTest = init.then(create(0, [2], 3)).then(paste(0, -1, 1, 1))
     .expect(rows(board, 0) == [[2, 1]])
@@ -779,4 +1143,74 @@ module grouping {
     .then(arrow(0, 0, "Down")).expect(board.groups.get(0).order == [2, 0])
     .then(arrow(0, 0, "Down")).expect(board.groups.get(0).order == [2, 0] and outcome == Ok)
 
+  /// Esc first closes alignment, then clears selection; entering member editing replaces the dock.
+  run dockEscapeTest = init.then(create(0, [0, 2], 3)).then(toggleAlign)
+    .then(useDock(Align((2, 1)))).expect(alignShown)
+    .then(escape).expect(groupDockShown and not(alignShown))
+    .then(editMember(2)).expect(memberDockShown and dockMemberNumber == 2)
+    .then(escape).expect(groupDockShown).then(escape).expect(dock.panel == Hidden)
+  /// Flow, gap, padding, row gap, name, numeric dimensions and Clip each change their own field.
+  run dockControlsTest = init.then(create(0, [0, 2], 3)).then(useDock(Name(1)))
+    .then(useDock(Gap(-1))).then(useDock(RowGap(-1))).then(useDock(Padding(0)))
+    .then(useDock(Dimension((1, 3)))).then(useDock(Clip))
+    .expect(dockName == 1 and board.groups.get(0).number == -1 and board.groups.get(0).rowGap == -1 and
+      board.groups.get(0).padding == 0 and board.groups.get(0).fixed.contains(1) and board.groups.get(0).clip)
+    .then(useDock(Flow("Free"))).expect(not(controlEnabled(Gap(1))) and not(controlShown(RowGap(1))))
+    .then(useDock(Gap(1))).expect(outcome == Rejected("control_inactive"))
+  /// Auto remembers the number and primary alignment, and its choices leave the popover open.
+  run dockAutoTest = init.then(create(0, [0, 2], 3)).then(useDock(Gap(-1))).then(toggleAlign)
+    .then(useDock(Align((2, 0)))).then(useDock(Auto("Between")))
+    .expect(alignShown and not(controlEnabled(Gap(0))) and controlEnabled(Align((2, 1))) and not(controlEnabled(Align((0, 1)))))
+    .then(useDock(Align((0, 1)))).expect(outcome == Rejected("primary_alignment_inactive"))
+    .then(useDock(Align((2, 1)))).then(useDock(Auto("Number")))
+    .expect(board.groups.get(0).number == -1 and board.groups.get(0).align == Map(0 -> 2, 1 -> 1))
+    .then(useDock(Flow("Free"))).expect(not(alignShown))
+  /// Wrap width cannot hug; a Hug toggle freezes or releases its axis without a size jump.
+  run dockSizingTest = init.then(create(0, [2], 3)).then(useDock(Hug(0)))
+    .expect(outcome == Rejected("wrap_width_fixed") and not(controlEnabled(Hug(0))))
+    .then(useDock(Hug(1))).expect(not(axisIsHug(1)))
+    .then(editMember(2)).then(useDock(MemberMode((1, true)))).expect(memberIsFill(1))
+    .then(escape).then(useDock(Hug(1))).then(editMember(2))
+    .expect(not(memberIsFill(1)) and not(controlEnabled(MemberMode((1, true)))))
+    .then(useDock(MemberMode((1, true)))).expect(outcome == Rejected("fixed_axis_required"))
+  /// Absolute preserves Fill intent, dims it and order controls, and can still detach.
+  run dockAbsoluteTest = init.then(create(0, [0, 2], 3)).then(editMember(0))
+    .then(useDock(MemberMode((0, true)))).then(useDock(Absolute(0)))
+    .expect(memberIsFill(0) and not(controlEnabled(MemberMode((0, false)))) and not(controlEnabled(Later)))
+    .then(useDock(Absolute(0))).expect(controlEnabled(Later))
+    .then(useDock(Later)).expect(dockMemberNumber == 2 and not(controlEnabled(Later)))
+    .then(useDock(Earlier)).expect(dockMemberNumber == 1)
+    .then(useDock(Detach)).expect(dock.panel == Hidden and not(hasMember(board, 0, 0)))
+  /// Focus consumes the first Esc; shortcuts cannot group or reorder while typing.
+  run dockTextFocusTest = init.then(create(0, [0, 2], 3)).then(toggleAlign).then(focusText(true))
+    .then(pressKey("Primary+G", 1, [0], 1)).expect(outcome == Rejected("text_owns_key"))
+    .then(pressKey("Escape", 1, [], 1)).expect(alignShown and not(dock.textFocus))
+    .then(escape).expect(groupDockShown and not(alignShown))
+    .then(dismissAlign).expect(groupDockShown)
+  /// Paste/duplicate select their new member; subsequent Delete returns to the retained group.
+  run dockClipboardTest = init.then(create(0, [0, 2], 3)).then(editMember(0))
+    .then(pressKey("Primary+D", 1, [], 1)).expect(dockMember == 1 and dockMemberNumber == 2)
+    .then(pressKey("Delete", 1, [], 1)).expect(groupDockShown)
+    .then(editMember(2)).then(pressKey("Primary+V", 1, [], 1))
+    .expect(dockMember == 1 and board.groups.get(0).order == [0, 2, 1])
+    .then(escape).then(pressKey("Primary+Shift+G", 1, [], 1)).expect(dock.panel == Hidden)
+  /// Selection changes dismiss alignment; a transferred edited member keeps its editing context.
+  run dockSelectionTest = init.then(create(0, [0], 3)).then(create(1, [2], 3)).then(toggleAlign)
+    .then(selectGroup(0)).expect(not(alignShown)).then(editMember(0)).then(add(1, 0))
+    .expect(dockGroup == 1 and dockMember == 0).then(clearSelection).expect(dock.panel == Hidden)
+  /// Numeric gap/Auto conversion survives the UI path and fixes a Hug primary axis as before.
+  run dockAutoFromHugTest = init.then(create(0, [2], 3)).then(useDock(Flow("Column")))
+    .then(toggleAlign).then(useDock(Auto("Around"))).expect(board.groups.get(0).fixed.contains(1))
+    .then(useDock(Hug(1))).expect(board.groups.get(0).gap == "Number" and alignShown)
+  /// Empty groups keep the group dock after deletion; dimmed mode/order controls do not erase settings.
+  run dockEmptyTest = init.then(create(0, [0], 3)).then(editMember(0))
+    .then(pressKey("Delete", 1, [], 1)).expect(groupDockShown and dockCount == 0)
+    .then(useDock(Ungroup)).expect(dock.panel == Hidden)
+  /// A Wrap corner keeps width Fixed; Absolute outside drops retain membership until explicit Detach.
+  run dockCornerAndDropTest = init.then(create(0, [0, 2], 3)).then(useDock(Dimension((1, 3))))
+    .then(doubleClickCorner).expect(board.groups.get(0).fixed == Set(0))
+    .then(editMember(0)).then(useDock(Absolute(0))).then(dropMember(0, 0, 0, true))
+    .expect(memberDockShown and hasMember(board, 0, 0))
+    .then(useDock(Absolute(0))).then(dropMember(0, 0, 0, true))
+    .expect(dock.panel == Hidden and not(hasMember(board, 0, 0)))
 }
