@@ -405,7 +405,14 @@ impl CanvasState {
                                                             );
                                                             text_focus |= focused;
                                                             if let Some(n) = value
-                                                                .and_then(|v| v.parse::<f32>().ok())
+                                                                .and_then(|v| match c {
+                                                                    Control::Gap(_)
+                                                                    | Control::RowGap(_) => v
+                                                                        .parse::<i64>()
+                                                                        .ok()
+                                                                        .map(|n| n as f32),
+                                                                    _ => v.parse::<f32>().ok(),
+                                                                })
                                                                 .filter(|n| n.is_finite())
                                                             {
                                                                 action = Some(match c {

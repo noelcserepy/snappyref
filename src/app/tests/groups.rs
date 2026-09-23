@@ -932,6 +932,50 @@ fn inspect_group_dock_writes_artifact() {
         previous = x;
     }
     scenario.assertion("group inventory follows artboard order", true);
+    for (label, draft, blur, expected) in [
+        ("Gap", "1.5", false, 24.0),
+        ("Row gap", "1.5", true, 24.0),
+        ("Gap", "-3", true, -3.0),
+        ("Row gap", "+7", false, 7.0),
+        ("Padding", "16.5", false, 16.5),
+    ] {
+        scenario.event(
+            "submit numeric draft",
+            serde_json::json!({
+                "field": label, "draft": draft, "submission": if blur { "blur" } else { "Enter" }
+            }),
+        );
+        harness.get_by_label(label).click();
+        harness.step();
+        shortcut(&mut harness, CMD, egui::Key::A);
+        harness.event(egui::Event::Text(draft.into()));
+        harness.step();
+        if blur {
+            harness.get_by_label("Group name").click();
+        } else {
+            shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Enter);
+        }
+        for _ in 0..4 {
+            harness.step();
+        }
+        let group = &harness.state().canvas.groups()[0];
+        let actual = match label {
+            "Gap" => group.gap,
+            "Row gap" => group.layout.row_gap,
+            _ => group.padding,
+        };
+        scenario.assertion(
+            "numeric draft preserves integer gaps and decimal padding",
+            actual == expected,
+        );
+        scenario.assertion(
+            "numeric field releases focus and remains enabled",
+            !harness.get_by_label(label).is_focused()
+                && !harness.get_by_label(label).accesskit_node().is_disabled(),
+        );
+    }
+    scenario.capture_screen("numeric-draft-validation", &mut harness);
+
     harness.get_by_label("Alignment").click();
     for _ in 0..4 {
         for _ in 0..4 {

@@ -591,6 +591,115 @@ mod group_tests {
     }
 
     #[test]
+    fn exhausted_groups_and_zero_fill_geometry_round_trip_clipboard() {
+        let root = crate::test_support::TempRoot::new("group-zero-clipboard");
+        let library = Library::initialize(root.to_path_buf()).unwrap();
+        let path = library
+            .store_rgba_image("wide", &vec![255; 20 * 10 * 4], 20, 10)
+            .unwrap();
+        let asset = library
+            .register_original(&path, "image/png", 20, 10, 800, None)
+            .unwrap();
+        for padding in [50., 70.] {
+            for zero in [false, true] {
+                let mut source = CanvasState::default();
+                let mut member = library
+                    .new_placement_from_asset(asset.id, egui::Pos2::ZERO, 1., 0., 0)
+                    .unwrap();
+                if zero {
+                    member.state.geometry.size = egui::Vec2::ZERO;
+                }
+                let original_size = member.state.geometry.size;
+                let id = member.id();
+                source.add_unresolved_placement(member);
+                let group_id = library.allocate_document_id();
+                source.restore_groups(vec![crate::data::Group {
+                    id: group_id,
+                    name: "Exhausted".into(),
+                    members: vec![id],
+                    container: RectGeometry::new(
+                        egui::Pos2::ZERO,
+                        egui::vec2(100., 100.),
+                        1.,
+                        0.,
+                        0,
+                    ),
+                    flow: crate::data::GroupFlow::Row,
+                    gap: 8.,
+                    padding,
+                    layout: crate::data::GroupLayoutSettings {
+                        fixed: [true, true],
+                        members: if zero {
+                            std::collections::BTreeMap::from([(
+                                id,
+                                crate::data::MemberLayout {
+                                    fill: [true, false],
+                                    absolute: false,
+                                },
+                            )])
+                        } else {
+                            Default::default()
+                        },
+                        ..Default::default()
+                    },
+                }]);
+                source.select_group(group_id);
+                for loose in [false, true] {
+                    if loose {
+                        source.ungroup_selected();
+                        source.select_placements(&[id]);
+                    }
+                    let payload = copy_selected_board_payload(&source).unwrap();
+                    validate_clipboard_payload(&payload).unwrap();
+                    let mut invalid = payload.clone();
+                    invalid.placements[0].width = -1.;
+                    assert!(validate_clipboard_payload(&invalid).is_err());
+                    let serialized = serde_json::to_string(&payload).unwrap();
+                    let mut target = CanvasState::default();
+                    let mut context = ActiveBoardCommandContext {
+                        canvas: &mut target,
+                        library: Some(&library),
+                        import_worker_available: true,
+                        placement_gap: 12.,
+                        viewport_world: egui::Rect::from_center_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(2000., 2000.),
+                        ),
+                    };
+                    paste_json_at(&mut context, &serialized, egui::pos2(200., 200.))
+                        .unwrap()
+                        .unwrap();
+                    duplicate_selection(&mut context).unwrap().unwrap();
+                    let pasted = context.canvas.committed_placements();
+                    assert_eq!(pasted.len(), 2);
+                    for placement in pasted {
+                        assert_ne!(placement.id(), id);
+                        assert_eq!(placement.state.geometry.size, original_size);
+                        assert_eq!(placement.asset_id(), Some(asset.id));
+                    }
+                    assert_eq!(context.canvas.groups().len(), if loose { 0 } else { 2 });
+                    for group in context.canvas.groups() {
+                        assert_eq!(group.padding, padding);
+                        assert_eq!(group.container.size, egui::vec2(100., 100.));
+                        assert_eq!(group.members.len(), 1);
+                        assert_ne!(group.members[0], id);
+                        assert_eq!(
+                            group
+                                .layout
+                                .members
+                                .get(&group.members[0])
+                                .copied()
+                                .unwrap_or_default()
+                                .fill[0],
+                            zero
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn transfer_closes_source_gap_and_keeps_destination_append_order() {
         let root = crate::test_support::TempRoot::new("group-transfer");
         let library = Library::initialize(root.to_path_buf()).unwrap();

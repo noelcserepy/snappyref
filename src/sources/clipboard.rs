@@ -651,7 +651,6 @@ pub(crate) fn validate_clipboard_payload(payload: &ClipboardBoardSelection) -> R
             || !group.gap.is_finite()
             || !group.padding.is_finite()
             || group.padding < 0.
-            || group.padding * 2. >= group.container[2]
             || !group.layout.row_gap.is_finite()
             || group.layout.align.iter().any(|&a| a > 2)
             || !["Number", "Between", "Evenly", "Around"].contains(&group.layout.auto.as_str())
@@ -681,6 +680,8 @@ pub(crate) fn validate_clipboard_payload(payload: &ClipboardBoardSelection) -> R
             }
         }
     }
+    // Zero Fill geometry remains valid after detach, ungroup, or history replay,
+    // so clipboard validity cannot depend on current Group membership.
     for placement in &payload.placements {
         if [
             placement.center_x,
@@ -693,8 +694,8 @@ pub(crate) fn validate_clipboard_payload(payload: &ClipboardBoardSelection) -> R
             || placement.scale <= 0.
             || !placement.width.is_finite()
             || !placement.height.is_finite()
-            || placement.width <= 0.
-            || placement.height <= 0.
+            || placement.width < 0.
+            || placement.height < 0.
         {
             return Err(invalid());
         }
