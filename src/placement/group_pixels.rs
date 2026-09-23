@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 pub(crate) struct Pixels {
     pub rects: BTreeMap<Id, RectGeometry>,
     pub intake: BTreeMap<Id, grouping::Member>,
+    /// Intrinsic Asset bounds at the current rotation, used to recover image ratios.
+    pub image_sizes: BTreeMap<Id, Vec2>,
 }
 pub(crate) struct Layout {
     pub offsets: BTreeMap<Id, Vec2>,
@@ -19,15 +21,27 @@ fn alignment(n: usize, space: f32) -> f32 {
     space.max(0.0) * n as f32 * 0.5
 }
 impl Pixels {
-    // Free and Absolute members retain rendered geometry even when the core carries
-    // an Asset ratio for a zero Fill member's next active allocation.
-    fn preserved_size(&self, b: &Board, m: Id) -> Vec2 {
-        self.rects.get(&m).map_or_else(
-            || Vec2::from(b.members[&m].size),
-            |rect| rect.visual_bounds().size(),
-        )
+    // Asset dimensions supply a ratio only while solving active Fill. They never
+    // replace the displayed sizes stored by the edit core or frozen by conversions.
+    fn fill_inputs<'a>(&self, b: &'a Board, g: Id) -> std::borrow::Cow<'a, Board> {
+        let mut inputs = std::borrow::Cow::Borrowed(b);
+        if b.groups[&g].flow != "Free" {
+            for &m in &b.groups[&g].order {
+                let member = &b.members[&m];
+                if !member.absolute
+                    && !member.fill.is_empty()
+                    && member.size.contains(&0.0)
+                    && let Some(size) = self.image_sizes.get(&m)
+                {
+                    inputs.to_mut().members.get_mut(&m).unwrap().size = (*size).into();
+                }
+            }
+        }
+        inputs
     }
-    pub fn layout(&self, b: &Board, g: Id) -> Layout {
+    pub fn layout(&self, board: &Board, g: Id) -> Layout {
+        let inputs = self.fill_inputs(board, g);
+        let b = inputs.as_ref();
         let group = &b.groups[&g];
         let mut result = Layout {
             offsets: BTreeMap::new(),
@@ -40,7 +54,7 @@ impl Pixels {
         let cross = 1 - primary;
         if group.flow == "Free" {
             for &m in &group.order {
-                result.sizes.insert(m, self.preserved_size(b, m));
+                result.sizes.insert(m, Vec2::from(b.members[&m].size));
             }
             let bounds = b
                 .flowing(g)
@@ -189,7 +203,7 @@ impl Pixels {
         });
         for &m in &group.order {
             if b.members[&m].absolute {
-                result.sizes.insert(m, self.preserved_size(b, m));
+                result.sizes.insert(m, Vec2::from(b.members[&m].size));
             }
         }
         result
@@ -197,7 +211,8 @@ impl Pixels {
 }
 impl Geometry for Pixels {
     fn wrap_arrow_target(&self, b: &Board, g: Id, m: Id, direction: &str) -> Option<Id> {
-        let rows = b.rows(g);
+        let inputs = self.fill_inputs(b, g);
+        let rows = inputs.rows(g);
         let row = rows.iter().position(|row| row.contains(&m))?;
         let column = rows[row].iter().position(|&member| member == m)?;
         let adjacent = if direction == "Up" {

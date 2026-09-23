@@ -50,6 +50,15 @@ impl CanvasState {
                     Member::fixed("Image", p.state.geometry.visual_bounds().size().into()),
                 );
                 pixels.rects.insert(p.state.id, p.state.geometry);
+                if let Some(asset) = p.loaded_asset() {
+                    pixels.image_sizes.insert(
+                        p.state.id,
+                        crate::data::rotated_display_size(
+                            egui::vec2(asset.width as f32, asset.height as f32),
+                            p.state.geometry.rotation,
+                        ),
+                    );
+                }
             }
         }
         for a in &self.document.annotations {
@@ -67,18 +76,6 @@ impl CanvasState {
             for &id in &group.members {
                 if let Some(member) = board.members.get_mut(&id) {
                     let mode = group.layout.members.get(&id).copied().unwrap_or_default();
-                    if member.kind == "Image"
-                        && member.size.contains(&0.0)
-                        && mode.fill.contains(&true)
-                        && let Some(p) = self.placement_for_id(id)
-                        && let Some(asset) = p.loaded_asset()
-                    {
-                        member.size = crate::data::rotated_display_size(
-                            egui::vec2(asset.width as f32, asset.height as f32),
-                            p.state.geometry.rotation,
-                        )
-                        .into();
-                    }
                     member.absolute = mode.absolute;
                     member.fill = (0..2).filter(|&a| mode.fill[a]).collect();
                 }

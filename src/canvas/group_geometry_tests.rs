@@ -124,3 +124,50 @@ fn zero_fill_recovers_when_flow_or_absolute_resumes() {
         assert!((rect.size.x / rect.size.y - 2.).abs() < 0.0001);
     }
 }
+
+#[test]
+fn zero_fill_to_fixed_or_hug_freezes_complete_image_geometry() {
+    for hug in [false, true] {
+        for rotation in [0.0, 0.37] {
+            let mut canvas = image_canvas(rotation);
+            canvas.group_edit(|s| s.setFlow(7, "Row")).unwrap();
+            canvas
+                .group_edit(|s| s.setMemberMode(7, 1, 0, true))
+                .unwrap();
+            canvas
+                .group_edit(|s| s.useDock(Control::Padding(200.)))
+                .unwrap();
+            let before = canvas.group_member_geometry(1).unwrap();
+            assert_eq!(before.size, Vec2::ZERO);
+            assert_eq!(canvas.grouping_state().board.members[&1].size, [0., 0.]);
+            if hug {
+                canvas
+                    .group_edit(|s| s.setAxisMode(7, 0, AxisMode::Hug))
+                    .unwrap();
+            } else {
+                canvas
+                    .group_edit(|s| s.setMemberMode(7, 1, 0, false))
+                    .unwrap();
+            }
+            let after = canvas.group_member_geometry(1).unwrap();
+            assert_eq!(after.size, before.size);
+            assert_eq!(after.scale, before.scale);
+            assert_eq!(after.rotation, before.rotation);
+            assert_eq!(canvas.groups()[0].container.size.y, 401.);
+            assert!(canvas.groups()[0].layout.members.is_empty());
+            canvas
+                .group_edit(|s| s.useDock(Control::Padding(10.)))
+                .unwrap();
+            assert_eq!(canvas.group_member_geometry(1).unwrap().size, Vec2::ZERO);
+            canvas
+                .group_edit(|s| s.setAxisMode(7, 0, AxisMode::Fixed(100.)))
+                .unwrap();
+            canvas
+                .group_edit(|s| s.setMemberMode(7, 1, 0, true))
+                .unwrap();
+            let recovered = canvas.group_member_geometry(1).unwrap();
+            assert!(recovered.size.min_elem() > 0.);
+            assert!((recovered.size.x / recovered.size.y - 2.).abs() < 0.0001);
+        }
+    }
+}

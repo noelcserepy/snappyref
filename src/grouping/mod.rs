@@ -456,11 +456,7 @@ impl<G: Geometry> State<G> {
         let reason = self.member_reason(g, m);
         let mut b = self.board.clone();
         if reason.is_empty() {
-            let mut member = if b.members[&m].absolute {
-                b.members[&m].clone()
-            } else {
-                self.freeze(&b, g, m)
-            };
+            let mut member = self.freeze(&b, g, m);
             if member.absolute {
                 let order = &mut b.groups.get_mut(&g).unwrap().order;
                 order.retain(|&x| x != m);
@@ -531,10 +527,9 @@ impl<G: Geometry> State<G> {
                 AxisMode::Hug => {
                     for &m in &self.board.groups[&g].order {
                         if b.members[&m].fill.contains(&a) {
-                            let size = self.geometry.rendered(&self.board, g, m, a);
-                            let member = b.members.get_mut(&m).unwrap();
+                            let mut member = self.freeze(&self.board, g, m);
                             member.fill.remove(&a);
-                            member.size[a] = size;
+                            b.members.insert(m, member);
                         }
                     }
                     let group = b.groups.get_mut(&g).unwrap();
@@ -567,14 +562,13 @@ impl<G: Geometry> State<G> {
         };
         let mut b = self.board.clone();
         if reason.is_empty() {
-            let size = self.geometry.rendered(&b, g, m, a);
-            let member = b.members.get_mut(&m).unwrap();
+            let mut member = self.freeze(&b, g, m);
             if fill {
                 member.fill.insert(a);
             } else {
                 member.fill.remove(&a);
             }
-            member.size[a] = size;
+            b.members.insert(m, member);
         }
         self.commit(b, reason, "setMemberMode")
     }
