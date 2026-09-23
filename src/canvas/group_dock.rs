@@ -167,7 +167,8 @@ impl CanvasState {
             model.dock = dock;
             (model, group)
         };
-        let mut action = None;
+        let mut field_submissions = Vec::new();
+        let mut clicked_controls = Vec::new();
         let mut toggle = false;
         let mut trigger = None;
         let mut text_focus = false;
@@ -255,7 +256,7 @@ impl CanvasState {
                                                                     )
                                                                     .clicked()
                                                                     {
-                                                                        action = Some(c);
+                                                                        clicked_controls.push(c);
                                                                     }
                                                                 }
                                                             });
@@ -280,7 +281,7 @@ impl CanvasState {
                                                 "Absolute",
                                                 Some("Absolute"),
                                                 model.board.members[&m].absolute,
-                                                &mut action,
+                                                &mut clicked_controls,
                                             );
                                             separator(ui);
                                             bed(ui, |ui| {
@@ -299,7 +300,7 @@ impl CanvasState {
                                                     )
                                                     .clicked()
                                                     {
-                                                        action = Some(c);
+                                                        clicked_controls.push(c);
                                                     }
                                                 }
                                             });
@@ -314,7 +315,7 @@ impl CanvasState {
                                             )
                                             .clicked()
                                             {
-                                                action = Some(Control::Detach);
+                                                clicked_controls.push(Control::Detach);
                                             }
                                             ui.add_space(10.0);
                                             label(
@@ -334,7 +335,7 @@ impl CanvasState {
                                             );
                                             text_focus |= focused;
                                             if let Some(name) = name {
-                                                action = Some(Control::Name(name));
+                                                field_submissions.push(Control::Name(name));
                                             }
                                             ui.add_space(4.0);
                                             label(
@@ -366,7 +367,7 @@ impl CanvasState {
                                                     )
                                                     .clicked()
                                                     {
-                                                        action = Some(c);
+                                                        clicked_controls.push(c);
                                                     }
                                                 }
                                             });
@@ -415,7 +416,7 @@ impl CanvasState {
                                                                 })
                                                                 .filter(|n| n.is_finite())
                                                             {
-                                                                action = Some(match c {
+                                                                field_submissions.push(match c {
                                                                     Control::Gap(_) => {
                                                                         Control::Gap(n)
                                                                     }
@@ -489,8 +490,8 @@ impl CanvasState {
                                                                     n.is_finite() && *n > 0.0
                                                                 })
                                                             {
-                                                                action =
-                                                                    Some(Control::Dimension(a, n));
+                                                                field_submissions
+                                                                    .push(Control::Dimension(a, n));
                                                             }
                                                             let c = Control::Hug(a);
                                                             if small_hug(
@@ -501,7 +502,7 @@ impl CanvasState {
                                                             )
                                                             .clicked()
                                                             {
-                                                                action = Some(c);
+                                                                clicked_controls.push(c);
                                                             }
                                                         },
                                                     );
@@ -515,7 +516,7 @@ impl CanvasState {
                                                 "Clip",
                                                 Some("Clip"),
                                                 group.layout.clip,
-                                                &mut action,
+                                                &mut clicked_controls,
                                             );
                                             separator(ui);
                                             if button(
@@ -529,7 +530,7 @@ impl CanvasState {
                                             )
                                             .clicked()
                                             {
-                                                action = Some(Control::Ungroup);
+                                                clicked_controls.push(Control::Ungroup);
                                             }
                                         }
                                     },
@@ -582,7 +583,7 @@ impl CanvasState {
                                         },
                                     );
                                     if r.clicked() {
-                                        action = Some(c);
+                                        clicked_controls.push(c);
                                     }
                                 }
                             });
@@ -609,7 +610,7 @@ impl CanvasState {
                                 )
                                 .clicked()
                                 {
-                                    action = Some(c);
+                                    clicked_controls.push(c);
                                 }
                             }
                         });
@@ -643,8 +644,10 @@ impl CanvasState {
         if active {
             self.interaction.group_dock = model.dock;
         }
-        if let Some(c) = action {
-            let _ = self.group_edit(|s| s.useDock(c));
+        // Blur commits belong to the old control context, even when the clicked
+        // command was rendered earlier and will change which fields are enabled.
+        for control in field_submissions.into_iter().chain(clicked_controls) {
+            let _ = self.group_edit(|s| s.useDock(control));
         }
         Some(bounds)
     }
@@ -807,7 +810,7 @@ fn choose(
     text: &str,
     icon: Option<&str>,
     selected: bool,
-    action: &mut Option<Control>,
+    clicked_controls: &mut Vec<Control>,
 ) {
     if button(
         ui,
@@ -820,7 +823,7 @@ fn choose(
     )
     .clicked()
     {
-        *action = Some(c);
+        clicked_controls.push(c);
     }
 }
 fn small_hug(ui: &mut egui::Ui, axis: &str, selected: bool, enabled: bool) -> Response {

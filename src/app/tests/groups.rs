@@ -975,6 +975,60 @@ fn inspect_group_dock_writes_artifact() {
         );
     }
     scenario.capture_screen("numeric-draft-validation", &mut harness);
+    for (field, draft, clicked) in [
+        ("Group name", "Renamed", "Row"),
+        ("Group name", "Faces", "Wrap"),
+        ("Gap", "13", "Free"),
+        ("W size", "700", "Clip"),
+        ("Padding", "18.5", "Clip"),
+    ] {
+        if field == "W size" {
+            harness.get_by_label("Wrap").click();
+            for _ in 0..4 {
+                harness.step();
+            }
+        }
+        harness.get_by_label(field).click();
+        harness.step();
+        assert!(harness.get_by_label(field).is_focused(), "focus {field}");
+        shortcut(&mut harness, CMD, egui::Key::A);
+        harness.event(egui::Event::Text(draft.into()));
+        harness.step();
+        let pos = harness.get_by_label(clicked).rect().center();
+        harness.event(egui::Event::PointerMoved(pos));
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        // Both pointer transitions reach one frame, alongside the field's blur.
+        harness.step();
+        let group = &harness.state().canvas.groups()[0];
+        let committed = match field {
+            "Group name" => group.name == draft,
+            "Gap" => group.gap == 13.,
+            "W size" => group.container.scaled_size().x == 700.,
+            _ => group.padding == 18.5,
+        };
+        let clicked_applied = match clicked {
+            "Row" => group.flow == crate::data::GroupFlow::Row,
+            "Wrap" => group.flow == crate::data::GroupFlow::Wrap,
+            "Free" => group.flow == crate::data::GroupFlow::Free,
+            _ => group.layout.clip == (field == "W size"),
+        };
+        scenario.event(
+            "same-frame blur and command",
+            serde_json::json!({"field":field,"draft":draft,"clicked":clicked,"committed":committed,"clicked_applied":clicked_applied,"width":group.container.scaled_size().x,"clip":group.layout.clip}),
+        );
+        scenario.assertion(
+            "blur commits before clicked command in either widget order",
+            committed && clicked_applied,
+        );
+    }
+    scenario.capture_screen("same-frame-submissions", &mut harness);
 
     harness.get_by_label("Alignment").click();
     for _ in 0..4 {
