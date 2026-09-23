@@ -1,5 +1,6 @@
 //! Deterministic grouping edits. Geometry supplies size observations; callers own pixels,
-//! persistence and history. Operation names match specs/grouping/spec.qnt.
+//! persistence and history. Operations match specs/grouping/{sizing,board}.qnt.
+//! Layout and enablement are verified over their input domains.
 #![allow(non_snake_case)]
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -143,39 +144,18 @@ impl Board {
     }
 }
 
-/// Pixel layout and the finite Quint fixture provide different size observations.
-/// Neither identities nor the fixture's extent saturation limit the product.
+/// Pixel observations freeze rendered sizes when modes or membership change.
 pub trait Geometry {
-    fn pasted_member(&self, _id: Id, width: f32) -> Member {
-        Member::fixed("Image", [width; 2])
-    }
-    fn extent(&self, n: f32) -> f32 {
-        n.max(0.0)
-    }
-    fn fit(&self, member: &Member, width: f32) -> [f32; 2] {
-        [member.size[0].min(width), member.size[1]]
-    }
+    fn pasted_member(&self, id: Id, width: f32) -> Member;
+    fn fit(&self, member: &Member, width: f32) -> [f32; 2];
     fn rendered(&self, b: &Board, g: Id, m: Id, a: usize) -> f32;
     fn measured(&self, b: &Board, g: Id, a: usize) -> f32;
 }
-#[derive(Clone, Debug, PartialEq)]
-pub struct Effects {
-    pub refusal: bool,
-    pub incoming: bool,
-    pub empty: bool,
-    pub resize: bool,
-    pub append: bool,
-}
-impl Default for Effects {
-    fn default() -> Self {
-        Self {
-            refusal: true,
-            incoming: true,
-            empty: true,
-            resize: true,
-            append: true,
-        }
-    }
+/// An axis either hugs its content or is fixed at a usable extent in group pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AxisMode {
+    Hug,
+    Fixed(f32),
 }
 mod dock;
 pub use dock::{Control, Dock, Panel};
@@ -184,8 +164,6 @@ pub struct State<G> {
     pub dock: Dock,
     pub board: Board,
     pub outcome: Outcome,
-    pub event: &'static str,
-    pub effects: Effects,
     pub geometry: G,
     pub default_gap: f32,
 }
@@ -200,8 +178,6 @@ impl<G: Geometry> State<G> {
             geometry,
             default_gap,
             outcome: Outcome::Ok,
-            event: "init",
-            effects: Effects::default(),
         }
     }
     fn commit(&mut self, b: Board, reason: &'static str, op: &'static str) -> Outcome {
@@ -237,61 +213,21 @@ impl<G: Geometry> State<G> {
                 }
             }
         }
-        self.apply(b, reason, op, dock)
+        self.apply(b, reason, dock)
     }
-    fn apply(
-        &mut self,
-        mut b: Board,
-        reason: &'static str,
-        op: &'static str,
-        dock: Dock,
-    ) -> Outcome {
+    fn apply(&mut self, mut b: Board, reason: &'static str, dock: Dock) -> Outcome {
         if !reason.is_empty() {
             b = self.board.clone();
         } else {
-            let sizes: Vec<_> = b
-                .groups
-                .keys()
-                .map(|&g| {
-                    (
-                        g,
-                        [
-                            self.geometry.measured(&b, g, 0),
-                            self.geometry.measured(&b, g, 1),
-                        ],
-                    )
-                })
-                .collect();
-            for (g, size) in sizes {
-                b.groups.get_mut(&g).unwrap().size = size;
-            }
+            Self::measure_sizes(&self.geometry, &mut b);
         }
-        self.effects = Effects {
-            refusal: reason.is_empty() || b == self.board,
-            incoming: !["add", "dragIn", "paste"].contains(&op)
-                || self.board.live.iter().all(|&m| {
-                    self.board.owner(m) != b.owner(m) || self.board.members[&m] == b.members[&m]
-                }),
-            empty: !["add", "dragIn", "detach", "deleteMember"].contains(&op)
-                || self.board.groups.iter().all(|(g, old)| {
-                    b.groups.get(g).is_some_and(|new| {
-                        let mut empty = old.clone();
-                        empty.order.clear();
-                        !new.order.is_empty() || *new == empty
-                    })
-                }),
-            resize: op != "resizeEdge" || b.members == self.board.members,
-            append: op != "add"
-                || self.board.groups.iter().all(|(g, old)| {
-                    let new = &b.groups[g].order;
-                    new.len() <= old.order.len() || new.starts_with(&old.order)
-                }),
+        let applied_dock = if reason.is_empty() {
+            dock.normalized(&b)
+        } else {
+            self.dock.clone()
         };
-        if reason.is_empty() {
-            self.dock = dock.normalized(&b);
-        }
+        self.dock = applied_dock;
         self.board = b;
-        self.event = op;
         self.outcome = if reason.is_empty() {
             Outcome::Ok
         } else {
@@ -299,6 +235,21 @@ impl<G: Geometry> State<G> {
         };
         self.outcome.clone()
     }
+    fn measure_sizes(geometry: &G, b: &mut Board) {
+        let sizes: Vec<_> = b
+            .groups
+            .keys()
+            .map(|&g| (g, [geometry.measured(b, g, 0), geometry.measured(b, g, 1)]))
+            .collect();
+        for (g, size) in sizes {
+            b.groups.get_mut(&g).unwrap().size = size;
+        }
+    }
+    /// Refresh geometry after stored values or member pixels change, without a mode edit.
+    pub fn refresh_sizes(&mut self) {
+        Self::measure_sizes(&self.geometry, &mut self.board);
+    }
+
     fn freeze(&self, b: &Board, g: Id, m: Id) -> Member {
         let mut member = b.members[&m].clone();
         member.size = [
@@ -343,37 +294,13 @@ impl<G: Geometry> State<G> {
             ""
         }
     }
-    fn axis_reason(&self, g: Id, a: usize, fixed: bool, dimension: f32) -> &'static str {
-        if !self.board.groups.contains_key(&g) {
-            "group_missing"
-        } else if a > 1 || !dimension.is_finite() || dimension <= 0.0 {
-            "invalid_value"
-        } else if !fixed && a == 0 && self.board.groups[&g].flow == "Wrap" {
-            "wrap_width_fixed"
-        } else {
-            ""
-        }
-    }
-    fn axis_changed(&self, b: &mut Board, g: Id, a: usize, fixed: bool, dimension: f32) {
-        if !fixed {
-            for &m in &self.board.groups[&g].order {
-                if b.members[&m].fill.contains(&a) {
-                    let dimension = self.geometry.rendered(&self.board, g, m, a);
-                    let member = b.members.get_mut(&m).unwrap();
-                    member.fill.remove(&a);
-                    member.size[a] = dimension;
-                }
-            }
-        }
-        let group = b.groups.get_mut(&g).unwrap();
-        if fixed {
-            group.fixed.insert(a);
-        } else {
-            group.fixed.remove(&a);
-        }
-        group.size[a] = dimension;
-        if !fixed && group.flow != "Free" && a == group.primary() {
-            group.gap = "Number".into();
+    fn axis_reason(&self, g: Id, a: usize, mode: AxisMode) -> &'static str {
+        match mode {
+            AxisMode::Fixed(n) if !n.is_finite() || n < 0.0 => "invalid_value",
+            _ if !self.board.groups.contains_key(&g) => "group_missing",
+            _ if a > 1 => "invalid_value",
+            AxisMode::Hug if a == 0 && self.board.groups[&g].flow == "Wrap" => "wrap_width_fixed",
+            _ => "",
         }
     }
     pub fn create(&mut self, g: Id, selection: &[Id], width: f32) -> Outcome {
@@ -391,7 +318,7 @@ impl<G: Geometry> State<G> {
             .filter(|m| b.live.contains(m))
             .collect();
         if reason.is_empty() && !xs.is_empty() {
-            let width = xs.iter().fold(self.geometry.extent(width), |w, &m| {
+            let width = xs.iter().fold(width, |w, &m| {
                 w.max(b.owner(m).map_or(b.members[&m].size[0], |owner| {
                     self.geometry.rendered(&b, owner, m, 0)
                 }))
@@ -427,30 +354,29 @@ impl<G: Geometry> State<G> {
         }
         self.commit(b, reason, "dragIn")
     }
-    pub fn paste(&mut self, g: Id, anchor: Id, m: Id, width: f32) -> Outcome {
+    pub fn paste(&mut self, m: Id, width: f32) -> Outcome {
         let reason = if self.board.live.contains(&m) {
             "item_exists"
-        } else if g != -1 && !self.board.groups.contains_key(&g) {
-            "group_missing"
-        } else if g != -1 && anchor != -1 && !self.board.groups[&g].order.contains(&anchor) {
-            "member_missing"
         } else {
             ""
         };
         let mut b = self.board.clone();
         if reason.is_empty() {
             b.live.insert(m);
-            b.members.insert(m, self.geometry.pasted_member(m, width));
-            if g != -1 {
-                let slot = if anchor == -1 {
-                    b.groups[&g].order.len()
-                } else {
+            let mut member = self.geometry.pasted_member(m, width);
+            member.fill.clear();
+            member.absolute = false;
+            b.members.insert(m, member);
+            if let Some(g) = self.dock.group() {
+                let slot = if let Some(anchor) = self.dock.member() {
                     b.groups[&g]
                         .order
                         .iter()
                         .position(|&x| x == anchor)
                         .unwrap()
                         + 1
+                } else {
+                    b.groups[&g].order.len()
                 };
                 self.attach(&mut b, g, m, slot as i64);
             }
@@ -561,10 +487,11 @@ impl<G: Geometry> State<G> {
         }
         self.commit(b, reason, "setFlow")
     }
+    /// Number spacing uses the number; the Auto variants keep it for a later return to Number.
     pub fn setGap(&mut self, g: Id, gap: &str, number: f32) -> Outcome {
         let reason = if !self.board.groups.contains_key(&g) {
             "group_missing"
-        } else if !["Number", "Between", "Evenly", "Around"].contains(&gap) {
+        } else if !["Number", "Between", "Evenly", "Around"].contains(&gap) || !number.is_finite() {
             "invalid_value"
         } else {
             ""
@@ -573,48 +500,60 @@ impl<G: Geometry> State<G> {
         if reason.is_empty() {
             let group = b.groups.get_mut(&g).unwrap();
             group.gap = gap.into();
-            if gap == "Number" {
-                group.number = number;
-            } else if group.flow != "Free" {
+            group.number = number;
+            if gap != "Number" && group.flow != "Free" {
                 group.fixed.insert(group.primary());
             }
         }
         self.commit(b, reason, "setGap")
     }
-    pub fn setAxisMode(&mut self, g: Id, a: usize, fixed: bool) -> Outcome {
-        let reason = self.axis_reason(g, a, fixed, 1.0);
+    /// Hug freezes Fill members at their rendered size and returns primary-axis Auto to Number.
+    pub fn setAxisMode(&mut self, g: Id, a: usize, mode: AxisMode) -> Outcome {
+        let reason = self.axis_reason(g, a, mode);
         let mut b = self.board.clone();
         if reason.is_empty() {
-            let size = self.geometry.measured(&b, g, a);
-            self.axis_changed(&mut b, g, a, fixed, size);
+            match mode {
+                AxisMode::Fixed(size) => {
+                    let group = b.groups.get_mut(&g).unwrap();
+                    group.fixed.insert(a);
+                    group.size[a] = size;
+                }
+                AxisMode::Hug => {
+                    for &m in &self.board.groups[&g].order {
+                        if b.members[&m].fill.contains(&a) {
+                            let size = self.geometry.rendered(&self.board, g, m, a);
+                            let member = b.members.get_mut(&m).unwrap();
+                            member.fill.remove(&a);
+                            member.size[a] = size;
+                        }
+                    }
+                    let group = b.groups.get_mut(&g).unwrap();
+                    group.fixed.remove(&a);
+                    if group.flow != "Free" && a == group.primary() {
+                        group.gap = "Number".into();
+                    }
+                }
+            }
         }
         self.commit(b, reason, "setAxisMode")
     }
-    pub fn resizeEdge(&mut self, g: Id, a: usize, dimension: f32) -> Outcome {
-        let reason = self.axis_reason(g, a, true, dimension);
-        let mut b = self.board.clone();
-        if reason.is_empty() {
-            self.axis_changed(&mut b, g, a, true, self.geometry.extent(dimension));
+    fn member_mode_reason(&self, g: Id, m: Id, a: usize, fill: bool) -> &'static str {
+        if self.board.groups[&g].flow == "Free" || self.board.members[&m].absolute {
+            "control_inactive"
+        } else if a > 1 {
+            "invalid_value"
+        } else if fill && !self.board.groups[&g].fixed.contains(&a) {
+            "fixed_axis_required"
+        } else {
+            ""
         }
-        self.commit(b, reason, "resizeEdge")
-    }
-    pub fn hugAxis(&mut self, g: Id, a: usize) -> Outcome {
-        let reason = self.axis_reason(g, a, false, 1.0);
-        let mut b = self.board.clone();
-        if reason.is_empty() {
-            let size = self.geometry.measured(&b, g, a);
-            self.axis_changed(&mut b, g, a, false, size);
-        }
-        self.commit(b, reason, "hugAxis")
     }
     pub fn setMemberMode(&mut self, g: Id, m: Id, a: usize, fill: bool) -> Outcome {
         let missing = self.member_reason(g, m);
         let reason = if !missing.is_empty() {
             missing
-        } else if fill && !self.board.groups[&g].fixed.contains(&a) {
-            "fixed_axis_required"
         } else {
-            ""
+            self.member_mode_reason(g, m, a, fill)
         };
         let mut b = self.board.clone();
         if reason.is_empty() {
@@ -628,30 +567,6 @@ impl<G: Geometry> State<G> {
             member.size[a] = size;
         }
         self.commit(b, reason, "setMemberMode")
-    }
-    pub fn configure(
-        &mut self,
-        g: Id,
-        clip: bool,
-        alignX: usize,
-        alignY: usize,
-        padding: f32,
-        rowGap: f32,
-    ) -> Outcome {
-        let reason = if !self.board.groups.contains_key(&g) {
-            "group_missing"
-        } else {
-            ""
-        };
-        let mut b = self.board.clone();
-        if reason.is_empty() {
-            let group = b.groups.get_mut(&g).unwrap();
-            group.clip = clip;
-            group.align = [alignX, alignY];
-            group.padding = padding;
-            group.rowGap = rowGap;
-        }
-        self.commit(b, reason, "configure")
     }
     pub fn ungroup(&mut self, g: Id) -> Outcome {
         let reason = if !self.board.groups.contains_key(&g) {
@@ -678,8 +593,13 @@ impl<G: Geometry> State<G> {
             ""
         };
         let mut b = self.board.clone();
-        b.without(m);
-        b.live.remove(&m);
+        if reason.is_empty() {
+            b.without(m);
+            b.live.remove(&m);
+            let member = b.members.get_mut(&m).unwrap();
+            member.absolute = false;
+            member.fill.clear();
+        }
         self.commit(b, reason, "deleteMember")
     }
 }

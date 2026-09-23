@@ -1191,3 +1191,40 @@ fn trackpad_translation_and_pinch_preserve_pointer_world_anchor() {
     assert!(state.zoom > zoom_before);
     assert!(state.screen_to_world(pointer, rect).distance(world_before) < 0.001);
 }
+
+#[test]
+fn grouping_selection_keeps_lines_and_arrows_loose() {
+    let mut state = CanvasState::default();
+    for (id, kind) in [
+        (1, CanvasAnnotationKind::Line),
+        (2, CanvasAnnotationKind::Arrow),
+        (3, CanvasAnnotationKind::Textbox),
+    ] {
+        state.add_annotation(CanvasAnnotation::new(
+            id,
+            kind,
+            eframe::egui::pos2(0.0, 0.0),
+            eframe::egui::pos2(40.0, 40.0),
+            String::new(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
+    }
+    assert_eq!(
+        state
+            .create_named_group(4, "Group".into(), &[1, 2])
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        state
+            .create_named_group(4, "Group".into(), &[1, 2, 3])
+            .unwrap(),
+        Some(4)
+    );
+    assert_eq!(state.groups()[0].members, [3]);
+    assert_eq!(state.all_annotation_ids().len(), 3);
+}

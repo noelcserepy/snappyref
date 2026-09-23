@@ -51,7 +51,7 @@ jobs:
       - name: Install Quint
         run: npm install --global @informalsystems/quint@0.32.0
 
-      - name: Check grouping model and replay traces
+      - name: Check grouping models and replay traces
         run: |
           sh specs/grouping/check.sh
           sh specs/grouping/replay.sh

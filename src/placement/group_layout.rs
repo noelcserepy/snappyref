@@ -277,17 +277,6 @@ mod tests {
     }
 
     #[test]
-    fn incoming_fits_but_container_resize_preserves_existing_sizes() {
-        let (mut group, members) = fixture(&[(200.0, 80.0), (200.0, 100.0)]);
-        let result = layout_group(&group, &members, &[1]).unwrap();
-        assert_eq!(result.members[0].1.size, members[0].1.size);
-        assert_eq!(result.members[1].1.scaled_size(), vec2(100.0, 50.0));
-        group.container.size.x = 70.0;
-        let narrow = layout_group(&group, &result.members, &[]).unwrap();
-        assert_eq!(narrow.members[1].1.scaled_size(), vec2(100.0, 50.0));
-    }
-
-    #[test]
     fn flows_preserve_order_and_uniform_scale_preserves_relative_geometry() {
         let (mut group, members) = fixture(&[(60.0, 20.0), (30.0, 40.0)]);
         for flow in [GroupFlow::Row, GroupFlow::Column] {

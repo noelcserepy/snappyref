@@ -1,7 +1,10 @@
 #!/bin/sh
+# Traces from the interaction modules, replayed against the Rust grouping state; layout and
+# enablement are checked by Rust tests over their own input sets.
 set -eu
 cd "$(dirname "$0")/../.."
 mkdir -p specs/traces
-quint run specs/grouping/spec.qnt --mbt --n-traces=200 --max-samples=200 --max-steps=20 --seed=0x1 --out-itf=specs/traces/short.itf.json --verbosity=1
-quint run specs/grouping/spec.qnt --mbt --n-traces=50 --max-samples=50 --max-steps=60 --seed=0x2 --out-itf=specs/traces/long.itf.json --verbosity=1
+for module in sizing board; do
+  quint run "specs/grouping/$module.qnt" --mbt --n-traces=200 --max-samples=200 --max-steps=30 --seed=0x1 --out-itf="specs/traces/$module.itf.json" --verbosity=1
+done
 cargo test --locked grouping

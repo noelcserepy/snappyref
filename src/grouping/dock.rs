@@ -138,32 +138,16 @@ impl<G: Geometry> State<G> {
             _ => self.dock.group_shown(),
         }
     }
+    /// enablement.qnt proved the designer's rules equal the admission, so enabled is derived.
     pub fn controlEnabled(&self, c: &Control) -> bool {
-        if !self.controlShown(c) {
-            return false;
-        }
-        let g = &self.board.groups[&self.dock.group().unwrap()];
-        match c {
-            Control::Gap(_) => g.flow != "Free" && g.gap == "Number",
-            Control::Align(xy) => {
-                g.flow != "Free" && (g.gap == "Number" || xy[g.primary()] == g.align[g.primary()])
-            }
-            Control::Auto(_) => g.flow != "Free",
-            Control::Hug(a) => !(*a == 0 && g.flow == "Wrap"),
-            Control::MemberMode(a, fill) => {
-                self.memberLayoutEnabled() && (!fill || g.fixed.contains(a))
-            }
-            Control::Earlier | Control::Later => {
-                self.memberLayoutEnabled()
-                    && self
-                        .arrowTarget(
-                            self.dock.group().unwrap(),
-                            self.dock.member().unwrap(),
-                            self.order_direction(matches!(c, Control::Later)),
-                        )
-                        .is_some()
-            }
-            _ => true,
+        self.controlReason(c).is_empty()
+    }
+    /// The Hug button toggles: a fixed axis hugs, a hugging axis freezes at its current size.
+    fn hug_target(g: &Group, a: usize) -> AxisMode {
+        if g.fixed.contains(&a) {
+            AxisMode::Hug
+        } else {
+            AxisMode::Fixed(g.size.get(a).copied().unwrap_or(0.0))
         }
     }
     fn order_direction(&self, later: bool) -> &'static str {
@@ -196,11 +180,25 @@ impl<G: Geometry> State<G> {
             Control::Align(xy) if g.gap != "Number" && xy[g.primary()] != g.align[g.primary()] => {
                 "primary_alignment_inactive"
             }
-            Control::Dimension(a, n) => self.axis_reason(id, *a, true, *n),
-            Control::Hug(a) => self.axis_reason(id, *a, !g.fixed.contains(a), 1.0),
-            Control::MemberMode(..) if !self.memberLayoutEnabled() => "control_inactive",
-            Control::MemberMode(a, true) if !g.fixed.contains(a) => "fixed_axis_required",
-            Control::Earlier | Control::Later if !self.controlEnabled(c) => "no_neighbor",
+            Control::Dimension(a, n) => self.axis_reason(id, *a, AxisMode::Fixed(*n)),
+            Control::Hug(a) => self.axis_reason(id, *a, Self::hug_target(g, *a)),
+            Control::MemberMode(a, fill) => {
+                self.member_mode_reason(id, self.dock.member().unwrap(), *a, *fill)
+            }
+            Control::Earlier | Control::Later => {
+                if self
+                    .arrowTarget(
+                        id,
+                        self.dock.member().unwrap(),
+                        self.order_direction(matches!(c, Control::Later)),
+                    )
+                    .is_some()
+                {
+                    ""
+                } else {
+                    "no_neighbor"
+                }
+            }
             _ => "",
         }
     }
@@ -213,7 +211,6 @@ impl<G: Geometry> State<G> {
         self.apply(
             self.board.clone(),
             reason,
-            "selectGroup",
             Dock {
                 panel: Panel::GroupDock {
                     group: g,
@@ -230,7 +227,6 @@ impl<G: Geometry> State<G> {
         self.apply(
             self.board.clone(),
             "",
-            "editMember",
             Dock {
                 panel: Panel::MemberDock {
                     group: g,
@@ -241,7 +237,7 @@ impl<G: Geometry> State<G> {
         )
     }
     pub fn clearSelection(&mut self) -> Outcome {
-        self.apply(self.board.clone(), "", "clearSelection", Dock::default())
+        self.apply(self.board.clone(), "", Dock::default())
     }
     pub fn toggleAlign(&mut self) -> Outcome {
         if !self.alignEnabled() {
@@ -250,7 +246,6 @@ impl<G: Geometry> State<G> {
         self.apply(
             self.board.clone(),
             "",
-            "toggleAlign",
             Dock {
                 panel: Panel::GroupDock {
                     group: self.dock.group().unwrap(),
@@ -265,12 +260,12 @@ impl<G: Geometry> State<G> {
         if let Panel::GroupDock { align_open, .. } = &mut d.panel {
             *align_open = false;
         }
-        self.apply(self.board.clone(), "", "dismissAlign", d)
+        self.apply(self.board.clone(), "", d)
     }
     pub fn focusText(&mut self, active: bool) -> Outcome {
         let mut d = self.dock.clone();
         d.text_focus = active;
-        self.apply(self.board.clone(), "", "focusText", d)
+        self.apply(self.board.clone(), "", d)
     }
     pub fn escape(&mut self) -> Outcome {
         let mut d = self.dock.clone();
@@ -284,7 +279,7 @@ impl<G: Geometry> State<G> {
         } else {
             d = Dock::default();
         }
-        self.apply(self.board.clone(), "", "escape", d)
+        self.apply(self.board.clone(), "", d)
     }
     pub fn useDock(&mut self, c: Control) -> Outcome {
         let reason = self.controlReason(&c);
@@ -301,36 +296,33 @@ impl<G: Geometry> State<G> {
             }
             Control::Flow(f) => self.setFlow(g, &f),
             Control::Gap(n) => self.setGap(g, "Number", n),
-            Control::RowGap(n) => self.configure(
-                g,
-                config.clip,
-                config.align[0],
-                config.align[1],
-                config.padding,
-                n,
-            ),
-            Control::Padding(n) => self.configure(
-                g,
-                config.clip,
-                config.align[0],
-                config.align[1],
-                n,
-                config.rowGap,
-            ),
-            Control::Align(xy) => {
-                self.configure(g, config.clip, xy[0], xy[1], config.padding, config.rowGap)
-            }
             Control::Auto(mode) => self.setGap(g, &mode, config.number),
-            Control::Dimension(a, n) => self.resizeEdge(g, a, n),
-            Control::Hug(a) => self.setAxisMode(g, a, !config.fixed.contains(&a)),
-            Control::Clip => self.configure(
-                g,
-                !config.clip,
-                config.align[0],
-                config.align[1],
-                config.padding,
-                config.rowGap,
-            ),
+            Control::Dimension(a, n) => self.setAxisMode(g, a, AxisMode::Fixed(n)),
+            Control::Hug(a) => self.setAxisMode(g, a, Self::hug_target(&config, a)),
+            Control::RowGap(_) | Control::Padding(_) | Control::Align(_) | Control::Clip => {
+                let mut b = self.board.clone();
+                let group = b.groups.get_mut(&g).unwrap();
+                let op = match c {
+                    Control::RowGap(n) => {
+                        group.rowGap = n;
+                        "rowGap"
+                    }
+                    Control::Padding(n) => {
+                        group.padding = n;
+                        "padding"
+                    }
+                    Control::Align(xy) => {
+                        group.align = xy;
+                        "align"
+                    }
+                    Control::Clip => {
+                        group.clip = !group.clip;
+                        "clip"
+                    }
+                    _ => unreachable!(),
+                };
+                self.commit(b, "", op)
+            }
             Control::Ungroup => self.ungroup(g),
             Control::MemberMode(a, fill) => {
                 self.setMemberMode(g, self.dock.member().unwrap(), a, fill)
@@ -397,28 +389,19 @@ impl<G: Geometry> State<G> {
             }
             "Primary+G" => self.create(identity, selection, width),
             "Primary+Shift+G" => self.useDock(Control::Ungroup),
-            "G" => self.commit(self.board.clone(), "", "requestAddPalette"),
-            "Primary+V" => self.paste(
-                self.dock.group().unwrap_or(-1),
-                self.dock.member().unwrap_or(-1),
-                identity,
-                width,
-            ),
+            "Primary+V" => self.paste(identity, width),
             "Primary+D" if self.dock.member().is_some() => {
                 self.duplicate(self.dock.member().unwrap(), identity)
             }
             "Delete" if self.dock.member().is_some() => {
                 self.deleteMember(self.dock.member().unwrap())
             }
-            "Primary+D" => self.commit(self.board.clone(), "", "requestDuplicateSelection"),
-            "Primary+C" => self.commit(self.board.clone(), "", "requestCopySelection"),
-            "Delete" => self.commit(self.board.clone(), "", "requestDeleteSelection"),
             _ => self.commit(self.board.clone(), "unhandled_key", "pressKey"),
         }
     }
     pub fn doubleClickHandle(&mut self, a: usize) -> Outcome {
         if self.dock.group_shown() {
-            self.hugAxis(self.dock.group().unwrap(), a)
+            self.setAxisMode(self.dock.group().unwrap(), a, AxisMode::Hug)
         } else {
             self.commit(self.board.clone(), "dock_unavailable", "doubleClickHandle")
         }
@@ -428,31 +411,17 @@ impl<G: Geometry> State<G> {
             return self.commit(self.board.clone(), "dock_unavailable", "hugCorner");
         }
         let g = self.dock.group().unwrap();
-        let mut b = self.board.clone();
-        if b.groups[&g].flow != "Wrap" {
-            let n = self.geometry.measured(&b, g, 0);
-            self.axis_changed(&mut b, g, 0, false, n);
+        if self.board.groups[&g].flow != "Wrap" {
+            self.setAxisMode(g, 0, AxisMode::Hug);
         }
-        let n = self.geometry.measured(&b, g, 1);
-        self.axis_changed(&mut b, g, 1, false, n);
-        self.commit(b, "", "hugCorner")
+        self.setAxisMode(g, 1, AxisMode::Hug)
     }
+
     pub fn dropMember(&mut self, g: Id, m: Id, slot: i64, outside: bool) -> Outcome {
-        let reason = self.member_reason(g, m);
-        if !reason.is_empty() {
-            return self.commit(self.board.clone(), reason, "dropMember");
-        }
-        if outside && !self.board.members[&m].absolute {
+        if outside && self.member_reason(g, m).is_empty() && !self.board.members[&m].absolute {
             self.detach(g, m)
         } else {
             self.reorder(g, m, slot)
-        }
-    }
-    pub fn uniformScale(&mut self) -> Outcome {
-        if self.dock.group_shown() {
-            self.commit(self.board.clone(), "", "requestUniformScale")
-        } else {
-            self.commit(self.board.clone(), "dock_unavailable", "uniformScale")
         }
     }
 }

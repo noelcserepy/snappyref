@@ -281,7 +281,7 @@ impl CanvasState {
             let result = if duplicate && anchor != -1 {
                 state.duplicate(anchor, id)
             } else {
-                state.paste(g, anchor, id, member.size[0])
+                state.paste(id, member.size[0])
             };
             if let Outcome::Rejected(reason) = result {
                 return Err(reason.into());

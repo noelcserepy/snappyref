@@ -1,5 +1,6 @@
 use super::CanvasState;
 use crate::data::{Group, GroupFlow, GroupId, RectGeometry};
+use crate::grouping::{AxisMode, Geometry};
 use eframe::egui;
 
 impl CanvasState {
@@ -192,27 +193,28 @@ impl CanvasState {
                 edit!(s.setGap(g, &group.layout.auto, group.gap));
             }
             for a in 0..2 {
-                if old.layout.fixed[a] != group.layout.fixed[a] {
-                    edit!(s.setAxisMode(g, a, group.layout.fixed[a]));
-                }
-                if old.container.scaled_size()[a] != group.container.scaled_size()[a]
-                    || (old.padding != group.padding && s.board.groups[&g].fixed.contains(&a))
-                {
-                    edit!(s.resizeEdge(
-                        g,
-                        a,
-                        group.container.scaled_size()[a] - group.padding * 2.0
-                    ));
+                // A resized axis is fixed at its new usable extent; a newly fixed axis keeps its size.
+                let resized = old.container.scaled_size()[a] != group.container.scaled_size()[a]
+                    || (old.padding != group.padding && group.layout.fixed[a]);
+                if resized || old.layout.fixed[a] != group.layout.fixed[a] {
+                    let mode = if resized {
+                        AxisMode::Fixed(
+                            (group.container.scaled_size()[a] - group.padding * 2.0).max(0.0),
+                        )
+                    } else if group.layout.fixed[a] {
+                        AxisMode::Fixed(s.geometry.measured(&s.board, g, a))
+                    } else {
+                        AxisMode::Hug
+                    };
+                    edit!(s.setAxisMode(g, a, mode));
                 }
             }
-            edit!(s.configure(
-                g,
-                group.layout.clip,
-                group.layout.align[0],
-                group.layout.align[1],
-                group.padding,
-                group.layout.row_gap
-            ));
+            let stored = s.board.groups.get_mut(&g).unwrap();
+            stored.clip = group.layout.clip;
+            stored.align = group.layout.align;
+            stored.padding = group.padding;
+            stored.rowGap = group.layout.row_gap;
+            s.refresh_sizes();
             result
         })?;
         if let Some(saved) = self.document.groups.iter_mut().find(|g| g.id == group.id)
@@ -259,22 +261,14 @@ impl CanvasState {
             .collect::<Vec<_>>();
         if dirty.iter().any(|&id| self.group_for_member(id).is_some()) {
             let mut s = self.grouping_state();
-            let ids = s.board.groups.keys().copied().collect::<Vec<_>>();
-            for g in ids {
-                let c = s.board.groups[&g].clone();
-                s.configure(g, c.clip, c.align[0], c.align[1], c.padding, c.rowGap);
-            }
+            s.refresh_sizes();
             let _ = self.apply_group_state(s, None);
         }
     }
     pub(super) fn reflow_group_for_member(&mut self, id: i64) {
         if self.group_for_member(id).is_some() {
             let mut s = self.grouping_state();
-            let ids = s.board.groups.keys().copied().collect::<Vec<_>>();
-            for g in ids {
-                let c = s.board.groups[&g].clone();
-                s.configure(g, c.clip, c.align[0], c.align[1], c.padding, c.rowGap);
-            }
+            s.refresh_sizes();
             let _ = self.apply_group_state(s, None);
         }
     }
@@ -1017,7 +1011,7 @@ impl CanvasState {
             if (resize || scale || body)
                 && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary))
             {
-                if scale && self.grouping_state().uniformScale() != crate::grouping::Outcome::Ok {
+                if scale && !self.current_group_dock().group_shown() {
                     return true;
                 }
                 let group = group.clone();
