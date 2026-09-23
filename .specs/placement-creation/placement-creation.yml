@@ -149,7 +149,7 @@ interface:
       caller_obligations: {}
 
   guarantees:
-    explicit-group-paste: Clipboard intake captures the selected group or member at reservation. It appends to the group or inserts after the member. Other source intake never uses a remembered group destination.
+    explicit-group-paste: Clipboard intake must capture the explicit Grouping paste target at reservation and preserve that target through asynchronous creation; other source intake must not infer a Group target.
     real-placement-preview: Provisional content uses Placements, not a second preview or draft object.
     logical-placement-continuity: Content resolution and commit must preserve the visible Placement that the user has already manipulated.
     one-provisional-batch: At most one provisional Placement batch is active at a time.
@@ -165,6 +165,9 @@ interface:
     diagnostics-independent: Disabling or omitting diagnostic reporting must not alter Placement resolution, accepted content, history, persistence, batch completion, or eligibility for semantic indexing.
 
   requires:
+    grouping-target:
+      target: "[[grouping#/interface]]"
+      reason: Defines the explicit Group or member paste target and its insertion behavior.
     canonical-asset-registration:
       target: "[[local-library#/interface/operations/register-original/outcomes/registered]]"
       reason: Registers prepared originals and reuses exact canonical Assets.

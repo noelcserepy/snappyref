@@ -95,7 +95,28 @@ interface:
           reason: SpatialLayoutRejection
 
       behavior:
-        default-flow: A new Group must default to horizontal Wrap with fixed width and content-driven height.
+        default-flow: A new Group must default to Wrap, Fixed width from selection bounds plus padding, Hug height, numeric and row gaps and padding from Placement Gap, Start alignment, and clipping off.
+        outer-and-usable-size:
+          statement: Displayed container dimensions are outer sizes and must remain positive and finite; usable capacity on each axis is the maximum of zero and outer size minus twice padding, including when padding exhausts a Fixed axis.
+          checks:
+            - grouping_outer_size_excludes_padding
+            - grouping_padding_exhausts_fixed_capacity
+        member-footprint: Layout must use rotated visual bounds as each member footprint.
+        fill-allocation:
+          statement: Each row divides nonnegative capacity remaining after Fixed footprints and numeric gaps equally among primary-axis Fill cells, using zero minimum Fill width for Wrap row breaks and zero numeric gap under Auto.
+          checks:
+            - grouping_numeric_fill_and_overflow_examples
+        image-fill: One Fill axis determines image scale by its ratio; two Fill axes aspect-fit the image within its allocated cell, while textboxes stretch Fill axes independently.
+        zero-fill-result: Exhausted Fill cells must produce nonnegative dimensions, including zero, accepted under Placement's contextual geometry contract.
+        auto-distribution:
+          statement: After Fill allocation, Between distributes leftover only between members, Evenly equally at both ends and between, and Around with half an inter-member share at each end; a lone member starts under Between and centers under Evenly or Around.
+          checks:
+            - grouping_auto_spacing_examples
+        wrap-arrow-target: Wrap vertical navigation must resolve the member in the same column of the adjacent row, or no target when that row or column is absent.
+        hug-envelope: Hug must contain flowing member bounds plus padding, including Free manual bounds, while empty Groups retain their last container size.
+        free-geometry: Free must preserve manual positions and ignore flow spacing, Auto, alignment and Fill until ordered flow resumes.
+        absolute-geometry: Absolute members must preserve top-left-relative offsets and stay outside flow and Hug calculations.
+        insertion-slot: Drag insertion and restoring an Absolute member to flow must resolve the nearest ordered slot from its center.
         row-flow: Row must place members in their supplied order along one horizontal row.
         column-flow: Column must place members in their supplied order along one vertical column.
         wrap-flow: Wrap must place members left to right in supplied order, starting a new row when the next member does not fit the available width.
@@ -144,14 +165,27 @@ interface:
         non-empty-selection: Supply at least one Placement.
 
   guarantees:
-    group-sizing: Fill requires a Fixed parent axis. Hug freezes Fill at its current size and restores the last numeric primary gap. Fixed overflow never shrinks Fixed members.
+    group-sizing:
+      statement: Fill requires a Fixed parent axis; entering Hug freezes Fill at rendered size on that axis and restores the last numeric primary gap if that axis is primary, while changing Fill to Fixed freezes its rendered size.
+      checks:
+        - src/grouping/tests.rs::sizing::autoHugConversionTest
+        - src/grouping/tests.rs::sizing::editConstraintsTest
+        - src/grouping/tests.rs::sizing::transferFillToHugTest
+        - src/grouping/tests.rs::stored_auto_variant_and_number
+    group-mode-admission: Wrap must refuse Hug width without changing flow; Free and Absolute keep sizing intent dormant and refuse member sizing edits; Auto fixes the primary axis at its current rendered size and Off restores the last numeric gap.
+    group-mode-conversion: Changing flow must preserve explicit sizing choices except that Wrap requires Fixed width and active Auto requires a Fixed primary axis; transfer must preserve compatible Fill intent and freeze incompatible axes at rendered size.
+    group-control-context: Numeric gap editing must be inactive in Free or Auto; row gap is available only in Wrap, alignment is inactive in Free, and member sizing is inactive in Free or Absolute while saved values remain intact.
+    group-disabled-admission: A hidden or disabled sizing control must reject without modifying unrelated settings to enable itself; under Auto only counter-axis alignment choices at the saved primary coordinate remain active.
     group-gap-and-alignment: Numeric gaps and Wrap row gaps may be negative. Fill consumes leftover before Between, Evenly, or Around distributes it. Nine-position alignment places remaining content and the Wrap row stack.
-    group-absolute-and-clip: Absolute members retain relative offsets, do not contribute to Hug, and paint above flowing members. Clip crops paint to the container without changing layout. The group hit area is its container.
+    group-absolute-and-clip: Clipping must not change layout geometry or the container used for Group hit testing.
     one-gap-meaning: Placement Gap has the same edge-to-edge meaning in snapping, arrangement, settling, and initial placement. Group gap uses that same meaning with a Group-owned value.
     geometry-only: Spatial Layout must not mutate Asset content, Board history, or persistence.
     repeatable-results: Repeating an already satisfied arrangement, Group layout, or settle request must produce unchanged.
 
-  requires: {}
+  requires:
+    placement-geometry:
+      target: "[[placement#/interface/operations/change-geometry/behavior/zero-fill-geometry]]"
+      reason: Owns valid zero Fill display geometry and image recovery through history and persistence.
 
 decisions:
   shared-placement-gap:
@@ -196,4 +230,25 @@ decisions:
       scale-only-container:
         status: rejected
         reason: It prevents container resizing from controlling the flow of references.
+    sources: []
+
+  exhausted-padding-capacity:
+    current: Allow positive outer container dimensions even when padding leaves zero usable capacity.
+    affects:
+      - "[[#/interface/operations/layout-group/behavior/outer-and-usable-size]]"
+    reasons:
+      - Padding changes usable capacity without making a positive outer container invalid.
+      - The same nonnegative Fill allocation handles exhaustion by padding and by Fixed siblings.
+    consequences:
+      - Fixed members may overflow and Fill may reach zero.
+    reconsider_when:
+      - Zero usable capacity cannot remain finite and recoverable while outer geometry remains valid.
+    examples:
+      - given: A Fixed outer width of 100 with padding 50.
+        when: The user submits that padding.
+        then: The edit succeeds with zero usable width and the outer width stays 100.
+    explored_paths:
+      reject-exhausted-padding:
+        status: rejected
+        reason: It confuses valid outer geometry with available layout capacity.
     sources: []
