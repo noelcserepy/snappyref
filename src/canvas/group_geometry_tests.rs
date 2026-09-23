@@ -90,3 +90,37 @@ fn grouping_zero_fill_recovers_asset_ratio() {
         assert_eq!(canvas.document.placements[0].asset_id(), Some(11));
     }
 }
+
+#[test]
+fn zero_fill_recovers_when_flow_or_absolute_resumes() {
+    for absolute in [false, true] {
+        let mut canvas = image_canvas(0.37);
+        canvas
+            .group_edit(|s| s.setMemberMode(7, 1, 0, true))
+            .unwrap();
+        canvas
+            .group_edit(|s| s.useDock(Control::Padding(200.)))
+            .unwrap();
+        if absolute {
+            canvas.group_edit(|s| s.toggleAbsolute(7, 1, 0)).unwrap();
+        } else {
+            canvas.group_edit(|s| s.setFlow(7, "Free")).unwrap();
+        }
+        canvas
+            .group_edit(|s| s.useDock(Control::Padding(10.)))
+            .unwrap();
+        assert_eq!(canvas.group_member_geometry(1).unwrap().size, Vec2::ZERO);
+        if absolute {
+            canvas.group_edit(|s| s.toggleAbsolute(7, 1, 0)).unwrap();
+        } else {
+            canvas.group_edit(|s| s.setFlow(7, "Row")).unwrap();
+        }
+        let rect = canvas.group_member_geometry(1).unwrap();
+        assert!(
+            rect.size.min_elem() > 0.,
+            "absolute={absolute}, rect={rect:?}, group={:?}",
+            canvas.groups()[0]
+        );
+        assert!((rect.size.x / rect.size.y - 2.).abs() < 0.0001);
+    }
+}

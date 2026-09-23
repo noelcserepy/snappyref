@@ -70,8 +70,6 @@ impl CanvasState {
                     if member.kind == "Image"
                         && member.size.contains(&0.0)
                         && mode.fill.contains(&true)
-                        && !mode.absolute
-                        && group.flow != GroupFlow::Free
                         && let Some(p) = self.placement_for_id(id)
                         && let Some(asset) = p.loaded_asset()
                     {

@@ -19,6 +19,14 @@ fn alignment(n: usize, space: f32) -> f32 {
     space.max(0.0) * n as f32 * 0.5
 }
 impl Pixels {
+    // Free and Absolute members retain rendered geometry even when the core carries
+    // an Asset ratio for a zero Fill member's next active allocation.
+    fn preserved_size(&self, b: &Board, m: Id) -> Vec2 {
+        self.rects.get(&m).map_or_else(
+            || Vec2::from(b.members[&m].size),
+            |rect| rect.visual_bounds().size(),
+        )
+    }
     pub fn layout(&self, b: &Board, g: Id) -> Layout {
         let group = &b.groups[&g];
         let mut result = Layout {
@@ -32,7 +40,7 @@ impl Pixels {
         let cross = 1 - primary;
         if group.flow == "Free" {
             for &m in &group.order {
-                result.sizes.insert(m, Vec2::from(b.members[&m].size));
+                result.sizes.insert(m, self.preserved_size(b, m));
             }
             let bounds = b
                 .flowing(g)
@@ -181,7 +189,7 @@ impl Pixels {
         });
         for &m in &group.order {
             if b.members[&m].absolute {
-                result.sizes.insert(m, Vec2::from(b.members[&m].size));
+                result.sizes.insert(m, self.preserved_size(b, m));
             }
         }
         result
@@ -307,7 +315,7 @@ mod dock_geometry_examples {
         }
     }
     #[test]
-    fn grouping_outer_size_excludes_padding() {
+    fn grouping_outer_size_and_usable_capacity() {
         let group = Group {
             id: 0,
             name: "Faces".into(),
