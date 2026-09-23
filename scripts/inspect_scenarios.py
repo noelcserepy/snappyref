@@ -10,6 +10,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 # name: test filter, artifact scenario, refactor coverage, network/ignored
 SCENARIOS = {
+    'group-dock-narrow': ('inspect_group_dock_narrow_writes_artifact', 'group-dock-narrow', False, False),
     'group-dock': ('inspect_group_dock_writes_artifact', 'group-dock', False, False),
     'member-dock': ('inspect_member_dock_writes_artifact', 'member-dock', False, False),
     'annotation-editing': ('inspect_annotation_creation_editing_and_styles_writes_artifact', 'annotation-editing', False, False),

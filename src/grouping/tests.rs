@@ -2,7 +2,6 @@ use super::*;
 use crate::placement::group_pixels::Pixels;
 use serde_json::{Value, json};
 
-// Unit widths, capacity and gap give board.qnt one Wrap member per row.
 fn init() -> State<Pixels> {
     State::init(
         Board {
@@ -56,38 +55,61 @@ fn set(xs: impl IntoIterator<Item = i64>) -> Value {
     xs.sort_by_key(ToString::to_string);
     json!({"set": xs})
 }
-fn outcome(s: &State<Pixels>) -> Value {
+fn outcome<G>(s: &State<G>) -> Value {
     match s.outcome {
         Outcome::Ok => json!({"tag":"Ok", "value":[]}),
-        Outcome::Rejected(r) => json!({"tag":"Rejected", "value":r}),
+        Outcome::Rejected(reason) => {
+            let canonical = match reason {
+                "group_exists" => "group-exists",
+                "group_missing" => "group-missing",
+                "item_missing" => "item-missing",
+                "item_exists" => "item-exists",
+                "member_missing" => "member-missing",
+                "control_inactive" => "control-inactive",
+                "dock_unavailable" => "dock-unavailable",
+                "no_neighbor" => "no-neighbor",
+                "text_owns_key" => "text-owns-key",
+                "unhandled_key" => "unhandled-key",
+                other => panic!("Unexpected board outcome {other}"),
+            };
+            json!({"tag":"Rejected", "value":canonical})
+        }
     }
 }
-/// The state before a step and the leaf operation the step routed to. The modules' `event`
-/// and `effects` variables are transition evidence, computed here rather than stored.
+/// Replay supplies Spatial Layout's resolved identity. Pixel behavior has separate real-value tests.
+#[derive(Default)]
+struct ReplayGeometry {
+    pixels: Pixels,
+    target: Option<Id>,
+}
+impl Geometry for ReplayGeometry {
+    fn wrap_arrow_target(&self, _: &Board, _: Id, _: Id, _: &str) -> Option<Id> {
+        self.target
+    }
+    fn pasted_member(&self, id: Id, width: f32) -> Member {
+        self.pixels.pasted_member(id, width)
+    }
+    fn fit(&self, member: &Member, width: f32) -> [f32; 2] {
+        self.pixels.fit(member, width)
+    }
+    fn rendered(&self, b: &Board, g: Id, m: Id, a: usize) -> f32 {
+        self.pixels.rendered(b, g, m, a)
+    }
+    fn measured(&self, b: &Board, g: Id, a: usize) -> f32 {
+        self.pixels.measured(b, g, a)
+    }
+}
 struct Transition {
     board: Board,
     dock: Dock,
     op: String,
 }
 impl Transition {
-    fn event(&self, s: &State<Pixels>) -> &str {
-        if s.outcome == Outcome::Ok {
-            &self.op
-        } else {
-            "rejected"
-        }
-    }
-    fn refusal(&self, s: &State<Pixels>) -> bool {
+    fn refusal<G>(&self, s: &State<G>) -> bool {
         s.outcome == Outcome::Ok || (s.board == self.board && s.dock == self.dock)
     }
-    fn isolated(&self, s: &State<Pixels>) -> bool {
-        self.op != "add"
-            || self.board.members.iter().all(|(&m, before)| {
-                self.board.owner(m) != s.board.owner(m) || before.fill == s.board.members[&m].fill
-            })
-    }
-    fn empty(&self, s: &State<Pixels>) -> bool {
-        !["create", "add", "dragIn", "detach", "deleteMember"].contains(&self.op.as_str())
+    fn empty<G>(&self, s: &State<G>) -> bool {
+        !["create", "add", "insert", "detach", "delete"].contains(&self.op.as_str())
             || self.board.groups.iter().all(|(g, old)| {
                 s.board
                     .groups
@@ -95,7 +117,7 @@ impl Transition {
                     .is_some_and(|new| !new.order.is_empty() || new.flow == old.flow)
             })
     }
-    fn append(&self, s: &State<Pixels>) -> bool {
+    fn append<G>(&self, s: &State<G>) -> bool {
         self.op != "add"
             || self.board.groups.iter().all(|(g, old)| {
                 let new = &s.board.groups[g].order;
@@ -103,46 +125,32 @@ impl Transition {
             })
     }
 }
-/// Keys and dock controls record the operation they route to, as in board.qnt.
 fn routed(op: &str, picks: &Value) -> String {
     match op {
-        "useDock" => match picks["c"]["value"]["tag"].as_str().unwrap() {
-            "Flow" => "setFlow",
+        "control" => match picks["c"]["value"]["tag"].as_str().unwrap() {
+            "Flow" => "flow",
             "Ungroup" => "ungroup",
-            "Absolute" => "toggleAbsolute",
+            "Absolute" => "absolute",
             "Earlier" | "Later" => "arrow",
             _ => "detach",
         },
-        "pressPlainKey" => match picks["key"]["value"].as_str().unwrap() {
+        "key" => match picks["keypress"]["value"].as_str().unwrap() {
             "Escape" => "escape",
+            "Primary+G" => "create",
+            "Primary+V" => "paste",
+            "Primary+D" => "duplicate",
             "Primary+Shift+G" => "ungroup",
-            "Delete" => "deleteMember",
+            "Delete" => "delete",
             "Left" | "Right" | "Up" | "Down" => "arrow",
-            _ => "pressKey",
+            _ => "key",
         },
-        "pressCreateKey" => "create",
-        "pressPasteKey" => "paste",
-        "pressDuplicateKey" => "duplicate",
+        "drop" if picks["outside"]["value"] == true => "detach",
+        "drop" => "reorder",
         _ => op,
     }
     .into()
 }
-fn sizing_observation(s: &State<Pixels>, t: &Transition) -> Value {
-    json!({
-        "board": {
-            "groups": map(s.board.groups.iter().map(|(&id, g)| (id, json!({
-                "flow": g.flow, "fixed": set(g.fixed.iter().map(|&a| a as i64)),
-                "gap": if g.gap == "Number" { "Number" } else { "Auto" },
-            })))),
-            "members": map(s.board.members.iter().map(|(&id, m)| (id, json!({
-                "owner": s.board.owner(id).unwrap_or(-1), "fill": set(m.fill.iter().map(|&a| a as i64)),
-            })))),
-        },
-        "outcome": outcome(s), "event": t.event(s),
-        "effects": {"refusal": t.refusal(s), "isolated": t.isolated(s)},
-    })
-}
-fn board_observation(s: &State<Pixels>, t: &Transition) -> Value {
+fn board_observation(s: &State<ReplayGeometry>, t: &Transition) -> Value {
     let panel = match s.dock.panel {
         Panel::Hidden => json!({"tag":"Hidden", "value": []}),
         Panel::GroupDock { group, align_open } => {
@@ -159,18 +167,15 @@ fn board_observation(s: &State<Pixels>, t: &Transition) -> Value {
             "members":map(s.board.members.iter().map(|(&id,m)| (id,json!({"absolute":m.absolute})))),
         },
         "dock":{"panel":panel,"textFocus":s.dock.text_focus},
-        "outcome":outcome(s),"event":t.event(s),
+        "outcome":outcome(s),
         "effects":{"refusal":t.refusal(s),"empty":t.empty(s),"append":t.append(s)},
     })
 }
-fn replay(
-    module: &str,
-    make: fn() -> State<Pixels>,
-    observe: fn(&State<Pixels>, &Transition) -> Value,
-) {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("specs/traces");
+fn replay() {
+    let module = "board";
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".specs/traces");
     let mut files: Vec<_> = std::fs::read_dir(dir)
-        .expect("Generate traces with sh specs/grouping/replay.sh")
+        .expect("Generate traces with sh .specs/grouping/replay.sh")
         .map(|e| e.unwrap().path())
         .filter(|p| {
             p.file_name()
@@ -186,7 +191,7 @@ fn replay(
         let trace: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         let states = trace["states"].as_array().unwrap();
         *lengths.entry(states.len() - 1).or_default() += 1;
-        let mut s = make();
+        let mut s = State::init(init().board, ReplayGeometry::default(), 1.0);
         for (step, expected) in states.iter().enumerate() {
             let op = expected["mbt::actionTaken"]
                 .as_str()
@@ -203,16 +208,21 @@ fn replay(
                 &picks[k]["value"]
             };
             let n = |k: &str| pick(k).as_i64().unwrap();
-            let a = |k: &str| n(k) as usize;
             let flag = |k: &str| pick(k).as_bool().unwrap();
             let text = |k: &str| pick(k).as_str().unwrap();
             let selection = || {
-                pick("selection")["set"]
+                pick("selection")
                     .as_array()
                     .unwrap()
                     .iter()
                     .map(|n| n.as_i64().unwrap())
                     .collect::<Vec<_>>()
+            };
+            s.geometry.target = if matches!(op, "arrow" | "key") {
+                let target = n("target");
+                (target >= 0).then_some(target)
+            } else {
+                None
             };
             match op {
                 "init" => Outcome::Ok,
@@ -220,44 +230,24 @@ fn replay(
                 "add" => s.add(n("g"), n("m")),
                 "detach" => s.detach(n("g"), n("m")),
                 "ungroup" => s.ungroup(n("g")),
-                "setFlow" => s.setFlow(n("g"), text("flow")),
-                // Categories map to the current real values: Auto keeps a present Auto variant.
-                "setGap" => {
-                    let (gap, number) = match s.board.groups.get(&n("g")) {
-                        Some(x) if text("gap") == "Number" => ("Number".to_string(), x.number),
-                        Some(x) if x.gap == "Number" => ("Between".into(), x.number),
-                        Some(x) => (x.gap.clone(), x.number),
-                        None => (text("gap").into(), 1.0),
-                    };
-                    s.setGap(n("g"), &gap, number)
-                }
-                "setAxisMode" => {
-                    let mode = match s.board.groups.get(&n("g")) {
-                        Some(x) if flag("fixed") => AxisMode::Fixed(x.size[a("a")]),
-                        _ => AxisMode::Hug,
-                    };
-                    s.setAxisMode(n("g"), a("a"), mode)
-                }
-                "setMemberMode" => s.setMemberMode(n("g"), n("m"), a("a"), flag("fill")),
-                "dragIn" => s.dragIn(n("g"), n("m"), n("slot")),
+                "flow" => s.setFlow(n("g"), text("mode")),
+                "insert" => s.dragIn(n("g"), n("m"), n("slot")),
                 "paste" => s.paste(n("m"), 1.0),
                 "duplicate" => s.duplicate(n("source"), n("m")),
                 "reorder" => s.reorder(n("g"), n("m"), n("slot")),
                 "arrow" => s.arrow(n("g"), n("m"), text("direction")),
-                "toggleAbsolute" => s.toggleAbsolute(n("g"), n("m"), n("slot")),
-                "deleteMember" => s.deleteMember(n("m")),
-                "selectGroup" => s.selectGroup(n("g")),
-                "editMember" => s.editMember(n("m")),
-                "clearSelection" => s.clearSelection(),
-                "toggleAlign" => s.toggleAlign(),
-                "dismissAlign" => s.dismissAlign(),
-                "focusText" => s.focusText(flag("active")),
+                "absolute" => s.toggleAbsolute(n("g"), n("m"), n("slot")),
+                "delete" => s.deleteMember(n("m")),
+                "choose" => s.selectGroup(n("g")),
+                "edit" => s.editMember(n("m")),
+                "clear" => s.clearSelection(),
+                "alignment" => s.toggleAlign(),
+                "dismiss" => s.dismissAlign(),
+                "focus" => s.focusText(flag("active")),
                 "escape" => s.escape(),
-                "useDock" => s.useDock(board_control(pick("c"))),
-                "pressPlainKey" => s.pressKey(text("key"), 0, &[], 1.0),
-                "pressCreateKey" => s.pressKey("Primary+G", n("identity"), &selection(), 1.0),
-                "pressPasteKey" => s.pressKey("Primary+V", n("identity"), &[], 1.0),
-                "pressDuplicateKey" => s.pressKey("Primary+D", n("identity"), &[], 1.0),
+                "control" => s.useDock(board_control(pick("c"))),
+                "key" => s.pressKey(text("keypress"), n("identity"), &selection(), 1.0),
+                "drop" => s.dropMember(n("g"), n("m"), n("slot"), flag("outside")),
                 _ => panic!("Unknown {module} operation {op}"),
             };
             let expected: serde_json::Map<String, Value> = trace["vars"]
@@ -269,7 +259,7 @@ fn replay(
                 .map(|v| (v.into(), decode(&expected[v])))
                 .collect();
             assert_eq!(
-                observe(&s, &before),
+                board_observation(&s, &before),
                 Value::Object(expected),
                 "{} step {step}: {op}({picks})",
                 path.display()
@@ -282,12 +272,8 @@ fn replay(
     );
 }
 #[test]
-fn replay_every_sizing_trace() {
-    replay("sizing", sizing_init, sizing_observation);
-}
-#[test]
 fn replay_every_board_trace() {
-    replay("board", init, board_observation);
+    replay();
 }
 fn board_control(v: &Value) -> Control {
     match v["tag"].as_str().unwrap() {
@@ -408,6 +394,9 @@ mod board {
         assert_eq!(s.add(0, 0), Outcome::Ok);
         assert_eq!(s.board.groups[&0].order, [0, 2]);
         assert_eq!(s.add(0, 1), Outcome::Rejected("item_missing"));
+        s.ungroup(0);
+        s.create(0, &[2, 0], 1.0);
+        assert_eq!(s.board.groups[&0].order, [2, 0]);
     }
     #[test]
     fn pasteAndDuplicateTest() {
@@ -462,6 +451,22 @@ mod board {
             s.useDock(Control::Earlier),
             Outcome::Rejected("no_neighbor")
         );
+    }
+    #[test]
+    fn verticalTargetTest() {
+        let mut s = State::init(init().board, ReplayGeometry::default(), 1.0);
+        s.paste(1, 1.0);
+        s.create(0, &[0, 1, 2], 1.0);
+        s.editMember(0);
+        s.geometry.target = Some(2);
+        assert_eq!(s.pressKey("Down", 0, &[], 1.0), Outcome::Ok);
+        assert_eq!(s.board.groups[&0].order, [1, 2, 0]);
+        s.geometry.target = None;
+        assert_eq!(
+            s.pressKey("Down", 0, &[], 1.0),
+            Outcome::Rejected("no_neighbor")
+        );
+        assert_eq!(s.board.groups[&0].order, [1, 2, 0]);
     }
     #[test]
     fn transferAndDetachTest() {
@@ -559,9 +564,10 @@ fn stored_dock_values() {
         (&"1".to_string(), -1.0, -1.0, 0.0, true)
     );
     assert!(g.fixed.contains(&1));
-    // Displayed positive outer sizes can leave zero usable extent after padding.
-    assert_eq!(s.useDock(Control::Dimension(0, 0.0)), Outcome::Ok);
-    assert_eq!(s.board.groups[&0].size[0], 0.0);
+    assert_eq!(
+        s.useDock(Control::Dimension(0, 0.0)),
+        Outcome::Rejected("invalid_value")
+    );
     let before = s.board.clone();
     let dock = s.dock.clone();
     for c in [
@@ -635,11 +641,11 @@ fn incoming_fit_preserves_existing_members_and_later_resize_does_not_refit() {
         .members
         .insert(2, Member::fixed("Image", [200.0, 100.0]));
     s.create(0, &[0], 200.0);
-    s.useDock(Control::Dimension(0, 100.0));
+    s.useDock(Control::Dimension(0, 102.0));
     s.add(0, 2);
     assert_eq!(s.board.members[&0].size, [200.0, 80.0]);
     assert_eq!(s.board.members[&2].size, [100.0, 50.0]);
-    s.useDock(Control::Dimension(0, 50.0));
+    s.useDock(Control::Dimension(0, 52.0));
     assert_eq!(s.board.members[&2].size, [100.0, 50.0]);
     assert_eq!(s.geometry.rendered(&s.board, 0, 2, 0), 100.0);
 }
@@ -649,6 +655,8 @@ mod layout {
 
     fn state(xs: &[(f32, bool)], capacity: f32, gap: f32, wrap: bool, auto: bool) -> State<Pixels> {
         let mut group = Group::new(0, capacity, gap);
+        group.padding = 0.0;
+        group.size[0] = capacity;
         group.flow = if wrap { "Wrap" } else { "Row" }.into();
         group.gap = if auto { "Between" } else { "Number" }.into();
         group.order = (0..xs.len() as Id).collect();
@@ -681,12 +689,12 @@ mod layout {
             row.iter().map(|&m| b.base(m, 0)).sum::<f32>()
                 + g.numeric() * row.len().saturating_sub(1) as f32
         };
-        // inv_partition, inv_single_row
+        // Rows partition membership.
         assert_eq!(rows.concat(), g.order);
         assert!(rows.iter().all(|r| !r.is_empty()));
         assert!(g.flow == "Wrap" || rows.len() <= 1);
         for (r, row) in rows.iter().enumerate() {
-            // inv_fits, inv_break_needed
+            // A new row is necessary exactly when the next member exceeds capacity.
             assert!(
                 g.flow != "Wrap" || used(row) <= g.size[0] || row.len() == 1,
                 "{g:?} {row:?}"
@@ -697,7 +705,7 @@ mod layout {
                 assert!(used(&extended) > g.size[0]);
             }
             let (space, count) = b.allocation(0, row, 0);
-            // inv_auto_spends_no_gap
+            // Auto spacing leaves all residual capacity for Fill.
             let expected = (g.size[0]
                 - row.iter().map(|&m| b.base(m, 0)).sum::<f32>()
                 - if g.gap == "Number" {
@@ -712,17 +720,17 @@ mod layout {
             } else {
                 space / count as f32
             };
-            // inv_share: float division keeps the fraction rather than flooring it.
+            // Division preserves fractional pixels.
             assert!(share >= 0.0 && share * count as f32 <= space + 0.001);
             for (c, &m) in row.iter().enumerate() {
-                // inv_fixed_never_shrinks and rendered/share correspondence
+                // Fixed widths remain unchanged; Fill gets its share.
                 let expected = if b.members[&m].fill.contains(&0) {
                     share
                 } else {
                     b.members[&m].size[0]
                 };
                 assert!((pixels.sizes[&m].x - expected).abs() < 0.001);
-                // inv_arrow_column
+                // Vertical arrows keep the column.
                 if g.flow == "Wrap" {
                     for (direction, adjacent) in [("Up", r.checked_sub(1)), ("Down", Some(r + 1))] {
                         let expected = adjacent
@@ -734,7 +742,7 @@ mod layout {
                 }
             }
         }
-        // inv_hug_covers. Hug inputs are the bases, since Fill cannot survive Hug.
+        // Hug covers every fixed member.
         if g.number >= 0.0 {
             let xs: Vec<_> = g.order.iter().map(|&m| (b.base(m, 0), false)).collect();
             let mut hug = state(&xs, g.size[0], g.numeric(), false, false);
@@ -742,7 +750,7 @@ mod layout {
             let width = hug.geometry.measured(&hug.board, 0, 0);
             assert!(xs.iter().all(|&(w, _)| w <= width + 0.001));
         }
-        // inv_append_stable
+        // Removing the last member preserves earlier rows.
         if let Some(last) = s.board.groups.get_mut(&0).unwrap().order.pop() {
             let before = s.board.rows(0);
             let prefix = before.len().saturating_sub(1);
@@ -752,7 +760,7 @@ mod layout {
     }
     #[test]
     fn every_small_layout_input_and_wide_samples() {
-        // Exhaust the header's small 0..3 domain, including every list length up to four.
+        // Exercise small widths and list lengths before wider fractional samples.
         let mut count = 0;
         for n in 0..=4 {
             for code in 0..8usize.pow(n) {
@@ -777,7 +785,7 @@ mod layout {
             }
         }
         assert_eq!(count, 168_516);
-        // The full WIDE=1000 Cartesian product is too large. Reproducible samples
+        // Reproducible samples
         // span every capacity and both integral and fractional pixel inputs.
         let mut seed = 1_u64;
         let mut next = || {
@@ -815,7 +823,7 @@ mod layout {
     }
     #[test]
     fn layout_scenarios() {
-        // Each layout.qnt run is a concrete table row; fillShareTest includes its second step.
+        // Real-value examples cover wrapping, Fill exhaustion, overflow and Hug.
         for (name, xs, capacity, gap, wrap, auto, rows, rendered, hug) in [
             (
                 "wrapRowsTest",

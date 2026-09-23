@@ -53,5 +53,5 @@ jobs:
 
       - name: Check grouping models and replay traces
         run: |
-          sh specs/grouping/check.sh
-          sh specs/grouping/replay.sh
+          sh .specs/grouping/check.sh
+          sh .specs/grouping/replay.sh

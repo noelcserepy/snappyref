@@ -1043,6 +1043,92 @@ fn inspect_group_dock_writes_artifact() {
 }
 
 #[test]
+fn inspect_group_dock_narrow_writes_artifact() {
+    let mut scenario = InspectScenario::new("group-dock-narrow");
+    let (_root, mut harness, _) = dock_fixture();
+    harness.set_size(egui::vec2(1600.0, 800.0));
+    for _ in 0..16 {
+        harness.step();
+    }
+    let left = harness.get_by_label("Group name").rect().left() - 6.0;
+    let right = harness.get_by_label("Ungroup").rect().right() + 10.0;
+    scenario.assertion(
+        "wide dock stays centered at natural width",
+        (left + right - 1600.0).abs() < 2.0 && right - left < 1552.0,
+    );
+    scenario.event("wide-dock", serde_json::json!({"left":left,"right":right}));
+    scenario.capture_screen("wide-natural-width", &mut harness);
+    harness.set_size(egui::vec2(640.0, 800.0));
+    for _ in 0..16 {
+        harness.step();
+    }
+    scenario.capture_screen("leading-controls", &mut harness);
+    let leading = harness.get_by_label("Group name").rect();
+    scenario.assertion(
+        "leading controls inside side margin",
+        leading.left() >= 24.0,
+    );
+    harness.hover_at(egui::pos2(320.0, 750.0));
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(-2000.0, 0.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+    for _ in 0..32 {
+        harness.step();
+    }
+    let trailing = harness.get_by_label("Ungroup").rect();
+    scenario.event(
+        "horizontal-scroll",
+        serde_json::json!({"leading":format!("{leading:?}"),"trailing":format!("{trailing:?}")}),
+    );
+    scenario.assertion(
+        "trailing action inside side margins",
+        trailing.left() >= 24.0 && trailing.right() <= 616.0,
+    );
+    harness.event(egui::Event::PointerGone);
+    for _ in 0..16 {
+        harness.step();
+    }
+    scenario.capture_screen("trailing-controls", &mut harness);
+    for label in [
+        "Group name",
+        "Row",
+        "Column",
+        "Wrap",
+        "Free",
+        "Gap",
+        "Row gap",
+        "Padding",
+        "Alignment",
+        "W size",
+        "W hug contents",
+        "H size",
+        "H hug contents",
+        "Clip",
+        "Ungroup",
+    ] {
+        harness.get_by_label(label).scroll_to_me();
+        for _ in 0..32 {
+            harness.step();
+        }
+        let rect = harness.get_by_label(label).rect();
+        scenario.assertion(label, rect.left() >= 24.0 && rect.right() <= 616.0);
+    }
+    harness.get_by_label("Ungroup").click();
+    for _ in 0..8 {
+        harness.step();
+    }
+    scenario.assertion(
+        "scrolled trailing action accepts click",
+        harness.state().canvas.groups().is_empty(),
+    );
+    let report = scenario.finish();
+    assert!(report.passed, "{}", report.artifact_dir.display());
+}
+
+#[test]
 fn inspect_member_dock_writes_artifact() {
     let mut scenario = InspectScenario::new("member-dock");
     let (_root, mut harness, ids) = dock_fixture();

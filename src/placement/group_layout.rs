@@ -52,9 +52,9 @@ fn layout_group(
             && !mode.fill[1]
             && group.layout.fixed[0]
             && group.flow != GroupFlow::Free
-            && size.x > board.groups[&group.id].size[0]
+            && size.x > board.groups[&group.id].capacity(0)
         {
-            size *= board.groups[&group.id].size[0] / size.x;
+            size *= board.groups[&group.id].capacity(0) / size.x;
         }
         board.members.insert(
             id,
@@ -105,7 +105,7 @@ fn layout_group(
             } else {
                 1.0
             };
-            if factor > 0.0 {
+            if factor >= 0.0 {
                 resize_member(&mut geometry, factor)?;
             }
             geometry.center =
@@ -197,7 +197,7 @@ fn validate(
         || !group.gap.is_finite()
         || !group.padding.is_finite()
         || group.padding < 0.0
-        || group.container.scaled_size().x - 2.0 * group.padding <= 0.0
+        || group.container.scaled_size().min_elem() <= 0.0
     {
         return Err(GroupLayoutError::InvalidGeometry);
     }
@@ -362,7 +362,7 @@ mod tests {
             Err(GroupLayoutError::InvalidGeometry)
         );
         group.gap = 0.0;
-        group.padding = 60.0;
+        group.padding = -1.0;
         assert_eq!(
             layout_group(&group, &members, &[]),
             Err(GroupLayoutError::InvalidGeometry)

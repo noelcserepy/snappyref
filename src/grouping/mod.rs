@@ -1,6 +1,6 @@
 //! Deterministic grouping edits. Geometry supplies size observations; callers own pixels,
-//! persistence and history. Operations match specs/grouping/{sizing,board}.qnt.
-//! Layout and enablement are verified over their input domains.
+//! persistence and history. Membership follows `.specs/grouping/grouping.yml`;
+//! size observations and conversions follow Spatial Layout.
 #![allow(non_snake_case)]
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,6 +32,7 @@ pub struct Group {
     pub order: Vec<Id>,
     pub flow: String,
     pub fixed: BTreeSet<usize>,
+    /// Outer container dimensions, including padding.
     pub size: [f32; 2],
     pub gap: String,
     pub number: f32,
@@ -47,7 +48,7 @@ impl Group {
             order: vec![],
             flow: "Wrap".into(),
             fixed: BTreeSet::from([0]),
-            size: [width, 1.0],
+            size: [width + gap * 2.0, 1.0 + gap * 2.0],
             gap: "Number".into(),
             number: gap,
             rowGap: gap,
@@ -56,6 +57,9 @@ impl Group {
             clip: false,
             name: name.to_string(),
         }
+    }
+    pub fn capacity(&self, axis: usize) -> f32 {
+        (self.size[axis] - self.padding * 2.0).max(0.0)
     }
     pub fn primary(&self) -> usize {
         usize::from(self.flow == "Column")
@@ -114,7 +118,7 @@ impl Board {
             } else {
                 used + group.numeric() + w
             };
-            if !row.is_empty() && result > group.size[0] {
+            if !row.is_empty() && result > group.capacity(0) {
                 rows.push(std::mem::take(&mut row));
                 used = w;
             } else {
@@ -128,7 +132,7 @@ impl Board {
     pub fn allocation(&self, g: Id, xs: &[Id], a: usize) -> (f32, usize) {
         let group = &self.groups[&g];
         (
-            (group.size[a]
+            (group.capacity(a)
                 - xs.iter().map(|&m| self.base(m, a)).sum::<f32>()
                 - group.numeric() * xs.len().saturating_sub(1) as f32)
                 .max(0.0),
@@ -146,12 +150,14 @@ impl Board {
 
 /// Pixel observations freeze rendered sizes when modes or membership change.
 pub trait Geometry {
+    /// Resolves the adjacent-row, same-column member for vertical Wrap movement.
+    fn wrap_arrow_target(&self, b: &Board, g: Id, m: Id, direction: &str) -> Option<Id>;
     fn pasted_member(&self, id: Id, width: f32) -> Member;
     fn fit(&self, member: &Member, width: f32) -> [f32; 2];
     fn rendered(&self, b: &Board, g: Id, m: Id, a: usize) -> f32;
     fn measured(&self, b: &Board, g: Id, a: usize) -> f32;
 }
-/// An axis either hugs its content or is fixed at a usable extent in group pixels.
+/// An axis either hugs its content or is fixed at an outer extent in group pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AxisMode {
     Hug,
@@ -272,7 +278,7 @@ impl<G: Geometry> State<G> {
             && group.fixed.contains(&0)
             && group.flow != "Free"
         {
-            member.size = self.geometry.fit(&member, group.size[0]);
+            member.size = self.geometry.fit(&member, group.capacity(0));
         }
         b.without(m);
         b.members.insert(m, member);
@@ -296,7 +302,7 @@ impl<G: Geometry> State<G> {
     }
     fn axis_reason(&self, g: Id, a: usize, mode: AxisMode) -> &'static str {
         match mode {
-            AxisMode::Fixed(n) if !n.is_finite() || n < 0.0 => "invalid_value",
+            AxisMode::Fixed(n) if !n.is_finite() || n <= 0.0 => "invalid_value",
             _ if !self.board.groups.contains_key(&g) => "group_missing",
             _ if a > 1 => "invalid_value",
             AxisMode::Hug if a == 0 && self.board.groups[&g].flow == "Wrap" => "wrap_width_fixed",

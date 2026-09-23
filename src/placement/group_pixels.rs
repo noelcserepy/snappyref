@@ -41,7 +41,9 @@ impl Pixels {
                 .map(|r| r.visual_bounds())
                 .reduce(|a, b| a.union(b));
             result.min = bounds.map_or(Vec2::ZERO, |bounds| bounds.min.to_vec2().min(Vec2::ZERO));
-            result.content = bounds.map_or(Vec2::from(group.size), |r| r.size());
+            result.content = bounds.map_or(Vec2::new(group.capacity(0), group.capacity(1)), |r| {
+                r.size()
+            });
             return result;
         }
         let mut primary_cells = BTreeMap::new();
@@ -76,11 +78,12 @@ impl Pixels {
         }
         let row_gaps = group.rowGap * rows.len().saturating_sub(1) as f32;
         let fill_rows = row_fills.iter().filter(|&&fill| fill).count();
-        let remaining = (group.size[cross] - row_heights.iter().sum::<f32>() - row_gaps).max(0.0);
+        let remaining =
+            (group.capacity(cross) - row_heights.iter().sum::<f32>() - row_gaps).max(0.0);
         for (i, height) in row_heights.iter_mut().enumerate() {
             if group.fixed.contains(&cross) {
                 if rows.len() == 1 {
-                    *height = group.size[cross];
+                    *height = group.capacity(cross);
                 } else if row_fills[i] && fill_rows > 0 {
                     *height += remaining / fill_rows as f32;
                 }
@@ -88,7 +91,7 @@ impl Pixels {
         }
         let stack_size = row_heights.iter().sum::<f32>() + row_gaps;
         let mut cross_pos = if group.fixed.contains(&cross) {
-            alignment(group.align[cross], group.size[cross] - stack_size)
+            alignment(group.align[cross], group.capacity(cross) - stack_size)
         } else {
             0.0
         };
@@ -126,7 +129,7 @@ impl Pixels {
             };
             let used = row.iter().map(cell_size).sum::<f32>();
             let n = row.len() as f32;
-            let leftover = (group.size[primary] - used).max(0.0);
+            let leftover = (group.capacity(primary) - used).max(0.0);
             let (gap, mut position) = match group.gap.as_str() {
                 "Between" => (
                     if row.len() > 1 {
@@ -143,7 +146,7 @@ impl Pixels {
                     if group.fixed.contains(&primary) {
                         alignment(
                             group.align[primary],
-                            group.size[primary] - used - group.number * (n - 1.0),
+                            group.capacity(primary) - used - group.number * (n - 1.0),
                         )
                     } else {
                         0.0
@@ -173,7 +176,7 @@ impl Pixels {
             cross_pos += row_heights[r] + group.rowGap;
         }
         result.min = bounds.map_or(Vec2::ZERO, |bounds| bounds.min.to_vec2().min(Vec2::ZERO));
-        result.content = bounds.map_or(Vec2::from(group.size), |b| {
+        result.content = bounds.map_or(Vec2::new(group.capacity(0), group.capacity(1)), |b| {
             b.max.to_vec2().max(Vec2::ZERO) - b.min.to_vec2().min(Vec2::ZERO)
         });
         for &m in &group.order {
@@ -185,6 +188,18 @@ impl Pixels {
     }
 }
 impl Geometry for Pixels {
+    fn wrap_arrow_target(&self, b: &Board, g: Id, m: Id, direction: &str) -> Option<Id> {
+        let rows = b.rows(g);
+        let row = rows.iter().position(|row| row.contains(&m))?;
+        let column = rows[row].iter().position(|&member| member == m)?;
+        let adjacent = if direction == "Up" {
+            row.checked_sub(1)?
+        } else {
+            row + 1
+        };
+        rows.get(adjacent)?.get(column).copied()
+    }
+
     fn pasted_member(&self, id: Id, width: f32) -> grouping::Member {
         self.intake
             .get(&id)
@@ -206,7 +221,7 @@ impl Geometry for Pixels {
         if b.groups[&g].fixed.contains(&a) || b.flowing(g).is_empty() {
             b.groups[&g].size[a]
         } else {
-            self.layout(b, g).content[a].max(1.0)
+            self.layout(b, g).content[a].max(1.0) + b.groups[&g].padding * 2.0
         }
     }
 }
@@ -215,10 +230,7 @@ pub(crate) fn config(group: &Group) -> grouping::Group {
         order: group.members.clone(),
         flow: group.flow.as_str().into(),
         fixed: (0..2).filter(|&a| group.layout.fixed[a]).collect(),
-        size: [
-            (group.container.scaled_size().x - group.padding * 2.0).max(0.0),
-            (group.container.scaled_size().y - group.padding * 2.0).max(0.0),
-        ],
+        size: group.container.scaled_size().into(),
         gap: group.layout.auto.clone(),
         number: group.gap,
         rowGap: group.layout.row_gap,
@@ -238,7 +250,7 @@ mod dock_geometry_examples {
         let mut group = grouping::Group::new(0, 300.0, 10.0);
         group.flow = "Row".into();
         group.fixed = BTreeSet::from([0, 1]);
-        group.size = [300.0, 100.0];
+        group.size = [320.0, 120.0];
         group.order = (0..sizes.len() as i64).collect();
         Board {
             groups: BTreeMap::from([(0, group)]),
@@ -263,7 +275,7 @@ mod dock_geometry_examples {
         let layout = p.layout(&b, 0);
         assert_eq!(layout.sizes[&2].x, 45.0);
         assert_eq!(layout.sizes[&3].x, 45.0);
-        b.groups.get_mut(&0).unwrap().size[0] = 180.0;
+        b.groups.get_mut(&0).unwrap().size[0] = 200.0;
         let layout = p.layout(&b, 0);
         assert_eq!(layout.sizes[&2].x, 0.0);
         assert_eq!(layout.sizes[&0].x, 100.0);
@@ -272,7 +284,7 @@ mod dock_geometry_examples {
     fn grouping_image_aspect_fit_example() {
         let mut b = board(&[[400.0, 200.0]], "Image");
         let g = b.groups.get_mut(&0).unwrap();
-        g.size = [100.0, 100.0];
+        g.size = [120.0, 120.0];
         g.align = [1, 1];
         b.members.get_mut(&0).unwrap().fill = BTreeSet::from([0, 1]);
         let layout = Pixels::default().layout(&b, 0);
@@ -309,6 +321,7 @@ mod dock_geometry_examples {
             padding: 16.0,
             layout: Default::default(),
         };
-        assert_eq!(config(&group).size, [68.0, 68.0]);
+        assert_eq!(config(&group).size, [100.0, 100.0]);
+        assert_eq!(config(&group).capacity(0), 68.0);
     }
 }

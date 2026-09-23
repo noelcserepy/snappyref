@@ -34,6 +34,11 @@ impl CanvasState {
             self.mark_annotation_for_persistence(id);
         }
     }
+    fn group_image_size(&self, id: i64) -> Option<Vec2> {
+        self.placement_for_id(id)?
+            .loaded_asset()
+            .map(|asset| egui::vec2(asset.width as f32, asset.height as f32))
+    }
     pub(super) fn grouping_state(&self) -> State<Pixels> {
         let mut board = Board::default();
         let mut pixels = Pixels::default();
@@ -65,6 +70,8 @@ impl CanvasState {
                     if member.kind == "Image"
                         && member.size.contains(&0.0)
                         && mode.fill.contains(&true)
+                        && !mode.absolute
+                        && group.flow != GroupFlow::Free
                         && let Some(p) = self.placement_for_id(id)
                         && let Some(asset) = p.loaded_asset()
                     {
@@ -142,7 +149,7 @@ impl CanvasState {
                 .filter(|(_, mode)| *mode != MemberLayout::default())
                 .collect();
             let mut origin = group.container.unrotated_bounds().min;
-            let size = Vec2::from(config.size) + Vec2::splat(group.padding * 2.0);
+            let size = Vec2::from(config.size);
             let layout = state.geometry.layout(&state.board, id);
             let mut content_origin = origin + Vec2::splat(group.padding);
             if group.flow != GroupFlow::Free {
@@ -184,7 +191,12 @@ impl CanvasState {
                     continue;
                 };
                 let desired = layout.sizes[&m];
-                resize_observation(rect, desired, member.kind == "Image");
+                resize_observation(
+                    rect,
+                    desired,
+                    member.kind == "Image",
+                    self.group_image_size(m),
+                );
                 if member.absolute {
                     rect.center += origin - old_origin;
                 } else if group.flow != GroupFlow::Free {
@@ -199,7 +211,12 @@ impl CanvasState {
                 && self.group_for_member(id).is_some()
                 && let Some(rect) = geometries.get_mut(&id)
             {
-                resize_observation(rect, Vec2::from(member.size), member.kind == "Image");
+                resize_observation(
+                    rect,
+                    Vec2::from(member.size),
+                    member.kind == "Image",
+                    self.group_image_size(id),
+                );
             }
         }
         for (id, geometry) in geometries {
@@ -223,10 +240,21 @@ impl CanvasState {
         Ok(())
     }
 }
-fn resize_observation(rect: &mut RectGeometry, desired: Vec2, image: bool) {
+fn resize_observation(
+    rect: &mut RectGeometry,
+    desired: Vec2,
+    image: bool,
+    asset_size: Option<Vec2>,
+) {
     if desired.min_elem() <= 0.0 {
         rect.size = desired.max(Vec2::ZERO) / rect.scale;
         return;
+    }
+    if image
+        && rect.size.min_elem() == 0.0
+        && let Some(size) = asset_size
+    {
+        rect.size = size;
     }
     let current = rect.visual_bounds().size();
     if image {
@@ -309,3 +337,11 @@ impl CanvasState {
         self.apply_group_state(state, None)
     }
 }
+
+#[cfg(test)]
+#[path = "group_storage_tests.rs"]
+mod storage_tests;
+
+#[cfg(test)]
+#[path = "group_geometry_tests.rs"]
+mod geometry_tests;

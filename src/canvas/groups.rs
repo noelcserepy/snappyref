@@ -193,14 +193,11 @@ impl CanvasState {
                 edit!(s.setGap(g, &group.layout.auto, group.gap));
             }
             for a in 0..2 {
-                // A resized axis is fixed at its new usable extent; a newly fixed axis keeps its size.
-                let resized = old.container.scaled_size()[a] != group.container.scaled_size()[a]
-                    || (old.padding != group.padding && group.layout.fixed[a]);
+                // A resized axis is fixed at its new outer extent.
+                let resized = old.container.scaled_size()[a] != group.container.scaled_size()[a];
                 if resized || old.layout.fixed[a] != group.layout.fixed[a] {
                     let mode = if resized {
-                        AxisMode::Fixed(
-                            (group.container.scaled_size()[a] - group.padding * 2.0).max(0.0),
-                        )
+                        AxisMode::Fixed(group.container.scaled_size()[a])
                     } else if group.layout.fixed[a] {
                         AxisMode::Fixed(s.geometry.measured(&s.board, g, a))
                     } else {
@@ -851,9 +848,8 @@ impl CanvasState {
                     GroupGestureKind::Resize(edges) => {
                         for a in 0..2 {
                             if edges[a] != 0 {
-                                group.container.size[a] = (group.container.size[a]
-                                    + delta[a] * edges[a] as f32)
-                                    .max(group.padding * 2.0 + 1.0);
+                                group.container.size[a] =
+                                    (group.container.size[a] + delta[a] * edges[a] as f32).max(1.0);
                                 group.layout.fixed[a] = true;
                             }
                         }

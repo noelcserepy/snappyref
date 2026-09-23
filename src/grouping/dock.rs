@@ -138,7 +138,7 @@ impl<G: Geometry> State<G> {
             _ => self.dock.group_shown(),
         }
     }
-    /// enablement.qnt proved the designer's rules equal the admission, so enabled is derived.
+    /// A control is enabled exactly when its submission guard accepts it.
     pub fn controlEnabled(&self, c: &Control) -> bool {
         self.controlReason(c).is_empty()
     }
@@ -350,10 +350,8 @@ impl<G: Geometry> State<G> {
             1
         };
         let target = if group.flow == "Wrap" && !horizontal {
-            let rows = self.board.rows(g);
-            let r = rows.iter().position(|row| row.contains(&m))?;
-            let col = rows[r].iter().position(|&x| x == m)?;
-            *rows.get((r as i64 + delta) as usize)?.get(col)?
+            self.geometry
+                .wrap_arrow_target(&self.board, g, m, direction)?
         } else if (group.flow == "Column") != horizontal {
             *xs.get((i as i64 + delta) as usize)?
         } else {

@@ -180,6 +180,7 @@ impl CanvasState {
             ))
             .order(egui::Order::Foreground)
             .show(ui.ctx(), |ui| {
+                ui.set_max_width((viewport.width() - 48.0).max(0.0));
                 ui.set_opacity(progress);
                 if !active {
                     ui.disable();
@@ -195,294 +196,338 @@ impl CanvasState {
                         bottom: 9,
                     })
                     .show(ui, |ui| {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(0.0, 34.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                if let Some(m) = model.dock.member() {
-                                    label(ui, &group.name, 13.0, theme::TEXT_MUTED);
-                                    label(ui, "/", 16.0, SEPARATOR);
-                                    label(
-                                        ui,
-                                        &format!("Member {}", model.dockMemberNumber()),
-                                        13.0,
-                                        theme::TEXT,
-                                    );
-                                    separator(ui);
-                                    for (a, axis) in [(0, "W"), (1, "H")] {
-                                        field_frame().show(ui, |ui| {
-                                            ui.allocate_ui_with_layout(
-                                                egui::vec2(0.0, 34.0),
-                                                egui::Layout::left_to_right(egui::Align::Center),
-                                                |ui| {
-                                                    label(ui, axis, 13.0, theme::TEXT_MUTED);
-                                                    bed(ui, |ui| {
-                                                        for (fill, title) in
-                                                            [(false, "Fixed"), (true, "Fill")]
-                                                        {
-                                                            let c = Control::MemberMode(a, fill);
-                                                            let selected = model.board.members[&m]
-                                                                .fill
-                                                                .contains(&a)
-                                                                == fill;
-                                                            if button(
+                        egui::ScrollArea::horizontal()
+                            .id_salt("group-dock-controls")
+                            .max_width((viewport.width() - 48.0 - 16.0).max(0.0))
+                            .scroll_bar_visibility(
+                                egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                            )
+                            .show(ui, |ui| {
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(0.0, 34.0),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        if let Some(m) = model.dock.member() {
+                                            label(ui, &group.name, 13.0, theme::TEXT_MUTED);
+                                            label(ui, "/", 16.0, SEPARATOR);
+                                            label(
+                                                ui,
+                                                &format!("Member {}", model.dockMemberNumber()),
+                                                13.0,
+                                                theme::TEXT,
+                                            );
+                                            separator(ui);
+                                            for (a, axis) in [(0, "W"), (1, "H")] {
+                                                field_frame().show(ui, |ui| {
+                                                    ui.allocate_ui_with_layout(
+                                                        egui::vec2(0.0, 34.0),
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
+                                                        |ui| {
+                                                            label(
                                                                 ui,
-                                                                title,
-                                                                &format!("{axis} {title}"),
-                                                                Some(title),
-                                                                selected,
-                                                                model.controlEnabled(&c),
-                                                                false,
-                                                            )
-                                                            .clicked()
-                                                            {
-                                                                action = Some(c);
-                                                            }
-                                                        }
-                                                    });
-                                                },
+                                                                axis,
+                                                                13.0,
+                                                                theme::TEXT_MUTED,
+                                                            );
+                                                            bed(ui, |ui| {
+                                                                for (fill, title) in [
+                                                                    (false, "Fixed"),
+                                                                    (true, "Fill"),
+                                                                ] {
+                                                                    let c = Control::MemberMode(
+                                                                        a, fill,
+                                                                    );
+                                                                    let selected =
+                                                                        model.board.members[&m]
+                                                                            .fill
+                                                                            .contains(&a)
+                                                                            == fill;
+                                                                    if button(
+                                                                        ui,
+                                                                        title,
+                                                                        &format!("{axis} {title}"),
+                                                                        Some(title),
+                                                                        selected,
+                                                                        model.controlEnabled(&c),
+                                                                        false,
+                                                                    )
+                                                                    .clicked()
+                                                                    {
+                                                                        action = Some(c);
+                                                                    }
+                                                                }
+                                                            });
+                                                        },
+                                                    );
+                                                });
+                                            }
+                                            separator(ui);
+                                            choose(
+                                                ui,
+                                                &model,
+                                                Control::Absolute(
+                                                    self.group_insertion_slot(
+                                                        group.id,
+                                                        m,
+                                                        self.group_member_geometry(m)
+                                                            .map_or(group.container.center, |r| {
+                                                                r.center
+                                                            }),
+                                                    ),
+                                                ),
+                                                "Absolute",
+                                                Some("Absolute"),
+                                                model.board.members[&m].absolute,
+                                                &mut action,
                                             );
-                                        });
-                                    }
-                                    separator(ui);
-                                    choose(
-                                        ui,
-                                        &model,
-                                        Control::Absolute(
-                                            self.group_insertion_slot(
-                                                group.id,
-                                                m,
-                                                self.group_member_geometry(m)
-                                                    .map_or(group.container.center, |r| r.center),
-                                            ),
-                                        ),
-                                        "Absolute",
-                                        Some("Absolute"),
-                                        model.board.members[&m].absolute,
-                                        &mut action,
-                                    );
-                                    separator(ui);
-                                    bed(ui, |ui| {
-                                        for (c, name, icon) in [
-                                            (Control::Earlier, "Move earlier", "Earlier"),
-                                            (Control::Later, "Move later", "Later"),
-                                        ] {
-                                            if button(
-                                                ui,
-                                                "",
-                                                name,
-                                                Some(icon),
-                                                false,
-                                                model.controlEnabled(&c),
-                                                false,
-                                            )
-                                            .clicked()
-                                            {
-                                                action = Some(c);
-                                            }
-                                        }
-                                    });
-                                    if button(
-                                        ui,
-                                        "Detach",
-                                        "Detach",
-                                        Some("Detach"),
-                                        false,
-                                        model.controlEnabled(&Control::Detach),
-                                        true,
-                                    )
-                                    .clicked()
-                                    {
-                                        action = Some(Control::Detach);
-                                    }
-                                    ui.add_space(10.0);
-                                    label(
-                                        ui,
-                                        "esc leaves member editing",
-                                        11.0,
-                                        theme::TEXT_SUBTLE,
-                                    );
-                                } else {
-                                    let (name, focused) =
-                                        field(ui, "Group name", &group.name, 116.0, true, 14.0);
-                                    text_focus |= focused;
-                                    if let Some(name) = name {
-                                        action = Some(Control::Name(name));
-                                    }
-                                    ui.add_space(4.0);
-                                    label(
-                                        ui,
-                                        &format!(
-                                            "{} {}",
-                                            model.dockCount(),
-                                            if model.dockCount() == 1 {
-                                                "item"
-                                            } else {
-                                                "items"
-                                            }
-                                        ),
-                                        12.0,
-                                        theme::TEXT_SUBTLE,
-                                    );
-                                    separator(ui);
-                                    bed(ui, |ui| {
-                                        for flow in ["Row", "Column", "Wrap", "Free"] {
-                                            let c = Control::Flow(flow.into());
-                                            if button(
-                                                ui,
-                                                flow,
-                                                flow,
-                                                Some(flow),
-                                                group.flow.as_str() == flow,
-                                                model.controlEnabled(&c),
-                                                false,
-                                            )
-                                            .clicked()
-                                            {
-                                                action = Some(c);
-                                            }
-                                        }
-                                    });
-                                    separator(ui);
-                                    for (name, number, c) in [
-                                        ("Gap", group.gap, Control::Gap(group.gap)),
-                                        (
-                                            "Row gap",
-                                            group.layout.row_gap,
-                                            Control::RowGap(group.layout.row_gap),
-                                        ),
-                                        ("Padding", group.padding, Control::Padding(group.padding)),
-                                    ] {
-                                        if !model.controlShown(&c) {
-                                            continue;
-                                        }
-                                        field_frame().show(ui, |ui| {
-                                            ui.allocate_ui_with_layout(
-                                                egui::vec2(0.0, 30.0),
-                                                egui::Layout::left_to_right(egui::Align::Center),
-                                                |ui| {
-                                                    icon_space(ui, name, theme::TEXT_MUTED);
-                                                    let (value, focused) = field(
+                                            separator(ui);
+                                            bed(ui, |ui| {
+                                                for (c, name, icon) in [
+                                                    (Control::Earlier, "Move earlier", "Earlier"),
+                                                    (Control::Later, "Move later", "Later"),
+                                                ] {
+                                                    if button(
                                                         ui,
+                                                        "",
                                                         name,
-                                                        &format!("{number:.0}"),
-                                                        34.0,
+                                                        Some(icon),
+                                                        false,
                                                         model.controlEnabled(&c),
-                                                        13.0,
-                                                    );
-                                                    text_focus |= focused;
-                                                    if let Some(n) = value
-                                                        .and_then(|v| v.parse::<f32>().ok())
-                                                        .filter(|n| n.is_finite())
-                                                    {
-                                                        action = Some(match c {
-                                                            Control::Gap(_) => Control::Gap(n),
-                                                            Control::RowGap(_) => {
-                                                                Control::RowGap(n)
-                                                            }
-                                                            _ => Control::Padding(n),
-                                                        });
-                                                    }
-                                                },
-                                            );
-                                        });
-                                    }
-                                    separator(ui);
-                                    let align = button(
-                                        ui,
-                                        "",
-                                        "Alignment",
-                                        Some("Alignment"),
-                                        false,
-                                        model.alignEnabled(),
-                                        false,
-                                    );
-                                    preview(
-                                        ui.painter(),
-                                        Rect::from_min_size(
-                                            align.rect.left_center() + egui::vec2(10.0, -13.5),
-                                            egui::vec2(27.0, 27.0),
-                                        ),
-                                        group.layout.align,
-                                    );
-                                    toggle = align.clicked();
-                                    trigger = Some(align.rect);
-                                    separator(ui);
-                                    for (a, axis) in [(0, "W"), (1, "H")] {
-                                        field_frame().show(ui, |ui| {
-                                            ui.allocate_ui_with_layout(
-                                                egui::vec2(0.0, 30.0),
-                                                egui::Layout::left_to_right(egui::Align::Center),
-                                                |ui| {
-                                                    label(ui, axis, 13.0, theme::TEXT_MUTED);
-                                                    let value = if group.layout.fixed[a] {
-                                                        format!(
-                                                            "{:.0}",
-                                                            group.container.scaled_size()[a]
-                                                        )
-                                                    } else {
-                                                        "Hug".into()
-                                                    };
-                                                    let (value, focused) = field(
-                                                        ui,
-                                                        &format!("{axis} size"),
-                                                        &value,
-                                                        30.0,
-                                                        true,
-                                                        13.0,
-                                                    );
-                                                    text_focus |= focused;
-                                                    if let Some(n) = value
-                                                        .and_then(|v| v.parse::<f32>().ok())
-                                                        .filter(|n| n.is_finite() && *n > 0.0)
-                                                    {
-                                                        action = Some(Control::Dimension(
-                                                            a,
-                                                            (n - group.padding * 2.0).max(0.0),
-                                                        ));
-                                                    }
-                                                    let c = Control::Hug(a);
-                                                    if small_hug(
-                                                        ui,
-                                                        axis,
-                                                        !group.layout.fixed[a],
-                                                        model.controlEnabled(&c),
+                                                        false,
                                                     )
                                                     .clicked()
                                                     {
                                                         action = Some(c);
                                                     }
-                                                },
+                                                }
+                                            });
+                                            if button(
+                                                ui,
+                                                "Detach",
+                                                "Detach",
+                                                Some("Detach"),
+                                                false,
+                                                model.controlEnabled(&Control::Detach),
+                                                true,
+                                            )
+                                            .clicked()
+                                            {
+                                                action = Some(Control::Detach);
+                                            }
+                                            ui.add_space(10.0);
+                                            label(
+                                                ui,
+                                                "esc leaves member editing",
+                                                11.0,
+                                                theme::TEXT_SUBTLE,
                                             );
-                                        });
-                                    }
-                                    separator(ui);
-                                    choose(
-                                        ui,
-                                        &model,
-                                        Control::Clip,
-                                        "Clip",
-                                        Some("Clip"),
-                                        group.layout.clip,
-                                        &mut action,
-                                    );
-                                    separator(ui);
-                                    if button(
-                                        ui,
-                                        "Ungroup",
-                                        "Ungroup",
-                                        Some("Ungroup"),
-                                        false,
-                                        model.controlEnabled(&Control::Ungroup),
-                                        true,
-                                    )
-                                    .clicked()
-                                    {
-                                        action = Some(Control::Ungroup);
-                                    }
-                                }
-                            },
-                        );
+                                        } else {
+                                            let (name, focused) = field(
+                                                ui,
+                                                "Group name",
+                                                &group.name,
+                                                116.0,
+                                                true,
+                                                14.0,
+                                            );
+                                            text_focus |= focused;
+                                            if let Some(name) = name {
+                                                action = Some(Control::Name(name));
+                                            }
+                                            ui.add_space(4.0);
+                                            label(
+                                                ui,
+                                                &format!(
+                                                    "{} {}",
+                                                    model.dockCount(),
+                                                    if model.dockCount() == 1 {
+                                                        "item"
+                                                    } else {
+                                                        "items"
+                                                    }
+                                                ),
+                                                12.0,
+                                                theme::TEXT_SUBTLE,
+                                            );
+                                            separator(ui);
+                                            bed(ui, |ui| {
+                                                for flow in ["Row", "Column", "Wrap", "Free"] {
+                                                    let c = Control::Flow(flow.into());
+                                                    if button(
+                                                        ui,
+                                                        flow,
+                                                        flow,
+                                                        Some(flow),
+                                                        group.flow.as_str() == flow,
+                                                        model.controlEnabled(&c),
+                                                        false,
+                                                    )
+                                                    .clicked()
+                                                    {
+                                                        action = Some(c);
+                                                    }
+                                                }
+                                            });
+                                            separator(ui);
+                                            for (name, number, c) in [
+                                                ("Gap", group.gap, Control::Gap(group.gap)),
+                                                (
+                                                    "Row gap",
+                                                    group.layout.row_gap,
+                                                    Control::RowGap(group.layout.row_gap),
+                                                ),
+                                                (
+                                                    "Padding",
+                                                    group.padding,
+                                                    Control::Padding(group.padding),
+                                                ),
+                                            ] {
+                                                if !model.controlShown(&c) {
+                                                    continue;
+                                                }
+                                                field_frame().show(ui, |ui| {
+                                                    ui.allocate_ui_with_layout(
+                                                        egui::vec2(0.0, 30.0),
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
+                                                        |ui| {
+                                                            icon_space(ui, name, theme::TEXT_MUTED);
+                                                            let (value, focused) = field(
+                                                                ui,
+                                                                name,
+                                                                &format!("{number:.0}"),
+                                                                34.0,
+                                                                model.controlEnabled(&c),
+                                                                13.0,
+                                                            );
+                                                            text_focus |= focused;
+                                                            if let Some(n) = value
+                                                                .and_then(|v| v.parse::<f32>().ok())
+                                                                .filter(|n| n.is_finite())
+                                                            {
+                                                                action = Some(match c {
+                                                                    Control::Gap(_) => {
+                                                                        Control::Gap(n)
+                                                                    }
+                                                                    Control::RowGap(_) => {
+                                                                        Control::RowGap(n)
+                                                                    }
+                                                                    _ => Control::Padding(n),
+                                                                });
+                                                            }
+                                                        },
+                                                    );
+                                                });
+                                            }
+                                            separator(ui);
+                                            let align = button(
+                                                ui,
+                                                "",
+                                                "Alignment",
+                                                Some("Alignment"),
+                                                false,
+                                                model.alignEnabled(),
+                                                false,
+                                            );
+                                            preview(
+                                                ui.painter(),
+                                                Rect::from_min_size(
+                                                    align.rect.left_center()
+                                                        + egui::vec2(10.0, -13.5),
+                                                    egui::vec2(27.0, 27.0),
+                                                ),
+                                                group.layout.align,
+                                            );
+                                            toggle = align.clicked();
+                                            trigger = Some(align.rect);
+                                            separator(ui);
+                                            for (a, axis) in [(0, "W"), (1, "H")] {
+                                                field_frame().show(ui, |ui| {
+                                                    ui.allocate_ui_with_layout(
+                                                        egui::vec2(0.0, 30.0),
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
+                                                        |ui| {
+                                                            label(
+                                                                ui,
+                                                                axis,
+                                                                13.0,
+                                                                theme::TEXT_MUTED,
+                                                            );
+                                                            let value = if group.layout.fixed[a] {
+                                                                format!(
+                                                                    "{:.0}",
+                                                                    group.container.scaled_size()
+                                                                        [a]
+                                                                )
+                                                            } else {
+                                                                "Hug".into()
+                                                            };
+                                                            let (value, focused) = field(
+                                                                ui,
+                                                                &format!("{axis} size"),
+                                                                &value,
+                                                                30.0,
+                                                                true,
+                                                                13.0,
+                                                            );
+                                                            text_focus |= focused;
+                                                            if let Some(n) = value
+                                                                .and_then(|v| v.parse::<f32>().ok())
+                                                                .filter(|n| {
+                                                                    n.is_finite() && *n > 0.0
+                                                                })
+                                                            {
+                                                                action =
+                                                                    Some(Control::Dimension(a, n));
+                                                            }
+                                                            let c = Control::Hug(a);
+                                                            if small_hug(
+                                                                ui,
+                                                                axis,
+                                                                !group.layout.fixed[a],
+                                                                model.controlEnabled(&c),
+                                                            )
+                                                            .clicked()
+                                                            {
+                                                                action = Some(c);
+                                                            }
+                                                        },
+                                                    );
+                                                });
+                                            }
+                                            separator(ui);
+                                            choose(
+                                                ui,
+                                                &model,
+                                                Control::Clip,
+                                                "Clip",
+                                                Some("Clip"),
+                                                group.layout.clip,
+                                                &mut action,
+                                            );
+                                            separator(ui);
+                                            if button(
+                                                ui,
+                                                "Ungroup",
+                                                "Ungroup",
+                                                Some("Ungroup"),
+                                                false,
+                                                model.controlEnabled(&Control::Ungroup),
+                                                true,
+                                            )
+                                            .clicked()
+                                            {
+                                                action = Some(Control::Ungroup);
+                                            }
+                                        }
+                                    },
+                                );
+                            });
                     });
             });
         let mut bounds = response.response.rect;
