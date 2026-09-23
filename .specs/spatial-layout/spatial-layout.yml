@@ -99,7 +99,7 @@ interface:
         outer-and-usable-size:
           statement: Displayed container dimensions are outer sizes and must remain positive and finite; usable capacity on each axis is the maximum of zero and outer size minus twice padding, including when padding exhausts a Fixed axis.
           checks:
-            - grouping_outer_size_excludes_padding
+            - grouping_outer_size_and_usable_capacity
             - grouping_padding_exhausts_fixed_capacity
         member-footprint: Layout must use rotated visual bounds as each member footprint.
         fill-allocation:
