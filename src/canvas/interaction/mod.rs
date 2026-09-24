@@ -596,9 +596,7 @@ pub(super) fn handle_input(
         && primary_double_clicked
         && pointer_in_canvas_rect
         && let Some(pointer_pos) = pointer_pos
-        && let Some(placement_id) = hit_test_placement(state, rect, pointer_pos).filter(|&id| {
-            grouped_item_reachable(state, id, state.screen_to_world(pointer_pos, rect), true)
-        })
+        && let Some(placement_id) = hit_test_placement(state, rect, pointer_pos)
     {
         if let Some(id) = state.group_for_member(placement_id) {
             state.interaction.editing_group_id = Some(id);
@@ -617,9 +615,7 @@ pub(super) fn handle_input(
         && primary_double_clicked
         && pointer_in_canvas_rect
         && let Some(pointer_pos) = pointer_pos
-        && let Some(annotation_id) = hit_test_annotation(state, rect, pointer_pos).filter(|&id| {
-            grouped_item_reachable(state, id, state.screen_to_world(pointer_pos, rect), true)
-        })
+        && let Some(annotation_id) = hit_test_annotation(state, rect, pointer_pos)
         && state
             .annotation_by_id(annotation_id)
             .is_some_and(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)
@@ -696,24 +692,27 @@ fn drawing_annotation_kind(ui: &egui::Ui) -> Option<CanvasAnnotationKind> {
     }
 }
 
+/// Reaches the visible pixels of a placement. Clip hides a member's overflow.
 pub(crate) fn hit_test_placement(
     state: &CanvasState,
     rect: egui::Rect,
     pointer_pos: egui::Pos2,
 ) -> Option<i64> {
+    let world = state.screen_to_world(pointer_pos, rect);
     state
         .document
         .placements
         .iter()
         .rev()
         .find(|image| {
-            placement_contains_screen_point(
-                image,
-                pointer_pos,
-                state.pan,
-                state.zoom,
-                rect.center(),
-            )
+            grouped_item_reachable(state, image.state.id, world, true)
+                && placement_contains_screen_point(
+                    image,
+                    pointer_pos,
+                    state.pan,
+                    state.zoom,
+                    rect.center(),
+                )
         })
         .map(|image| image.state.id)
 }

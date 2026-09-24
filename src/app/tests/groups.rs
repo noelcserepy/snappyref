@@ -999,6 +999,20 @@ fn group_overflow_reaches_member_editing_only_while_visible() {
             assert_eq!(canvas.current_group_dock().member(), Some(ids[0]));
         }
     }
+    // Crop, like every item hit test, only reaches visible pixels.
+    h.event(egui::Event::Key {
+        key: egui::Key::C,
+        physical_key: Some(egui::Key::C),
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.step();
+    inspect_click_at(&h, overflow, egui::Modifiers::NONE);
+    for _ in 0..4 {
+        h.step();
+    }
+    assert!(h.state().canvas.selected_placement_ids().is_empty());
 }
 
 #[test]
