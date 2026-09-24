@@ -912,6 +912,93 @@ fn group_paste_undo_removes_only_pasted_members() {
     app.undo_document_history(&ctx);
     assert_eq!(app.canvas.all_placement_ids().len(), 5);
     assert_eq!(app.canvas.groups()[0].members, ids);
+    let mut repeated = payload;
+    repeated.stack_order[1] = repeated.stack_order[0].clone();
+    app.canvas.select_content(&[], &[]);
+    app.paste_board_payload_at(&repeated, egui::pos2(700., 100.))
+        .unwrap();
+    app.undo_document_history(&ctx);
+    assert_eq!(app.canvas.all_placement_ids().len(), 5);
+}
+
+#[test]
+fn dragging_a_member_moves_every_selected_group() {
+    let (_root, mut h, ids) = dock_fixture();
+    let app = h.state_mut();
+    app.canvas.select_content(&ids[3..], &[]);
+    app.group_selection();
+    app.canvas.select_all_content();
+    let containers = |h: &Harness<'_, SnappyRefApp>| {
+        h.state()
+            .canvas
+            .groups()
+            .iter()
+            .map(|g| g.container.center)
+            .collect::<Vec<_>>()
+    };
+    let before = containers(&h);
+    assert_eq!(before.len(), 2);
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
+    let from = inspect_world_to_screen(
+        h.state()
+            .canvas
+            .placement_for_id(ids[0])
+            .unwrap()
+            .state
+            .geometry
+            .center,
+        screen,
+    );
+    drag(
+        &mut h,
+        from,
+        from + egui::vec2(90.0, 60.0),
+        egui::Modifiers::NONE,
+    );
+    let moved = containers(&h)
+        .iter()
+        .zip(&before)
+        .map(|(after, before)| *after - *before)
+        .collect::<Vec<_>>();
+    assert_eq!(moved, [egui::vec2(90.0, 60.0); 2]);
+    assert_eq!(h.state().canvas.selected_group_ids().len(), 2);
+}
+
+#[test]
+fn group_overflow_reaches_member_editing_only_while_visible() {
+    let (_root, mut h, ids) = dock_fixture();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
+    let mut group = h.state().canvas.groups()[0].clone();
+    group.container.size.x = 80.0;
+    h.state_mut().canvas.edit_group(group).unwrap();
+    let bounds = h.state().canvas.groups()[0].container.unrotated_bounds();
+    let first = h
+        .state()
+        .canvas
+        .placement_for_id(ids[0])
+        .unwrap()
+        .state
+        .geometry;
+    assert!(first.visual_bounds().max.x > bounds.max.x + 20.0);
+    let overflow = inspect_world_to_screen(egui::pos2(bounds.max.x + 20.0, first.center.y), screen);
+    for clip in [false, true] {
+        let mut group = h.state().canvas.groups()[0].clone();
+        group.layout.clip = clip;
+        let app = h.state_mut();
+        app.canvas.edit_group(group).unwrap();
+        app.canvas.select_content(&[], &[]);
+        inspect_click_at(&h, overflow, if clip { egui::Modifiers::NONE } else { CMD });
+        for _ in 0..4 {
+            h.step();
+        }
+        let canvas = &h.state().canvas;
+        if clip {
+            assert!(canvas.selected_group_ids().is_empty());
+            assert!(canvas.selected_placement_ids().is_empty());
+        } else {
+            assert_eq!(canvas.current_group_dock().member(), Some(ids[0]));
+        }
+    }
 }
 
 #[test]

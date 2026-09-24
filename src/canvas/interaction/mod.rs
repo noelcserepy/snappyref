@@ -236,7 +236,12 @@ pub(super) fn handle_input(
         {
             handle_textbox_primary_press(ui, rect, state, &annotation, pointer_pos);
             return;
-        } else if let Some(hit) = hit_test_canvas_item(state, rect, pointer_pos) {
+        } else if let Some(hit) = if ui.input(|i| i.modifiers.command) {
+            // A primary-modifier press opens member editing, so it reaches overflow too.
+            hit_test_member(state, rect, pointer_pos)
+        } else {
+            hit_test_canvas_item(state, rect, pointer_pos)
+        } {
             match hit {
                 CanvasHit::Annotation(annotation_id) => {
                     let annotation = state.annotation_by_id(annotation_id).cloned();

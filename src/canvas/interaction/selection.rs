@@ -140,7 +140,15 @@ pub(crate) fn update_marquee_selection(
         .document
         .placements
         .iter()
-        .filter(|image| placement_screen_rect(state, rect, image).intersects(selection_rect))
+        .filter(|image| {
+            visible_screen_rect(
+                state,
+                rect,
+                image.state.id,
+                placement_screen_rect(state, rect, image),
+            )
+            .is_some_and(|r| r.intersects(selection_rect))
+        })
         .map(|image| image.state.id)
         .collect::<Vec<_>>();
     let selected_annotation_ids = state
@@ -148,9 +156,38 @@ pub(crate) fn update_marquee_selection(
         .annotations
         .iter()
         .filter(|annotation| {
-            annotation_screen_rect(state, rect, annotation).intersects(selection_rect)
+            visible_screen_rect(
+                state,
+                rect,
+                annotation.id,
+                annotation_screen_rect(state, rect, annotation),
+            )
+            .is_some_and(|r| r.intersects(selection_rect))
         })
         .map(|annotation| annotation.id)
         .collect::<Vec<_>>();
     state.set_marquee_selection(selected, selected_annotation_ids, shift_held);
+}
+
+/// Clip hides a member's pixels outside its container, so marquee can't reach them.
+fn visible_screen_rect(
+    state: &CanvasState,
+    rect: egui::Rect,
+    id: i64,
+    item: egui::Rect,
+) -> Option<egui::Rect> {
+    let Some(group) = state
+        .groups()
+        .iter()
+        .find(|group| group.layout.clip && group.members.contains(&id))
+    else {
+        return Some(item);
+    };
+    let bounds = group.container.unrotated_bounds();
+    let container = egui::Rect::from_min_max(
+        state.world_to_screen(bounds.min, rect),
+        state.world_to_screen(bounds.max, rect),
+    );
+    let visible = item.intersect(container);
+    visible.is_positive().then_some(visible)
 }

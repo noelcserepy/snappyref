@@ -291,18 +291,18 @@ fn pasted_stack_order(
 ) -> Vec<CanvasStackItem> {
     let mut pasted_stack_order = Vec::new();
     for entry in &payload.stack_order {
-        match entry.kind.as_str() {
-            "placement" => {
-                if let Some(placement_id) = pasted_placement_ids.get(entry.index) {
-                    pasted_stack_order.push(CanvasStackItem::Placement(*placement_id));
-                }
-            }
-            "annotation" => {
-                if let Some(annotation_id) = pasted_annotation_ids.get(entry.index) {
-                    pasted_stack_order.push(CanvasStackItem::Annotation(*annotation_id));
-                }
-            }
-            _ => {}
+        let item = match entry.kind.as_str() {
+            "placement" => pasted_placement_ids
+                .get(entry.index)
+                .map(|&id| CanvasStackItem::Placement(id)),
+            "annotation" => pasted_annotation_ids
+                .get(entry.index)
+                .map(|&id| CanvasStackItem::Annotation(id)),
+            _ => None,
+        };
+        // Repeated entries would leave another pasted item out of the order and its history.
+        if let Some(item) = item.filter(|item| !pasted_stack_order.contains(item)) {
+            pasted_stack_order.push(item);
         }
     }
     if pasted_stack_order.len() != pasted_placement_ids.len() + pasted_annotation_ids.len() {

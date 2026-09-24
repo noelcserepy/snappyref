@@ -41,7 +41,12 @@ impl Pixels {
     }
     pub fn layout(&self, board: &Board, g: Id) -> Layout {
         let inputs = self.fill_inputs(board, g);
-        let b = inputs.as_ref();
+        let (_, heights) = self.solve(&reserve_cross_fill(&inputs, g, None), g);
+        self.solve(&reserve_cross_fill(&inputs, g, Some(&heights)), g)
+            .0
+    }
+    /// Returns the layout and its row heights.
+    fn solve(&self, b: &Board, g: Id) -> (Layout, Vec<f32>) {
         let group = &b.groups[&g];
         let mut result = Layout {
             offsets: BTreeMap::new(),
@@ -66,7 +71,7 @@ impl Pixels {
             result.content = bounds.map_or(Vec2::new(group.capacity(0), group.capacity(1)), |r| {
                 r.size()
             });
-            return result;
+            return (result, Vec::new());
         }
         let mut primary_cells = BTreeMap::new();
         let mut row_heights = Vec::new();
@@ -127,12 +132,12 @@ impl Pixels {
                         let original = Vec2::from(member.size);
                         if original[cross] > 0.0 {
                             let cross_factor = row_heights[r] / original[cross];
-                            let factor =
-                                if member.fill.contains(&primary) && original[primary] > 0.0 {
-                                    cross_factor.min(size[primary] / original[primary])
-                                } else {
-                                    cross_factor
-                                };
+                            // The image fits the width its row reserved or allocated.
+                            let factor = if original[primary] > 0.0 {
+                                cross_factor.min(size[primary] / original[primary])
+                            } else {
+                                cross_factor
+                            };
                             size = original * factor;
                         }
                     } else {
@@ -206,8 +211,43 @@ impl Pixels {
                 result.sizes.insert(m, Vec2::from(b.members[&m].size));
             }
         }
-        result
+        (result, row_heights)
     }
+}
+/// A cross-Fill image's primary extent follows its row height, so it can't come
+/// from the last render. The first pass reserves nothing to solve row heights. The
+/// second reserves each image's extent at its row height. Fill needs a Fixed axis,
+/// so a single row's height is exact.
+fn reserve_cross_fill<'a>(
+    b: &'a Board,
+    g: Id,
+    heights: Option<&[f32]>,
+) -> std::borrow::Cow<'a, Board> {
+    let mut inputs = std::borrow::Cow::Borrowed(b);
+    let group = &b.groups[&g];
+    if group.flow == "Free" {
+        return inputs;
+    }
+    let primary = group.primary();
+    let cross = 1 - primary;
+    for (r, row) in b.rows(g).iter().enumerate() {
+        for m in row {
+            let member = &b.members[m];
+            if member.kind == "Image"
+                && member.fill.contains(&cross)
+                && !member.fill.contains(&primary)
+            {
+                let size = &mut inputs.to_mut().members.get_mut(m).unwrap().size;
+                let factor = match heights {
+                    Some(heights) if size[cross] > 0.0 => heights[r] / size[cross],
+                    Some(_) => 1.0,
+                    None => 0.0,
+                };
+                *size = size.map(|x| x * factor);
+            }
+        }
+    }
+    inputs
 }
 impl Geometry for Pixels {
     fn wrap_arrow_target(&self, b: &Board, g: Id, m: Id, direction: &str) -> Option<Id> {

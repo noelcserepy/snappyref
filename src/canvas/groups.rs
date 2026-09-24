@@ -992,9 +992,20 @@ impl CanvasState {
                 && super::interaction::hit_test_canvas_item(self, viewport, pointer).is_some_and(
                     |hit| matches!(hit, super::CanvasHit::Annotation(m) | super::CanvasHit::Placement(m) if group.members.contains(&m)),
                 );
+            // Pressing a member of a wider selection drags that selection through canvas input.
+            let wider_selection = selected
+                && (self.interaction.selected_group_ids.len() > 1
+                    || self
+                        .interaction
+                        .selected_placement_ids
+                        .iter()
+                        .chain(&self.interaction.selected_annotation_ids)
+                        .any(|id| !group.members.contains(id)));
             let body = !alt
                 && (!hit_member
-                    || (hit_group_member && self.interaction.editing_group_id != Some(group.id)))
+                    || (hit_group_member
+                        && !wider_selection
+                        && self.interaction.editing_group_id != Some(group.id)))
                 && (rect.contains(pointer)
                     || egui::Rect::from_min_max(rect.min - egui::vec2(0., 24.), rect.right_top())
                         .contains(pointer));

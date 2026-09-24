@@ -209,22 +209,11 @@ fn absolute_members_do_not_decide_insertion_slot() {
     assert_eq!(canvas.group_insertion_slot(7, 4, between), 2);
 }
 
-#[test]
-fn wrap_cross_fill_image_keeps_its_row_across_relayout() {
-    let mut canvas = images_canvas(&[(80.0, 100.0), (60.0, 60.0)]);
-    canvas
-        .group_edit(|s| {
-            s.setAxisMode(7, 0, AxisMode::Fixed(170.0));
-            s.setAxisMode(7, 1, AxisMode::Fixed(120.0));
-            s.selectGroup(7);
-            s.useDock(Control::Padding(10.0));
-            s.useDock(Control::Gap(10.0));
-            s.useDock(Control::RowGap(10.0));
-            s.setMemberMode(7, 2, 1, true)
-        })
-        .unwrap();
-    let filled = canvas.group_member_geometry(2).unwrap().scaled_size();
-    assert_eq!(filled, egui::vec2(100.0, 100.0));
+fn assert_clip_keeps_sizes(canvas: &mut CanvasState) {
+    let sizes = |canvas: &CanvasState| {
+        [1, 2].map(|id| canvas.group_member_geometry(id).unwrap().scaled_size())
+    };
+    let before = sizes(canvas);
     for _ in 0..2 {
         canvas
             .group_edit(|s| {
@@ -232,11 +221,46 @@ fn wrap_cross_fill_image_keeps_its_row_across_relayout() {
                 s.useDock(Control::Clip)
             })
             .unwrap();
-        assert_eq!(
-            canvas.group_member_geometry(2).unwrap().scaled_size(),
-            filled
-        );
+        assert_eq!(sizes(canvas), before);
     }
+}
+
+#[test]
+fn cross_fill_image_width_follows_its_row_not_the_last_render() {
+    let mut wrap = images_canvas(&[(80.0, 100.0), (60.0, 60.0)]);
+    wrap.group_edit(|s| {
+        s.setAxisMode(7, 0, AxisMode::Fixed(170.0));
+        s.setAxisMode(7, 1, AxisMode::Fixed(120.0));
+        s.selectGroup(7);
+        s.useDock(Control::Padding(10.0));
+        s.useDock(Control::Gap(10.0));
+        s.useDock(Control::RowGap(10.0));
+        s.setMemberMode(7, 2, 1, true)
+    })
+    .unwrap();
+    let filled = wrap.group_member_geometry(2).unwrap().scaled_size();
+    assert_eq!(filled, egui::vec2(100.0, 100.0));
+    assert_clip_keeps_sizes(&mut wrap);
+
+    let mut row = images_canvas(&[(100.0, 100.0), (100.0, 100.0)]);
+    row.group_edit(|s| {
+        s.setFlow(7, "Row");
+        s.setAxisMode(7, 0, AxisMode::Fixed(300.0));
+        s.setAxisMode(7, 1, AxisMode::Fixed(100.0));
+        s.selectGroup(7);
+        s.useDock(Control::Padding(0.0));
+        s.useDock(Control::Gap(0.0));
+        s.setMemberMode(7, 1, 1, true);
+        s.setMemberMode(7, 2, 0, true);
+        s.setAxisMode(7, 1, AxisMode::Fixed(200.0))
+    })
+    .unwrap();
+    let size = |id| row.group_member_geometry(id).unwrap().scaled_size();
+    assert_eq!(
+        [size(1), size(2)],
+        [egui::vec2(200.0, 200.0), egui::vec2(100.0, 100.0)]
+    );
+    assert_clip_keeps_sizes(&mut row);
 }
 
 #[test]
