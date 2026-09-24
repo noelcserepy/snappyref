@@ -171,3 +171,36 @@ fn zero_fill_to_fixed_or_hug_freezes_complete_image_geometry() {
         }
     }
 }
+
+#[test]
+fn absolute_members_do_not_decide_insertion_slot() {
+    let mut canvas = CanvasState::default();
+    for id in 1..=3 {
+        canvas.document.placements.push(Placement::loaded(
+            PlacementState {
+                id,
+                geometry: RectGeometry::new(egui::Pos2::ZERO, egui::vec2(120.0, 60.0), 1.0, 0.0, 0),
+                archived: false,
+            },
+            Asset {
+                id: 10 + id,
+                original_path: "image.png".into(),
+                filename: "image.png".into(),
+                mime_type: "image/png".into(),
+                width: 120,
+                height: 60,
+            },
+        ));
+    }
+    canvas
+        .create_named_group(7, "Group".into(), &[1, 2, 3])
+        .unwrap();
+    canvas.group_edit(|s| s.setFlow(7, "Row")).unwrap();
+    canvas.group_edit(|s| s.toggleAbsolute(7, 1, 0)).unwrap();
+    let [b, c] = [2, 3].map(|id| canvas.group_member_geometry(id).unwrap().center);
+    let mut a = canvas.group_member_geometry(1).unwrap();
+    a.center.x = c.x + 500.0;
+    canvas.set_group_member_geometry(1, a);
+    let between = egui::pos2((b.x + c.x) / 2.0, b.y);
+    assert_eq!(canvas.group_insertion_slot(7, 4, between), 2);
+}

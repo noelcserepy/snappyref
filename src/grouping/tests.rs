@@ -272,6 +272,7 @@ fn replay() {
     );
 }
 #[test]
+#[ignore = "needs traces from sh .specs/grouping/replay.sh"]
 fn replay_every_board_trace() {
     replay();
 }

@@ -87,7 +87,7 @@ interface:
         search-preview-pointer-anchor: After a Search preview fit, the provisional group must remain positioned at the user's pointer.
         animation-on-engagement: A visible animated image advances while hovered or selected and stays on its current frame while unengaged.
         history-delegated: Undo and redo actions must use Board Document history rather than private Canvas history.
-        group-shortcuts: Primary+G must dispatch Group creation, Primary+Shift+G whole-Group ungrouping, unmodified G the Add to group picker, Primary+V paste, Primary+D duplicate, and Delete or Backspace deletion; Primary means Command on macOS and Control on Windows, and text focus retains typing before Board shortcuts.
+        group-shortcuts: Primary+G must dispatch Group creation, Primary+Shift+G whole-Group ungrouping, unmodified G the Add to group picker, Primary+V paste, Primary+D duplicate, and deletion by Backspace on macOS or Delete on Windows; Primary means Command on macOS and Control on Windows, and text focus retains typing before Board shortcuts.
         group-context-menu: The context menu must offer Group, Ungroup, and Add to group for applicable selections.
         group-actions-delegated: Group selection, member editing, membership and keyboard commands must dispatch through Grouping; sizing changes must use Spatial Layout and durable changes must use Board Document.
         group-presentation-delegated: Group and member controls must use Group Dock presentation.

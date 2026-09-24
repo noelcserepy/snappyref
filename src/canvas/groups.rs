@@ -304,15 +304,23 @@ impl CanvasState {
     }
     pub(super) fn group_insertion_slot(&self, g: i64, m: i64, point: egui::Pos2) -> i64 {
         let group = self.groups().iter().find(|x| x.id == g).unwrap();
-        let members = group
+        let mut order = group.members.iter().filter(|&&id| id != m);
+        match self.group_insertion_anchor(group, m, point) {
+            Some(anchor) => order
+                .position(|&id| id == anchor)
+                .expect("anchor is a member") as i64,
+            None => order.count() as i64,
+        }
+    }
+    /// The flowing member a drop at `point` lands before, or `None` past the
+    /// end of flow. Absolute members sit outside flow, so they never decide it.
+    fn group_insertion_anchor(&self, group: &Group, m: i64, point: egui::Pos2) -> Option<i64> {
+        group
             .members
             .iter()
             .copied()
-            .filter(|&id| id != m)
-            .collect::<Vec<_>>();
-        members
-            .iter()
-            .position(|&id| {
+            .filter(|&id| id != m && !group_member_is_absolute(group, id))
+            .find(|&id| {
                 self.group_member_geometry(id)
                     .is_some_and(|r| match group.flow {
                         GroupFlow::Column => point.y < r.center.y,
@@ -323,7 +331,6 @@ impl CanvasState {
                         _ => point.x < r.center.x,
                     })
             })
-            .unwrap_or(members.len()) as i64
     }
 }
 
@@ -617,27 +624,19 @@ impl CanvasState {
                 .chain(self.selected_annotation_ids())
                 .next()
             {
-                let members = group
+                let anchor = self.group_insertion_anchor(group, m, point);
+                let last = group
                     .members
                     .iter()
                     .copied()
-                    .filter(|&id| {
-                        id != m
-                            && !group
-                                .layout
-                                .members
-                                .get(&id)
-                                .is_some_and(|mode| mode.absolute)
-                    })
-                    .collect::<Vec<_>>();
-                let slot = self.group_insertion_slot(group.id, m, point) as usize;
-                if let Some(r) = members
-                    .get(slot)
-                    .or_else(|| members.last())
-                    .and_then(|&id| self.group_member_geometry(id))
+                    .rev()
+                    .find(|&id| id != m && !group_member_is_absolute(group, id));
+                if let Some(r) = anchor
+                    .or(last)
+                    .and_then(|id| self.group_member_geometry(id))
                 {
                     let bounds = r.visual_bounds();
-                    let at_end = slot >= members.len();
+                    let at_end = anchor.is_none();
                     let (a, b) = if group.flow == GroupFlow::Column {
                         let y = if at_end { bounds.max.y } else { bounds.min.y };
                         (egui::pos2(bounds.min.x, y), egui::pos2(bounds.max.x, y))
@@ -995,9 +994,15 @@ impl CanvasState {
             let scale = selected
                 && ui.input(|i| i.modifiers.command && i.modifiers.alt)
                 && rect.contains(pointer);
-            let hit_group_member=super::interaction::hit_test_canvas_item(self,viewport,pointer).is_some_and(|hit|matches!(hit,super::CanvasHit::Annotation(m)|super::CanvasHit::Placement(m) if group.members.contains(&m)));
-            let body = (!hit_member
-                || (hit_group_member && self.interaction.editing_group_id != Some(group.id)))
+            // Alt pans and Shift extends selection, so both fall through to canvas input.
+            let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
+            let hit_group_member = !shift
+                && super::interaction::hit_test_canvas_item(self, viewport, pointer).is_some_and(
+                    |hit| matches!(hit, super::CanvasHit::Annotation(m) | super::CanvasHit::Placement(m) if group.members.contains(&m)),
+                );
+            let body = !alt
+                && (!hit_member
+                    || (hit_group_member && self.interaction.editing_group_id != Some(group.id)))
                 && (rect.contains(pointer)
                     || egui::Rect::from_min_max(rect.min - egui::vec2(0., 24.), rect.right_top())
                         .contains(pointer));
@@ -1034,4 +1039,12 @@ impl CanvasState {
         }
         false
     }
+}
+
+fn group_member_is_absolute(group: &Group, id: i64) -> bool {
+    group
+        .layout
+        .members
+        .get(&id)
+        .is_some_and(|mode| mode.absolute)
 }

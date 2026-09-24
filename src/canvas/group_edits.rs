@@ -245,10 +245,11 @@ fn resize_observation(
         rect.size = desired.max(Vec2::ZERO) / rect.scale;
         return;
     }
-    if image
-        && rect.size.min_elem() == 0.0
-        && let Some(size) = asset_size
-    {
+    if image && rect.size.min_elem() == 0.0 {
+        // Zero Fill erased the ratio. Until the asset loads, nothing can restore it.
+        let Some(size) = asset_size else {
+            return;
+        };
         rect.size = size;
     }
     let current = rect.visual_bounds().size();

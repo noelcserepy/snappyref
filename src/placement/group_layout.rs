@@ -1,11 +1,6 @@
-//! Ordered Group geometry. Document callers own membership, history, and persistence.
+//! Uniform Group scaling. Document callers own membership, history, and persistence.
 use std::collections::HashSet;
 
-#[cfg(test)]
-use eframe::egui::{Pos2, vec2};
-
-#[cfg(test)]
-use crate::data::GroupFlow;
 use crate::data::{Group, PlacementId, RectGeometry};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -20,105 +15,6 @@ pub(crate) struct GroupLayout {
 pub(crate) enum GroupLayoutError {
     InvalidGeometry,
     InvalidMembership,
-}
-
-/// Reflows fixed-size members from the container's top-left. Only incoming
-/// members may shrink to fit. Existing oversized members deliberately overflow.
-#[cfg(test)]
-fn layout_group(
-    group: &Group,
-    members: &[(PlacementId, RectGeometry)],
-    incoming: &[PlacementId],
-) -> Result<GroupLayout, GroupLayoutError> {
-    validate(group, members)?;
-    let incoming: HashSet<_> = incoming.iter().copied().collect();
-    if incoming.iter().any(|id| !group.members.contains(id)) {
-        return Err(GroupLayoutError::InvalidMembership);
-    }
-    let pixels = super::group_pixels::Pixels {
-        rects: members.iter().copied().collect(),
-        ..Default::default()
-    };
-    let mut board = crate::grouping::Board::default();
-    board
-        .groups
-        .insert(group.id, super::group_pixels::config(group));
-    for &(id, geometry) in members {
-        let mode = group.layout.members.get(&id).copied().unwrap_or_default();
-        let mut size = geometry.visual_bounds().size();
-        if incoming.contains(&id)
-            && !mode.absolute
-            && !mode.fill[0]
-            && !mode.fill[1]
-            && group.layout.fixed[0]
-            && group.flow != GroupFlow::Free
-            && size.x > board.groups[&group.id].capacity(0)
-        {
-            size *= board.groups[&group.id].capacity(0) / size.x;
-        }
-        board.members.insert(
-            id,
-            crate::grouping::Member {
-                kind: "Image".into(),
-                size: size.into(),
-                fill: (0..2).filter(|&a| mode.fill[a]).collect(),
-                absolute: mode.absolute,
-            },
-        );
-    }
-    let layout = pixels.layout(&board, group.id);
-    let bounds = group.container.unrotated_bounds();
-    let mut origin = bounds.min;
-    let mut size = bounds.size();
-    if !members.is_empty() {
-        for a in 0..2 {
-            if !group.layout.fixed[a] && !board.flowing(group.id).is_empty() {
-                size[a] = layout.content[a].max(1.0) + group.padding * 2.0;
-            }
-        }
-        if group.flow == GroupFlow::Free
-            && let Some(member_bounds) = board
-                .flowing(group.id)
-                .iter()
-                .map(|m| pixels.rects[m].visual_bounds())
-                .reduce(|a, b| a.union(b))
-        {
-            for a in 0..2 {
-                if !group.layout.fixed[a] {
-                    origin[a] = member_bounds.min[a] - group.padding;
-                }
-            }
-        }
-    }
-    let container = RectGeometry::from_bounds(
-        eframe::egui::Rect::from_min_size(origin, size),
-        group.container.z_index,
-    );
-    let mut output = Vec::new();
-    for &(id, mut geometry) in members {
-        let mode = group.layout.members.get(&id).copied().unwrap_or_default();
-        if !mode.absolute && group.flow != GroupFlow::Free {
-            let desired = layout.sizes[&id];
-            let current = geometry.visual_bounds().size();
-            let factor = if current.x > 0.0 {
-                desired.x / current.x
-            } else {
-                1.0
-            };
-            if factor >= 0.0 {
-                resize_member(&mut geometry, factor)?;
-            }
-            geometry.center =
-                origin + vec2(group.padding, group.padding) + layout.offsets[&id] + desired * 0.5;
-        }
-        output.push((id, geometry));
-    }
-    Ok(GroupLayout {
-        container,
-        members: output,
-        gap: group.gap,
-        padding: group.padding,
-    })
 }
 
 /// Scales around the container's top-left without reflowing its ordered layout.
@@ -223,7 +119,8 @@ fn validate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::Rect;
+    use crate::data::GroupFlow;
+    use eframe::egui::{Pos2, Rect, vec2};
 
     fn fixture(sizes: &[(f32, f32)]) -> (Group, Vec<(PlacementId, RectGeometry)>) {
         let members: Vec<_> = sizes
@@ -256,103 +153,34 @@ mod tests {
     }
 
     #[test]
-    fn append_keeps_existing_positions_even_with_a_taller_last_row_member() {
-        let (mut group, members) = fixture(&[(40.0, 20.0), (40.0, 70.0), (40.0, 30.0)]);
-        group.members.truncate(1);
-        let before = layout_group(&group, &members[..1], &[]).unwrap();
-        group.container = before.container;
-        group.members = vec![0, 1, 2];
-        let after = layout_group(&group, &members, &[1, 2]).unwrap();
-        assert_eq!(before.members[0], after.members[0]);
+    fn uniform_scale_preserves_relative_geometry() {
+        let (group, mut members) = fixture(&[(60.0, 20.0), (30.0, 40.0)]);
+        members[0].1.center = Pos2::new(50.0, 40.0);
+        members[1].1.center = Pos2::new(110.0, 50.0);
+        let scaled = scale_group(&group, &members, 2.0).unwrap();
+        assert_eq!(scaled.gap, 10.0);
+        assert_eq!(scaled.padding, 20.0);
         assert_eq!(
-            after.members[1].1.visual_bounds().min,
-            Pos2::new(65.0, 30.0)
+            scaled.container.scaled_size(),
+            group.container.scaled_size() * 2.0
         );
         assert_eq!(
-            after.members[2].1.visual_bounds().min,
-            Pos2::new(20.0, 105.0)
-        );
-        group.container = after.container;
-        assert_eq!(layout_group(&group, &after.members, &[]).unwrap(), after);
-    }
-
-    #[test]
-    fn flows_preserve_order_and_uniform_scale_preserves_relative_geometry() {
-        let (mut group, members) = fixture(&[(60.0, 20.0), (30.0, 40.0)]);
-        for flow in [GroupFlow::Row, GroupFlow::Column] {
-            group.flow = flow;
-            let layout = layout_group(&group, &members, &[]).unwrap();
-            let first = layout.members[0].1.visual_bounds();
-            let second = layout.members[1].1.visual_bounds();
-            if flow == GroupFlow::Row {
-                assert_eq!(second.min.x - first.max.x, 5.0);
-            } else {
-                assert_eq!(second.min.y - first.max.y, 5.0);
-            }
-            group.container = layout.container;
-            let scaled = scale_group(&group, &layout.members, 2.0).unwrap();
-            assert_eq!(scaled.gap, 10.0);
-            assert_eq!(scaled.padding, 20.0);
-            assert_eq!(
-                scaled.container.scaled_size(),
-                layout.container.scaled_size() * 2.0
-            );
-            assert_eq!(
-                scaled.members[1].1.center - scaled.members[0].1.center,
-                (layout.members[1].1.center - layout.members[0].1.center) * 2.0
-            );
-        }
-        let (mut group, members) = fixture(&[(100.0, 100.0), (100.0, 100.0)]);
-        group.container.size.y = 40.0;
-        group.layout.fixed = [true, true];
-        group.layout.auto = "Between".into();
-        group.layout.members = (0..2)
-            .map(|id| {
-                (
-                    id,
-                    crate::data::MemberLayout {
-                        fill: [true, true],
-                        absolute: false,
-                    },
-                )
-            })
-            .collect();
-        let fitted = layout_group(&group, &members, &[]).unwrap();
-        assert_eq!(fitted.members[0].1.scaled_size(), vec2(20.0, 20.0));
-        assert_eq!(
-            fitted.members[1].1.center.x - fitted.members[0].1.center.x,
-            50.0
+            scaled.members[1].1.center - scaled.members[0].1.center,
+            (members[1].1.center - members[0].1.center) * 2.0
         );
     }
 
     #[test]
-    fn removal_closes_gap_and_rotated_members_do_not_overlap() {
-        let (mut group, mut members) = fixture(&[(60.0, 20.0), (60.0, 20.0), (30.0, 20.0)]);
-        members[0].1.rotation = std::f32::consts::FRAC_PI_2;
-        let before = layout_group(&group, &members, &[]).unwrap();
-        assert!(
-            before.members[0].1.visual_bounds().max.x <= before.members[1].1.visual_bounds().min.x
-        );
-        group.members = vec![0, 2];
-        let after = layout_group(&group, &[members[0], members[2]], &[]).unwrap();
-        assert!(after.container.scaled_size().y < before.container.scaled_size().y);
-        assert_eq!(
-            after.members[1].1.visual_bounds().min.y,
-            after.members[0].1.visual_bounds().min.y
-        );
-    }
-
-    #[test]
-    fn empty_is_valid_and_invalid_inputs_are_rejected() {
+    fn invalid_inputs_are_rejected() {
         let (mut group, members) = fixture(&[]);
         assert_eq!(
-            layout_group(&group, &members, &[]).unwrap().container,
+            scale_group(&group, &members, 1.0).unwrap().container,
             group.container
         );
         for gap in [f32::NAN, f32::INFINITY] {
             group.gap = gap;
             assert_eq!(
-                layout_group(&group, &members, &[]),
+                scale_group(&group, &members, 1.0),
                 Err(GroupLayoutError::InvalidGeometry)
             );
         }
@@ -364,7 +192,7 @@ mod tests {
         group.gap = 0.0;
         group.padding = -1.0;
         assert_eq!(
-            layout_group(&group, &members, &[]),
+            scale_group(&group, &members[..0], 1.0),
             Err(GroupLayoutError::InvalidGeometry)
         );
     }

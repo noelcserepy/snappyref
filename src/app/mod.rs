@@ -1010,9 +1010,6 @@ impl SnappyRefApp {
     }
 
     fn ungroup_selection(&mut self) {
-        if !self.canvas.current_group_dock().group_shown() {
-            return;
-        }
         if let Err(error) = self.board_editing.ungroup_selection(
             &mut self.canvas,
             self.library.as_ref(),
