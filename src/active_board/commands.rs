@@ -24,9 +24,6 @@ pub(crate) struct ActiveBoardCommandContext<'a> {
 pub(crate) struct PasteCommandOutcome {
     pub(crate) status: String,
     pub(super) reload: Vec<crate::data::Placement>,
-    /// Created content in clipboard stack order. Group paste moves selection
-    /// onto existing members, so history can't derive creations from it.
-    pub(super) created: Vec<CanvasStackItem>,
 }
 
 #[cfg(test)]
@@ -217,7 +214,6 @@ fn paste_payload(
     Ok(PasteCommandOutcome {
         status: format!("Pasted {count} {noun}"),
         reload,
-        created,
     })
 }
 

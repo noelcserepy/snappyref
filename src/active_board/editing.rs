@@ -11,66 +11,6 @@ pub(crate) struct BoardEditing {
 }
 
 impl BoardEditing {
-    fn record_created_history(
-        &mut self,
-        canvas: &mut crate::canvas::CanvasState,
-        library: Option<&crate::library::storage::Library>,
-        board_id: i64,
-        label: String,
-        created: &[crate::data::CanvasStackItem],
-        before_stack_order: Vec<crate::data::CanvasStackItem>,
-    ) -> Result<(), String> {
-        use crate::data::CanvasStackItem;
-        let placement_changes = created
-            .iter()
-            .filter_map(|&item| match item {
-                CanvasStackItem::Placement(id) => canvas.placement_for_id(id),
-                CanvasStackItem::Annotation(_) => None,
-            })
-            .map(|placement| HistoryChange {
-                before: None,
-                after: Some(placement),
-            })
-            .collect();
-        let annotation_changes = created
-            .iter()
-            .filter_map(|&item| match item {
-                CanvasStackItem::Annotation(id) => canvas.annotation_for_id(id),
-                CanvasStackItem::Placement(_) => None,
-            })
-            .map(|annotation| HistoryChange {
-                before: None,
-                after: Some(annotation),
-            })
-            .collect();
-        let groups = canvas
-            .pending_document_changes_preview()
-            .groups
-            .map(|after| HistoryChange {
-                before: library.and_then(|library| {
-                    self.accepted_board_document(library, board_id)
-                        .ok()
-                        .map(|document| document.groups)
-                }),
-                after: Some(after),
-            });
-        self.history.record_applied(
-            board_id,
-            HistoryAction::document(
-                label,
-                placement_changes,
-                annotation_changes,
-                Some(HistoryChange {
-                    before: Some(before_stack_order),
-                    after: Some(canvas.canvas_stack_order()),
-                }),
-            )
-            .with_groups(groups),
-        );
-        self.queue_canvas_document(canvas, board_id)?;
-        Ok(())
-    }
-
     pub(crate) fn record_pending_document_changes_history(
         &mut self,
         canvas: &mut crate::canvas::CanvasState,
@@ -199,34 +139,29 @@ impl BoardEditing {
         payload: &crate::sources::clipboard::ClipboardBoardSelection,
         anchor: eframe::egui::Pos2,
     ) -> Result<String, String> {
-        let before = context.canvas.canvas_stack_order();
         let outcome =
             super::commands::paste_board_payload_at(&mut context.command(), payload, anchor)?;
-        self.accept_paste(context, outcome, before)
+        self.accept_paste(context, outcome)
     }
     pub(crate) fn duplicate(
         &mut self,
         context: &mut BoardEditContext<'_>,
     ) -> Result<Option<String>, String> {
-        let before = context.canvas.canvas_stack_order();
         let Some(outcome) = super::commands::duplicate_selection(&mut context.command())? else {
             return Ok(None);
         };
-        self.accept_paste(context, outcome, before).map(Some)
+        self.accept_paste(context, outcome).map(Some)
     }
     fn accept_paste(
         &mut self,
         context: &mut BoardEditContext<'_>,
         outcome: super::commands::PasteCommandOutcome,
-        before: Vec<crate::data::CanvasStackItem>,
     ) -> Result<String, String> {
-        self.record_created_history(
+        self.record_pending_document_changes_history(
             context.canvas,
             context.library,
             context.board_id,
-            outcome.status.clone(),
-            &outcome.created,
-            before,
+            &outcome.status,
         )?;
         context.reload(outcome.reload)?;
         Ok(outcome.status)

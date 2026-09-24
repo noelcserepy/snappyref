@@ -315,52 +315,63 @@ impl CanvasState {
 }
 
 impl CanvasState {
-    pub(super) fn group_transform_origins(&self) -> Vec<(i64, RectGeometry)> {
-        if self.interaction.editing_group_id.is_some() {
-            return Vec::new();
+    /// Selected Groups follow the selection. Its first placement is the reference, since input moves every
+    /// selected placement but no textbox.
+    pub(super) fn group_transform_origin(&self) -> Option<(i64, RectGeometry)> {
+        if self.interaction.editing_group_id.is_some()
+            || self.interaction.selected_group_ids.is_empty()
+        {
+            return None;
         }
-        self.selected_group_ids()
-            .iter()
-            .filter_map(|id| self.groups().iter().find(|g| g.id == *id))
-            .filter_map(|g| {
-                g.members
-                    .first()
-                    .and_then(|id| self.placement_for_id(*id))
-                    .map(|p| (g.id, p.state.geometry))
-            })
-            .collect()
+        let id = *self.interaction.selected_placement_ids.first()?;
+        Some((id, self.placement_for_id(id)?.state.geometry))
     }
-    pub(super) fn follow_group_member_transforms(&mut self, origins: Vec<(i64, RectGeometry)>) {
-        for (id, before) in origins {
-            let Some(group) = self.groups().iter().find(|g| g.id == id) else {
+    pub(super) fn follow_group_member_transforms(&mut self, origin: Option<(i64, RectGeometry)>) {
+        let Some((reference, before)) = origin else {
+            return;
+        };
+        let Some(after) = self.placement_for_id(reference).map(|p| p.state.geometry) else {
+            return;
+        };
+        if after.center == before.center && after.scale == before.scale {
+            return;
+        }
+        let factor = after.scale / before.scale;
+        let follow = |center: egui::Pos2| after.center + (center - before.center) * factor;
+        for id in self.selected_group_ids() {
+            let Some(group) = self.document.groups.iter_mut().find(|g| g.id == id) else {
                 continue;
             };
-            let Some(after) = group
-                .members
-                .first()
-                .and_then(|id| self.placement_for_id(*id))
-                .map(|p| p.state.geometry)
-            else {
-                continue;
-            };
-            if after.center == before.center && after.scale == before.scale {
-                continue;
-            }
-            let factor = after.scale / before.scale;
-            let group = self
-                .document
-                .groups
-                .iter_mut()
-                .find(|g| g.id == id)
-                .unwrap();
-            group.container.center =
-                after.center + (group.container.center - before.center) * factor;
+            group.container.center = follow(group.container.center);
             group.container.size *= factor;
             group.gap *= factor;
             group.layout.row_gap *= factor;
             group.padding *= factor;
-            self.interaction.group_transform_changed = true;
+            // Release persists the members, so a drag never records per-frame edits.
+            for m in group.members.clone() {
+                if self.is_selected(m) {
+                    continue;
+                }
+                if let Some(p) = self
+                    .document
+                    .placements
+                    .iter_mut()
+                    .find(|p| p.state.id == m)
+                {
+                    p.state.geometry.center = follow(p.state.geometry.center);
+                    p.state.geometry.scale *= factor;
+                } else if let Some(a) = self.document.annotations.iter_mut().find(|a| a.id == m)
+                    && let crate::data::CanvasAnnotationGeometry::Rect(r) = &mut a.geometry
+                {
+                    r.center = follow(r.center);
+                    if factor != 1.0 {
+                        r.size *= factor;
+                        self.invalidate_textbox_layout_cache(m);
+                    }
+                }
+            }
         }
+        self.interaction.group_transform_changed = true;
     }
 }
 
@@ -801,6 +812,19 @@ impl CanvasState {
         if released && self.interaction.group_transform_changed {
             self.document.groups_dirty = true;
             self.interaction.group_transform_changed = false;
+            for m in self
+                .groups()
+                .iter()
+                .filter(|g| self.interaction.selected_group_ids.contains(&g.id))
+                .flat_map(|g| g.members.clone())
+                .collect::<Vec<_>>()
+            {
+                if self.placement_for_id(m).is_some() {
+                    self.mark_dirty(m);
+                } else {
+                    self.mark_annotation_for_persistence(m);
+                }
+            }
         }
         if let Some(gesture) = self.interaction.group_gesture.clone() {
             if released

@@ -922,10 +922,71 @@ fn group_paste_undo_removes_only_pasted_members() {
 }
 
 #[test]
+fn member_paste_redo_restores_reflowed_members() {
+    let (_root, mut h, ids) = dock_fixture();
+    let ctx = h.ctx.clone();
+    h.state_mut().canvas.select_content(&ids[..1], &[]);
+    let payload = h.state().copy_selected_board_payload().unwrap();
+    let first = h.state().canvas.placement_for_id(ids[0]).unwrap();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
+    let pos = inspect_world_to_screen(first.state.geometry.center, screen);
+    h.event_modifiers(egui::Event::PointerMoved(pos), CMD);
+    inspect_click_at(&h, pos, CMD);
+    h.step();
+    assert!(h.state().canvas.current_group_dock().member() == Some(ids[0]));
+    let geometry = |h: &Harness<'_, SnappyRefApp>| {
+        h.state()
+            .canvas
+            .all_placement_ids()
+            .into_iter()
+            .map(|id| {
+                h.state()
+                    .canvas
+                    .placement_for_id(id)
+                    .unwrap()
+                    .state
+                    .geometry
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = geometry(&h);
+    h.state_mut()
+        .paste_board_payload_at(&payload, egui::pos2(700., 100.))
+        .unwrap();
+    let pasted = geometry(&h);
+    assert_eq!(pasted.len(), 6);
+    h.state_mut().undo_document_history(&ctx);
+    for _ in 0..8 {
+        h.step();
+    }
+    h.state_mut().redo_document_history(&ctx);
+    for _ in 0..8 {
+        h.step();
+    }
+    assert_eq!(geometry(&h), pasted);
+    h.state_mut().undo_document_history(&ctx);
+    assert_eq!(geometry(&h), before);
+    assert_eq!(h.state().canvas.groups()[0].members, ids);
+}
+
+#[test]
 fn dragging_a_member_moves_every_selected_group() {
     let (_root, mut h, ids) = dock_fixture();
     let app = h.state_mut();
     app.canvas.select_content(&ids[3..], &[]);
+    app.group_selection();
+    let note = app.library.as_ref().unwrap().new_canvas_annotation(
+        CanvasAnnotationKind::Textbox,
+        egui::pos2(-200.0, 200.0),
+        egui::pos2(40.0, 256.0),
+        "note".to_owned(),
+        CanvasTextSize::M,
+        CanvasStrokeWidth::M,
+        crate::data::CanvasAnnotationColor::Sky,
+        true,
+    );
+    app.canvas.add_annotation(note.clone());
+    app.canvas.select_content(&[], &[note.id]);
     app.group_selection();
     app.canvas.select_all_content();
     let containers = |h: &Harness<'_, SnappyRefApp>| {
@@ -937,7 +998,7 @@ fn dragging_a_member_moves_every_selected_group() {
             .collect::<Vec<_>>()
     };
     let before = containers(&h);
-    assert_eq!(before.len(), 2);
+    assert_eq!(before.len(), 3);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
     let from = inspect_world_to_screen(
         h.state()
@@ -960,8 +1021,12 @@ fn dragging_a_member_moves_every_selected_group() {
         .zip(&before)
         .map(|(after, before)| *after - *before)
         .collect::<Vec<_>>();
-    assert_eq!(moved, [egui::vec2(90.0, 60.0); 2]);
-    assert_eq!(h.state().canvas.selected_group_ids().len(), 2);
+    assert_eq!(moved, [egui::vec2(90.0, 60.0); 3]);
+    assert_eq!(
+        h.state().canvas.annotation_for_id(note.id).unwrap().start(),
+        note.start() + egui::vec2(90.0, 60.0)
+    );
+    assert_eq!(h.state().canvas.selected_group_ids().len(), 3);
 }
 
 #[test]
