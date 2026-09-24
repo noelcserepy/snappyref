@@ -262,55 +262,50 @@ fn resize_observation(
 }
 
 impl CanvasState {
+    /// The dock decides the paste destination: after the edited member, appended
+    /// to the shown Group, or loose while hidden. Member -1 means no member.
     pub(crate) fn group_paste_context(&self) -> Option<(i64, i64)> {
-        if let Some(g) = self.interaction.editing_group_id {
-            return self
-                .selected_placement_ids()
-                .into_iter()
-                .chain(self.selected_annotation_ids())
-                .find(|&m| self.group_for_member(m) == Some(g))
-                .map(|m| (g, m));
-        }
-        (self.interaction.selected_group_ids.len() == 1)
-            .then(|| (self.interaction.selected_group_ids[0], -1))
+        let dock = self.current_group_dock();
+        Some((dock.group()?, dock.member().unwrap_or(-1)))
     }
+    /// Admits fresh items in order. An item with a source is a duplicate of it.
     pub(crate) fn paste_group_members(
         &mut self,
         context: Option<(i64, i64)>,
-        ids: &[i64],
-        duplicate: bool,
+        members: &[(i64, Option<i64>)],
     ) -> Result<(), String> {
-        let Some((g, mut anchor)) = context else {
+        if context.is_none() && members.iter().all(|(_, source)| source.is_none()) {
             return Ok(());
-        };
+        }
         let mut state = self.grouping_state();
-        let selection = if anchor == -1 {
-            state.selectGroup(g)
-        } else {
-            state.editMember(anchor)
+        let selection = match context {
+            Some((g, -1)) => Some(state.selectGroup(g)),
+            Some((_, anchor)) => Some(state.editMember(anchor)),
+            None => {
+                state.dock = Default::default();
+                None
+            }
         };
-        if let Outcome::Rejected(reason) = selection {
+        if let Some(Outcome::Rejected(reason)) = selection {
             return Err(reason.into());
         }
-        for &id in ids {
+        for &(id, _) in members {
             if let Some(member) = state.board.members.get(&id).cloned() {
                 state.geometry.intake.insert(id, member);
                 state.board.live.remove(&id);
             }
         }
-        for &id in ids {
+        for &(id, source) in members {
             let Some(member) = state.geometry.intake.get(&id).cloned() else {
                 continue;
             };
-            let result = if duplicate && anchor != -1 {
-                state.duplicate(anchor, id)
-            } else {
-                state.paste(id, member.size[0])
+            let result = match source {
+                Some(source) => state.duplicate(source, id),
+                None => state.paste(id, member.size[0]),
             };
             if let Outcome::Rejected(reason) = result {
                 return Err(reason.into());
             }
-            anchor = id;
         }
         self.apply_group_state(state, None)
     }

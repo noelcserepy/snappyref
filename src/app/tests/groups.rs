@@ -898,6 +898,23 @@ fn dock_fixture() -> (TempRoot, Harness<'static, SnappyRefApp>, Vec<i64>) {
 }
 
 #[test]
+fn group_paste_undo_removes_only_pasted_members() {
+    let (_root, mut h, ids) = dock_fixture();
+    let ctx = h.ctx.clone();
+    let group = h.state().canvas.groups()[0].id;
+    h.state_mut().canvas.select_content(&ids[..2], &[]);
+    let payload = h.state().copy_selected_board_payload().unwrap();
+    let app = h.state_mut();
+    app.canvas.select_group(group);
+    app.paste_board_payload_at(&payload, egui::pos2(700., 100.))
+        .unwrap();
+    assert_eq!(app.canvas.groups()[0].members.len(), 7);
+    app.undo_document_history(&ctx);
+    assert_eq!(app.canvas.all_placement_ids().len(), 5);
+    assert_eq!(app.canvas.groups()[0].members, ids);
+}
+
+#[test]
 fn inspect_group_dock_writes_artifact() {
     let mut scenario = InspectScenario::new("group-dock");
     let (_root, mut harness, ids) = dock_fixture();

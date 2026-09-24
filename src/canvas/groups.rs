@@ -146,15 +146,7 @@ impl CanvasState {
         ids: &[i64],
     ) -> Result<bool, String> {
         let before = self.groups().to_vec();
-        self.group_edit(|state| {
-            for &m in ids {
-                let result = state.add(destination, m);
-                if result != crate::grouping::Outcome::Ok {
-                    return result;
-                }
-            }
-            crate::grouping::Outcome::Ok
-        })?;
+        self.group_edit(|state| state.add(destination, ids))?;
         Ok(self.groups() != before)
     }
     pub fn edit_group(&mut self, group: Group) -> Result<(), String> {
@@ -765,7 +757,7 @@ impl CanvasState {
         }) && let Some(p) = pointer
             && input.contains(p)
             && !overlay.is_some_and(|r| r.contains(p))
-            && let Some(hit) = super::interaction::hit_test_canvas_item(self, viewport, p)
+            && let Some(hit) = super::interaction::hit_test_member(self, viewport, p)
         {
             let m = match hit {
                 super::CanvasHit::Placement(id) | super::CanvasHit::Annotation(id) => id,
@@ -796,7 +788,7 @@ impl CanvasState {
             && let Some(p) = pointer
             && input.contains(p)
             && !overlay.is_some_and(|r| r.contains(p))
-            && let Some(hit) = super::interaction::hit_test_canvas_item(self, viewport, p)
+            && let Some(hit) = super::interaction::hit_test_member(self, viewport, p)
         {
             let m = match hit {
                 super::CanvasHit::Placement(id) | super::CanvasHit::Annotation(id) => id,

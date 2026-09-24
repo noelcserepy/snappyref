@@ -24,6 +24,9 @@ pub(crate) struct ActiveBoardCommandContext<'a> {
 pub(crate) struct PasteCommandOutcome {
     pub(crate) status: String,
     pub(super) reload: Vec<crate::data::Placement>,
+    /// Created content in clipboard stack order. Group paste moves selection
+    /// onto existing members, so history can't derive creations from it.
+    pub(super) created: Vec<CanvasStackItem>,
 }
 
 #[cfg(test)]
@@ -44,20 +47,17 @@ pub(crate) fn paste_board_payload_at(
     payload: &ClipboardBoardSelection,
     requested_anchor_world: egui::Pos2,
 ) -> Result<PasteCommandOutcome, String> {
-    paste_payload(context, payload, requested_anchor_world, false)
+    paste_payload(context, payload, requested_anchor_world, None)
 }
 fn paste_payload(
     context: &mut ActiveBoardCommandContext<'_>,
     payload: &ClipboardBoardSelection,
     requested_anchor_world: egui::Pos2,
-    duplicate: bool,
+    // Duplicate sources in payload order: selected placements, then annotations.
+    sources: Option<&[i64]>,
 ) -> Result<PasteCommandOutcome, String> {
     validate_clipboard_payload(payload)?;
-    let group_context = if payload.groups.is_empty() {
-        context.canvas.group_paste_context()
-    } else {
-        None
-    };
+    let group_context = context.canvas.group_paste_context();
     let Some(library) = context.library else {
         return Err("Storage unavailable".to_owned());
     };
@@ -183,26 +183,41 @@ fn paste_payload(
         .canvas
         .select_content(&pasted_placement_ids, &pasted_annotation_ids);
     context.canvas.select_pasted_groups(pasted_group_ids);
-    context.canvas.paste_group_members(
-        group_context,
-        &pasted_placement_ids
+    let created = pasted_stack_order(&pasted_placement_ids, &pasted_annotation_ids, payload);
+    // Copied Groups already own their pasted members.
+    if payload.groups.is_empty() {
+        let fresh = pasted_placement_ids
             .iter()
             .chain(&pasted_annotation_ids)
             .copied()
-            .collect::<Vec<_>>(),
-        duplicate,
-    )?;
-    move_pasted_content_to_front(
-        context.canvas,
-        &pasted_placement_ids,
-        &pasted_annotation_ids,
-        payload,
-    );
+            .collect::<Vec<_>>();
+        let members = created
+            .iter()
+            .map(|item| {
+                let id = item.item_id();
+                let source = sources.map(|sources| {
+                    sources[fresh
+                        .iter()
+                        .position(|&f| f == id)
+                        .expect("created is fresh")]
+                });
+                (id, source)
+            })
+            .collect::<Vec<_>>();
+        context
+            .canvas
+            .paste_group_members(group_context, &members)?;
+    }
+    let mut next_stack_order = context.canvas.canvas_stack_order();
+    next_stack_order.retain(|item| !created.contains(item));
+    next_stack_order.extend(created.iter().copied());
+    context.canvas.set_canvas_stack_order(next_stack_order);
     let count = pasted_placement_ids.len() + pasted_annotation_ids.len() + payload.groups.len();
     let noun = if count == 1 { "item" } else { "items" };
     Ok(PasteCommandOutcome {
         status: format!("Pasted {count} {noun}"),
         reload,
+        created,
     })
 }
 
@@ -219,7 +234,13 @@ pub(crate) fn duplicate_selection(
         context.placement_gap.max(12.0),
         context.placement_gap.max(12.0),
     );
-    let mut outcome = paste_payload(context, &payload, bounds.center() + offset, true)?;
+    let sources = context
+        .canvas
+        .selected_placement_ids()
+        .into_iter()
+        .chain(context.canvas.selected_annotation_ids())
+        .collect::<Vec<_>>();
+    let mut outcome = paste_payload(context, &payload, bounds.center() + offset, Some(&sources))?;
     outcome.status = outcome.status.replacen("Pasted", "Duplicated", 1);
     Ok(Some(outcome))
 }
@@ -263,12 +284,11 @@ pub(crate) fn delete_selected_from_board(
     Ok(status)
 }
 
-fn move_pasted_content_to_front(
-    canvas: &mut CanvasState,
+fn pasted_stack_order(
     pasted_placement_ids: &[i64],
     pasted_annotation_ids: &[i64],
     payload: &ClipboardBoardSelection,
-) {
+) -> Vec<CanvasStackItem> {
     let mut pasted_stack_order = Vec::new();
     for entry in &payload.stack_order {
         match entry.kind.as_str() {
@@ -298,11 +318,7 @@ fn move_pasted_content_to_front(
             )
             .collect();
     }
-
-    let mut next_stack_order = canvas.canvas_stack_order();
-    next_stack_order.retain(|item| !pasted_stack_order.contains(item));
-    next_stack_order.extend(pasted_stack_order);
-    canvas.set_canvas_stack_order(next_stack_order);
+    pasted_stack_order
 }
 
 fn placement_anchor_for_payload(
@@ -773,6 +789,66 @@ mod group_tests {
             vec![ids[2], ids[3], ids[0]]
         );
         assert!(!canvas.add_members_to_group(b, &[ids[0]]).unwrap());
+    }
+
+    #[test]
+    fn duplicating_several_members_copies_each_source() {
+        let root = crate::test_support::TempRoot::new("group-duplicate-sources");
+        let library = Library::initialize(root.to_path_buf()).unwrap();
+        let path = library
+            .store_rgba_image("member", &[255; 16], 2, 2)
+            .unwrap();
+        let asset = library
+            .register_original(&path, "image/png", 2, 2, 16, None)
+            .unwrap();
+        let mut canvas = CanvasState::default();
+        let mut ids = Vec::new();
+        for i in 0..3 {
+            let p = library
+                .new_placement_from_asset(asset.id, egui::pos2(i as f32 * 100., 0.), 1., 0., i)
+                .unwrap();
+            ids.push(p.id());
+            canvas.add_unresolved_placement(p);
+        }
+        let g = library.allocate_document_id();
+        canvas.restore_groups(vec![crate::data::Group {
+            id: g,
+            name: "Row".into(),
+            members: ids.clone(),
+            container: RectGeometry::new(egui::Pos2::ZERO, egui::vec2(400., 100.), 1., 0., 0),
+            flow: crate::data::GroupFlow::Row,
+            gap: 8.,
+            padding: 8.,
+            layout: crate::data::GroupLayoutSettings {
+                members: std::collections::BTreeMap::from([(
+                    ids[0],
+                    crate::data::MemberLayout {
+                        fill: [false, false],
+                        absolute: true,
+                    },
+                )]),
+                ..Default::default()
+            },
+        }]);
+        canvas.select_content(&[ids[0], ids[2]], &[]);
+        let mut context = ActiveBoardCommandContext {
+            canvas: &mut canvas,
+            library: Some(&library),
+            import_worker_available: true,
+            placement_gap: 12.,
+            viewport_world: egui::Rect::from_center_size(
+                egui::Pos2::ZERO,
+                egui::vec2(2000., 2000.),
+            ),
+        };
+        duplicate_selection(&mut context).unwrap().unwrap();
+        let group = canvas.groups().iter().find(|group| group.id == g).unwrap();
+        let [a, a2, b, c, c2] = group.members[..] else {
+            panic!("{:?}", group.members);
+        };
+        assert_eq!([a, b, c], [ids[0], ids[1], ids[2]]);
+        assert!(group.layout.members[&a2].absolute);
+        assert!(!group.layout.members.contains_key(&c2));
     }
 }
 

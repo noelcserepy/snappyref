@@ -5,8 +5,7 @@ use eframe::egui;
 
 use super::annotations::annotation_color;
 use crate::canvas::interaction::{
-    annotation_screen_rect, hit_test_textbox_resize_handle, normalized_textbox_rect,
-    textbox_screen_rect,
+    annotation_screen_rect, hit_test_textbox_resize_handle, textbox_screen_rect, textbox_world_rect,
 };
 use crate::canvas::{
     CanvasState, MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP,
@@ -199,10 +198,7 @@ fn expand_textbox_to_height(state: &mut CanvasState, index: usize, required_heig
         return false;
     }
 
-    let world_rect = normalized_textbox_rect(
-        egui::pos2(annotation.start().x, annotation.start().y),
-        egui::pos2(annotation.end().x, annotation.end().y),
-    );
+    let world_rect = textbox_world_rect(annotation);
     if required_height <= world_rect.height() + 0.5 {
         return false;
     }

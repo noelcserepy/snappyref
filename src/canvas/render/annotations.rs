@@ -10,8 +10,8 @@ use crate::canvas::{ANNOTATION_CULL_MARGIN_SCREEN, ActiveGesture, CanvasState, P
 #[cfg(test)]
 use crate::canvas::{AnnotationPaintStats, CanvasDocumentState};
 use crate::data::{
-    CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasStrokeWidth,
-    CanvasTextSize,
+    CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationGeometry, CanvasAnnotationKind,
+    CanvasStrokeWidth, CanvasTextSize,
 };
 
 pub(crate) fn annotation_color(color: CanvasAnnotationColor) -> egui::Color32 {
@@ -142,7 +142,12 @@ pub(crate) fn annotation_should_paint(
     cull_rect: egui::Rect,
     annotation: &CanvasAnnotation,
 ) -> bool {
-    annotation_screen_rect(state, rect, annotation).intersects(cull_rect)
+    // Group Fill can shrink a textbox to zero, and an empty textbox paints nothing.
+    let empty = matches!(
+        annotation.geometry,
+        CanvasAnnotationGeometry::Rect(r) if r.scaled_size().min_elem() <= 0.0
+    );
+    !empty && annotation_screen_rect(state, rect, annotation).intersects(cull_rect)
 }
 
 fn paint_textbox_text(

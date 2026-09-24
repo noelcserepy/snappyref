@@ -23,8 +23,8 @@ pub(super) use placement_transform::{
     selected_placement_rotation_handle_screen_pos,
 };
 pub(super) use selection::{
-    begin_marquee_selection, hit_test_canvas_item, open_context_menu_at_pointer,
-    update_marquee_selection,
+    begin_marquee_selection, grouped_item_reachable, hit_test_canvas_item, hit_test_member,
+    open_context_menu_at_pointer, update_marquee_selection,
 };
 pub(super) use textbox::{
     handle_textbox_primary_press, hit_test_textbox_resize_handle, moved_textbox_rect,
@@ -591,7 +591,9 @@ pub(super) fn handle_input(
         && primary_double_clicked
         && pointer_in_canvas_rect
         && let Some(pointer_pos) = pointer_pos
-        && let Some(placement_id) = hit_test_placement(state, rect, pointer_pos)
+        && let Some(placement_id) = hit_test_placement(state, rect, pointer_pos).filter(|&id| {
+            grouped_item_reachable(state, id, state.screen_to_world(pointer_pos, rect), true)
+        })
     {
         if let Some(id) = state.group_for_member(placement_id) {
             state.interaction.editing_group_id = Some(id);
@@ -610,7 +612,9 @@ pub(super) fn handle_input(
         && primary_double_clicked
         && pointer_in_canvas_rect
         && let Some(pointer_pos) = pointer_pos
-        && let Some(annotation_id) = hit_test_annotation(state, rect, pointer_pos)
+        && let Some(annotation_id) = hit_test_annotation(state, rect, pointer_pos).filter(|&id| {
+            grouped_item_reachable(state, id, state.screen_to_world(pointer_pos, rect), true)
+        })
         && state
             .annotation_by_id(annotation_id)
             .is_some_and(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)

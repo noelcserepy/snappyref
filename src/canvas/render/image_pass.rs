@@ -377,9 +377,7 @@ fn paint_canvas_items_interleaved(
                 let Some(annotation) = state.annotation_by_id(annotation_id).cloned() else {
                     continue;
                 };
-                if !matches!(annotation.geometry,crate::data::CanvasAnnotationGeometry::Rect(r) if r.scaled_size().min_elem()<=0.0)
-                    && annotation_should_paint(state, rect, annotation_cull_rect, &annotation)
-                {
+                if annotation_should_paint(state, rect, annotation_cull_rect, &annotation) {
                     paint_annotation(painter, ui, rect, state, &annotation);
                 }
             }

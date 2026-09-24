@@ -11,27 +11,33 @@ pub(crate) struct BoardEditing {
 }
 
 impl BoardEditing {
-    fn record_created_selection_history(
+    fn record_created_history(
         &mut self,
         canvas: &mut crate::canvas::CanvasState,
         library: Option<&crate::library::storage::Library>,
         board_id: i64,
         label: String,
+        created: &[crate::data::CanvasStackItem],
         before_stack_order: Vec<crate::data::CanvasStackItem>,
     ) -> Result<(), String> {
-        let placement_changes = canvas
-            .selected_placement_ids()
-            .into_iter()
-            .filter_map(|placement_id| canvas.placement_for_id(placement_id))
+        use crate::data::CanvasStackItem;
+        let placement_changes = created
+            .iter()
+            .filter_map(|&item| match item {
+                CanvasStackItem::Placement(id) => canvas.placement_for_id(id),
+                CanvasStackItem::Annotation(_) => None,
+            })
             .map(|placement| HistoryChange {
                 before: None,
                 after: Some(placement),
             })
             .collect();
-        let annotation_changes = canvas
-            .selected_annotation_ids()
-            .into_iter()
-            .filter_map(|annotation_id| canvas.annotation_for_id(annotation_id))
+        let annotation_changes = created
+            .iter()
+            .filter_map(|&item| match item {
+                CanvasStackItem::Annotation(id) => canvas.annotation_for_id(id),
+                CanvasStackItem::Placement(_) => None,
+            })
             .map(|annotation| HistoryChange {
                 before: None,
                 after: Some(annotation),
@@ -214,11 +220,12 @@ impl BoardEditing {
         outcome: super::commands::PasteCommandOutcome,
         before: Vec<crate::data::CanvasStackItem>,
     ) -> Result<String, String> {
-        self.record_created_selection_history(
+        self.record_created_history(
             context.canvas,
             context.library,
             context.board_id,
             outcome.status.clone(),
+            &outcome.created,
             before,
         )?;
         context.reload(outcome.reload)?;

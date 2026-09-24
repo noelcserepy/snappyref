@@ -417,13 +417,11 @@ impl PlacementCreation {
             (batch.created, batch.history_action)
         };
         if destination.is_some() {
-            let ids = created
+            let members = created
                 .iter()
-                .map(|item| item.placement.id())
+                .map(|item| (item.placement.id(), None))
                 .collect::<Vec<_>>();
-            context
-                .canvas
-                .paste_group_members(destination, &ids, false)?;
+            context.canvas.paste_group_members(destination, &members)?;
             if let Some(crate::active_board::history::HistoryAction::Document(action)) = &mut action
             {
                 use crate::active_board::history::HistoryChange;

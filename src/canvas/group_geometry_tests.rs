@@ -172,14 +172,13 @@ fn zero_fill_to_fixed_or_hug_freezes_complete_image_geometry() {
     }
 }
 
-#[test]
-fn absolute_members_do_not_decide_insertion_slot() {
+fn images_canvas(sizes: &[(f32, f32)]) -> CanvasState {
     let mut canvas = CanvasState::default();
-    for id in 1..=3 {
+    for (id, &(w, h)) in (1..).zip(sizes) {
         canvas.document.placements.push(Placement::loaded(
             PlacementState {
                 id,
-                geometry: RectGeometry::new(egui::Pos2::ZERO, egui::vec2(120.0, 60.0), 1.0, 0.0, 0),
+                geometry: RectGeometry::new(egui::Pos2::ZERO, egui::vec2(w, h), 1.0, 0.0, 0),
                 archived: false,
             },
             Asset {
@@ -187,14 +186,19 @@ fn absolute_members_do_not_decide_insertion_slot() {
                 original_path: "image.png".into(),
                 filename: "image.png".into(),
                 mime_type: "image/png".into(),
-                width: 120,
-                height: 60,
+                width: w as u32,
+                height: h as u32,
             },
         ));
     }
+    let ids = (1..=sizes.len() as i64).collect::<Vec<_>>();
+    canvas.create_named_group(7, "Group".into(), &ids).unwrap();
     canvas
-        .create_named_group(7, "Group".into(), &[1, 2, 3])
-        .unwrap();
+}
+
+#[test]
+fn absolute_members_do_not_decide_insertion_slot() {
+    let mut canvas = images_canvas(&[(120.0, 60.0); 3]);
     canvas.group_edit(|s| s.setFlow(7, "Row")).unwrap();
     canvas.group_edit(|s| s.toggleAbsolute(7, 1, 0)).unwrap();
     let [b, c] = [2, 3].map(|id| canvas.group_member_geometry(id).unwrap().center);
@@ -203,4 +207,159 @@ fn absolute_members_do_not_decide_insertion_slot() {
     canvas.set_group_member_geometry(1, a);
     let between = egui::pos2((b.x + c.x) / 2.0, b.y);
     assert_eq!(canvas.group_insertion_slot(7, 4, between), 2);
+}
+
+#[test]
+fn wrap_cross_fill_image_keeps_its_row_across_relayout() {
+    let mut canvas = images_canvas(&[(80.0, 100.0), (60.0, 60.0)]);
+    canvas
+        .group_edit(|s| {
+            s.setAxisMode(7, 0, AxisMode::Fixed(170.0));
+            s.setAxisMode(7, 1, AxisMode::Fixed(120.0));
+            s.selectGroup(7);
+            s.useDock(Control::Padding(10.0));
+            s.useDock(Control::Gap(10.0));
+            s.useDock(Control::RowGap(10.0));
+            s.setMemberMode(7, 2, 1, true)
+        })
+        .unwrap();
+    let filled = canvas.group_member_geometry(2).unwrap().scaled_size();
+    assert_eq!(filled, egui::vec2(100.0, 100.0));
+    for _ in 0..2 {
+        canvas
+            .group_edit(|s| {
+                s.selectGroup(7);
+                s.useDock(Control::Clip)
+            })
+            .unwrap();
+        assert_eq!(
+            canvas.group_member_geometry(2).unwrap().scaled_size(),
+            filled
+        );
+    }
+}
+
+#[test]
+fn batch_transfer_freezes_every_member_at_its_source_size() {
+    for create in [true, false] {
+        let mut canvas = images_canvas(&[(200.0, 100.0), (200.0, 100.0)]);
+        canvas
+            .group_edit(|s| {
+                s.setFlow(7, "Row");
+                s.setAxisMode(7, 0, AxisMode::Fixed(220.0));
+                s.selectGroup(7);
+                s.useDock(Control::Padding(10.0));
+                s.useDock(Control::Gap(10.0));
+                s.setMemberMode(7, 1, 0, true);
+                s.setMemberMode(7, 2, 0, true)
+            })
+            .unwrap();
+        let size = |canvas: &CanvasState| {
+            [1, 2].map(|id| canvas.group_member_geometry(id).unwrap().scaled_size())
+        };
+        let before = size(&canvas);
+        assert_eq!(before, [egui::vec2(95.0, 47.5); 2]);
+        if create {
+            canvas.create_named_group(8, "B".into(), &[1, 2]).unwrap();
+        } else {
+            canvas.document.placements.push(Placement::loaded(
+                PlacementState {
+                    id: 3,
+                    geometry: RectGeometry::new(
+                        egui::pos2(0.0, 500.0),
+                        egui::vec2(50.0, 50.0),
+                        1.0,
+                        0.0,
+                        0,
+                    ),
+                    archived: false,
+                },
+                Asset {
+                    id: 13,
+                    original_path: "image.png".into(),
+                    filename: "image.png".into(),
+                    mime_type: "image/png".into(),
+                    width: 50,
+                    height: 50,
+                },
+            ));
+            canvas.create_named_group(8, "B".into(), &[3]).unwrap();
+            canvas
+                .group_edit(|s| {
+                    s.setFlow(8, "Row");
+                    s.setAxisMode(8, 0, AxisMode::Hug)
+                })
+                .unwrap();
+            canvas.add_members_to_group(8, &[1, 2]).unwrap();
+        }
+        assert_eq!(size(&canvas), before, "create={create}");
+    }
+}
+
+#[test]
+fn filled_textbox_renders_its_allocated_size() {
+    let mut canvas = CanvasState::default();
+    canvas.add_annotation(crate::data::CanvasAnnotation::new(
+        1,
+        crate::data::CanvasAnnotationKind::Textbox,
+        egui::pos2(0.0, 0.0),
+        egui::pos2(240.0, 56.0),
+        String::new(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+        false,
+        false,
+    ));
+    canvas.create_named_group(7, "Group".into(), &[1]).unwrap();
+    canvas
+        .group_edit(|s| {
+            s.setFlow(7, "Row");
+            s.setAxisMode(7, 0, AxisMode::Fixed(120.0));
+            s.selectGroup(7);
+            s.useDock(Control::Padding(10.0));
+            s.setMemberMode(7, 1, 0, true)
+        })
+        .unwrap();
+    for (padding, width) in [(10.0, 100.0), (60.0, 0.0)] {
+        canvas
+            .group_edit(|s| {
+                s.selectGroup(7);
+                s.useDock(Control::Padding(padding))
+            })
+            .unwrap();
+        let textbox = canvas.annotation_by_id(1).unwrap();
+        assert_eq!(
+            crate::canvas::interaction::textbox_world_rect(textbox).width(),
+            width
+        );
+    }
+}
+
+#[test]
+fn member_editing_reaches_visible_overflow_only() {
+    use crate::canvas::interaction::{hit_test_canvas_item, hit_test_member};
+    let mut canvas = images_canvas(&[(150.0, 100.0)]);
+    canvas
+        .group_edit(|s| s.setAxisMode(7, 0, AxisMode::Fixed(80.0)))
+        .unwrap();
+    let viewport = egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(2000.0, 2000.0));
+    let container = canvas.groups()[0].container.unrotated_bounds();
+    let image = canvas.group_member_geometry(1).unwrap().visual_bounds();
+    let world = egui::pos2(container.max.x + 20.0, image.center().y);
+    assert!(image.contains(world));
+    let pointer = canvas.world_to_screen(world, viewport);
+    for clip in [false, true] {
+        assert_eq!(hit_test_canvas_item(&canvas, viewport, pointer), None);
+        assert_eq!(
+            hit_test_member(&canvas, viewport, pointer),
+            (!clip).then_some(crate::canvas::CanvasHit::Placement(1))
+        );
+        canvas
+            .group_edit(|s| {
+                s.selectGroup(7);
+                s.useDock(Control::Clip)
+            })
+            .unwrap();
+    }
 }

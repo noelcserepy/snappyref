@@ -112,7 +112,14 @@ impl Board {
         let mut row = Vec::new();
         let mut used = 0.0;
         for m in xs {
-            let w = self.base(m, 0);
+            // A cross-Fill image takes its width from its row's height, so row
+            // breaks give it the zero minimum width of primary Fill.
+            let member = &self.members[&m];
+            let w = if member.kind == "Image" && member.fill.contains(&1) {
+                0.0
+            } else {
+                self.base(m, 0)
+            };
             let result = if row.is_empty() {
                 w
             } else {
@@ -268,9 +275,12 @@ impl<G: Geometry> State<G> {
         if b.groups[&g].order.contains(&m) {
             return;
         }
-        let mut member = b
-            .owner(m)
-            .map_or_else(|| b.members[&m].clone(), |owner| self.freeze(b, owner, m));
+        let mut member = b.members[&m].clone();
+        // Freeze against the board before this operation. Batch intake must not
+        // see its earlier members leave and reallocate the source Fill.
+        if let Some(owner) = self.board.owner(m) {
+            member.size = self.freeze(&self.board, owner, m).size;
+        }
         let group = &b.groups[&g];
         member.fill = member.fill.intersection(&group.fixed).copied().collect();
         if member.fill.is_empty()
@@ -331,24 +341,28 @@ impl<G: Geometry> State<G> {
             });
             b.groups.insert(g, Group::new(g, width, self.default_gap));
             for m in xs {
-                let mut member = b
-                    .owner(m)
-                    .map_or_else(|| b.members[&m].clone(), |owner| self.freeze(&b, owner, m));
+                let member = b.members.get_mut(&m).unwrap();
                 member.fill.clear();
                 member.absolute = false;
-                b.members.insert(m, member);
                 let slot = b.groups[&g].order.len() as i64;
                 self.attach(&mut b, g, m, slot);
             }
         }
         self.commit(b, reason, "create")
     }
-    pub fn add(&mut self, g: Id, m: Id) -> Outcome {
-        let reason = self.intake_reason(g, m);
+    /// Appends items in order. The model adds one item; the app adds a selection.
+    pub fn add(&mut self, g: Id, ms: &[Id]) -> Outcome {
+        let reason = ms
+            .iter()
+            .map(|&m| self.intake_reason(g, m))
+            .find(|reason| !reason.is_empty())
+            .unwrap_or("");
         let mut b = self.board.clone();
         if reason.is_empty() {
-            let slot = b.groups[&g].order.len() as i64;
-            self.attach(&mut b, g, m, slot);
+            for &m in ms {
+                let slot = b.groups[&g].order.len() as i64;
+                self.attach(&mut b, g, m, slot);
+            }
         }
         self.commit(b, reason, "add")
     }

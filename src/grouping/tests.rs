@@ -227,7 +227,7 @@ fn replay() {
             match op {
                 "init" => Outcome::Ok,
                 "create" => s.create(n("g"), &selection(), 1.0),
-                "add" => s.add(n("g"), n("m")),
+                "add" => s.add(n("g"), &[n("m")]),
                 "detach" => s.detach(n("g"), n("m")),
                 "ungroup" => s.ungroup(n("g")),
                 "flow" => s.setFlow(n("g"), text("mode")),
@@ -359,7 +359,7 @@ mod sizing {
         s.create(1, &[2], 1.0);
         s.setFlow(1, "Row");
         s.setAxisMode(1, 0, AxisMode::Hug);
-        s.add(1, 0);
+        s.add(1, &[0]);
         assert_eq!(s.board.owner(0), Some(1));
         assert!(s.board.members[&0].fill.is_empty());
         assert_eq!(s.board.owner(2), Some(1));
@@ -392,9 +392,9 @@ mod board {
                 align_open: false
             }
         );
-        assert_eq!(s.add(0, 0), Outcome::Ok);
+        assert_eq!(s.add(0, &[0]), Outcome::Ok);
         assert_eq!(s.board.groups[&0].order, [0, 2]);
-        assert_eq!(s.add(0, 1), Outcome::Rejected("item_missing"));
+        assert_eq!(s.add(0, &[1]), Outcome::Rejected("item_missing"));
         s.ungroup(0);
         s.create(0, &[2, 0], 1.0);
         assert_eq!(s.board.groups[&0].order, [2, 0]);
@@ -475,7 +475,7 @@ mod board {
         s.create(0, &[0], 1.0);
         s.create(1, &[2], 1.0);
         s.editMember(0);
-        s.add(1, 0);
+        s.add(1, &[0]);
         assert!(s.board.groups[&0].order.is_empty());
         assert_eq!(s.board.groups[&1].order, [2, 0]);
         assert_eq!(
@@ -643,7 +643,7 @@ fn incoming_fit_preserves_existing_members_and_later_resize_does_not_refit() {
         .insert(2, Member::fixed("Image", [200.0, 100.0]));
     s.create(0, &[0], 200.0);
     s.useDock(Control::Dimension(0, 102.0));
-    s.add(0, 2);
+    s.add(0, &[2]);
     assert_eq!(s.board.members[&0].size, [200.0, 80.0]);
     assert_eq!(s.board.members[&2].size, [100.0, 50.0]);
     s.useDock(Control::Dimension(0, 52.0));

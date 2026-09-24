@@ -38,6 +38,45 @@ pub(crate) fn hit_test_canvas_item(
     rect: egui::Rect,
     pointer_pos: egui::Pos2,
 ) -> Option<CanvasHit> {
+    hit_test_items(state, rect, pointer_pos, false)
+}
+
+/// Double-click and primary-modifier click also reach member overflow that Clip leaves visible.
+pub(crate) fn hit_test_member(
+    state: &CanvasState,
+    rect: egui::Rect,
+    pointer_pos: egui::Pos2,
+) -> Option<CanvasHit> {
+    hit_test_items(state, rect, pointer_pos, true)
+}
+
+/// Plain clicks reach grouped items only inside the container, so the container
+/// alone is the Group hit area. Clip hides overflow from member editing too.
+pub(crate) fn grouped_item_reachable(
+    state: &CanvasState,
+    id: i64,
+    world: egui::Pos2,
+    member_editing: bool,
+) -> bool {
+    state.group_for_member(id).is_none_or(|g| {
+        state
+            .groups()
+            .iter()
+            .find(|group| group.id == g)
+            .is_some_and(|group| {
+                (member_editing && !group.layout.clip)
+                    || group.container.unrotated_bounds().contains(world)
+            })
+    })
+}
+
+fn hit_test_items(
+    state: &CanvasState,
+    rect: egui::Rect,
+    pointer_pos: egui::Pos2,
+    member_editing: bool,
+) -> Option<CanvasHit> {
+    let world = state.screen_to_world(pointer_pos, rect);
     state
         .ordered_canvas_items_back_to_front()
         .into_iter()
@@ -49,18 +88,7 @@ pub(crate) fn hit_test_canvas_item(
             state
                 .group_member_geometry(id)
                 .is_none_or(|r| r.scaled_size().min_elem() > 0.0)
-                && state.group_for_member(id).is_none_or(|g| {
-                    state
-                        .groups()
-                        .iter()
-                        .find(|group| group.id == g)
-                        .is_some_and(|group| {
-                            group
-                                .container
-                                .unrotated_bounds()
-                                .contains(state.screen_to_world(pointer_pos, rect))
-                        })
-                })
+                && grouped_item_reachable(state, id, world, member_editing)
         })
         .find_map(|item| match item {
             CanvasStackItem::Placement(placement_id) => state
