@@ -276,6 +276,61 @@ impl DocumentHistory {
         false
     }
 
+    /// The newest edit touching each value, or else `owner`'s edit, keeps it. `before` values are
+    /// the accepted ones; the following update sets `after`.
+    pub(crate) fn adopt_completion_changes(
+        &mut self,
+        board_id: i64,
+        owner: i64,
+        placements: Vec<Placement>,
+        annotations: Vec<CanvasAnnotation>,
+    ) {
+        let Some(history) = self.histories_by_board.get_mut(&board_id) else {
+            return;
+        };
+        let owns = |action: &HistoryAction| placement_change(action, owner).is_some();
+        for before in placements {
+            let id = before.state.id;
+            if let Some(HistoryAction::Document(action)) = history
+                .undo_stack
+                .iter_mut()
+                .rev()
+                .find(|action| placement_change(action, id).is_some() || owns(action))
+                && !action
+                    .placements
+                    .iter()
+                    .any(|change| change_id(change, |p| p.state.id) == Some(id))
+            {
+                action.placements.push(HistoryChange {
+                    before: Some(before.clone()),
+                    after: Some(before),
+                });
+            }
+        }
+        for before in annotations {
+            let id = before.id;
+            let touches = |action: &HistoryAction| {
+                matches!(action, HistoryAction::Document(action)
+                    if action.annotations.iter().any(|change| change_id(change, |a| a.id) == Some(id)))
+            };
+            if let Some(HistoryAction::Document(action)) = history
+                .undo_stack
+                .iter_mut()
+                .rev()
+                .find(|action| touches(action) || owns(action))
+                && !action
+                    .annotations
+                    .iter()
+                    .any(|change| change_id(change, |a| a.id) == Some(id))
+            {
+                action.annotations.push(HistoryChange {
+                    before: Some(before.clone()),
+                    after: Some(before),
+                });
+            }
+        }
+    }
+
     /// Completion updates the latest accepted values, including incidental
     /// textbox cleanup and Group layout, without creating another Undo entry.
     pub(crate) fn update_accepted_document_changes(
@@ -429,7 +484,10 @@ impl DocumentHistory {
     }
 }
 
-#[cfg(test)]
+fn change_id<T>(change: &HistoryChange<T>, id: impl Fn(&T) -> i64) -> Option<i64> {
+    change.after.as_ref().or(change.before.as_ref()).map(id)
+}
+
 fn placement_change(
     action: &HistoryAction,
     placement_id: i64,
@@ -437,13 +495,10 @@ fn placement_change(
     let HistoryAction::Document(action) = action else {
         return None;
     };
-    action.placements.iter().find(|change| {
-        change
-            .after
-            .as_ref()
-            .or(change.before.as_ref())
-            .is_some_and(|placement| placement.state.id == placement_id)
-    })
+    action
+        .placements
+        .iter()
+        .find(|change| change_id(change, |p| p.state.id) == Some(placement_id))
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -988,7 +1043,7 @@ impl HistoryDirection {
 mod tests {
     use eframe::egui;
 
-    use super::{DocumentHistory, HistoryAction, HistoryChange, HistoryDirection};
+    use super::{DocumentHistory, HistoryAction, HistoryChange, HistoryDirection, change_id};
     use crate::data::{
         CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasStrokeWidth,
         CanvasTextSize,
@@ -996,6 +1051,50 @@ mod tests {
 
     fn action(label: &str) -> HistoryAction {
         HistoryAction::document(label.to_owned(), Vec::new(), Vec::new(), None)
+    }
+
+    #[test]
+    fn completion_adopts_untouched_members_into_the_arrival_edit() {
+        use crate::data::{Placement, PlacementContent, PlacementLifecycle, PlacementState};
+        let placement = |id, x| Placement {
+            state: PlacementState::new(id, egui::pos2(x, 0.0), 1.0, 0.0, 0, false),
+            content: PlacementContent::Failed {
+                source: None,
+                message: String::new(),
+                recoverable: false,
+            },
+            lifecycle: PlacementLifecycle::Committed,
+        };
+        let created = |label: &str, id| {
+            HistoryAction::document(
+                label.to_owned(),
+                vec![HistoryChange {
+                    before: None,
+                    after: Some(placement(id, 0.0)),
+                }],
+                Vec::new(),
+                None,
+            )
+        };
+        let mut history = DocumentHistory::default();
+        history.record_applied(1, created("Import", 1));
+        history.record_applied(1, created("Paste", 2));
+        history.adopt_completion_changes(1, 2, vec![placement(1, 0.0)], Vec::new());
+        history.update_accepted_placement(1, placement(1, 50.0));
+
+        let x = |p: &Option<Placement>| p.as_ref().map(|p| p.state.geometry.center.x);
+        for (expected_before, expected_after) in [(Some(0.0), Some(50.0)), (None, Some(0.0))] {
+            let HistoryAction::Document(action) = history.undo(1).unwrap().action else {
+                panic!("document action");
+            };
+            let change = action
+                .placements
+                .iter()
+                .find(|change| change_id(change, |p| p.state.id) == Some(1))
+                .unwrap();
+            assert_eq!(x(&change.before), expected_before);
+            assert_eq!(x(&change.after), expected_after);
+        }
     }
 
     #[test]

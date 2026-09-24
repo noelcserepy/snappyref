@@ -198,8 +198,15 @@ fn expand_textbox_to_height(state: &mut CanvasState, index: usize, required_heig
         return false;
     }
 
+    // Fill height belongs to the Group, so growing it would fight every reflow.
+    let group_owns_height = state.groups().iter().any(|g| {
+        g.layout
+            .members
+            .get(&annotation.id)
+            .is_some_and(|m| m.fill[1])
+    });
     let world_rect = textbox_world_rect(annotation);
-    if required_height <= world_rect.height() + 0.5 {
+    if group_owns_height || required_height <= world_rect.height() + 0.5 {
         return false;
     }
 
@@ -257,6 +264,9 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
         state.zoom,
         text.is_empty(),
     );
+    let clip_rect = state
+        .member_clip_screen_rect(rect, annotation_id)
+        .map_or(content_rect, |clip| clip.intersect(content_rect));
     let toolbar_interacting = toolbar_rect
         .map(|toolbar_rect| show_textbox_editor_toolbar(ui, toolbar_rect, state, toolbar_entrance))
         .unwrap_or(false);
@@ -265,7 +275,7 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
         .order(egui::Order::Foreground)
         .fixed_pos(text_rect.min)
         .show(ui.ctx(), |ui| {
-            ui.set_clip_rect(content_rect);
+            ui.set_clip_rect(clip_rect);
             let zoom = state.zoom;
             let text_size = state.document.annotations[index].text_size;
             let text_color = state.document.annotations[index].color;

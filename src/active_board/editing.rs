@@ -235,6 +235,31 @@ impl BoardEditing {
         )
     }
 
+    /// Arrival can reflow Group members that the arriving Placement's edit never touched.
+    /// That edit adopts them, so Undo and Redo move them with the arrival.
+    pub(crate) fn resolve_group_arrival(
+        &mut self,
+        board_id: i64,
+        arrival: i64,
+        changes: crate::canvas::CanvasDocumentChanges,
+    ) -> Result<bool, String> {
+        self.history.adopt_completion_changes(
+            board_id,
+            arrival,
+            changes
+                .updated_placements
+                .iter()
+                .filter_map(|p| self.documents.placement(board_id, p.state.id))
+                .collect(),
+            changes
+                .updated_annotations
+                .iter()
+                .filter_map(|a| self.documents.annotation(board_id, a.id))
+                .collect(),
+        );
+        self.resolve_document_changes(board_id, changes)
+    }
+
     /// Batch completion can also finish text editing or reflow Groups. Submit
     /// every resulting document change without adding a second batch Undo entry.
     pub(crate) fn resolve_document_changes(
@@ -328,6 +353,7 @@ impl BoardEditing {
     ) -> Result<Option<String>, String> {
         let before_groups = context.canvas.groups().to_vec();
         let before_all = context.canvas.committed_placements();
+        let before_all_annotations = context.canvas.annotations();
         let before_items = context
             .canvas
             .selected_placement_ids()
@@ -372,7 +398,7 @@ impl BoardEditing {
                             })
                         }),
                 );
-                let annotation_changes = before_annotations
+                let mut annotation_changes: Vec<_> = before_annotations
                     .into_iter()
                     .map(|annotation| {
                         let mut archived = annotation.clone();
@@ -383,6 +409,23 @@ impl BoardEditing {
                         }
                     })
                     .collect();
+                annotation_changes.extend(
+                    context
+                        .canvas
+                        .pending_document_changes_preview()
+                        .updated_annotations
+                        .into_iter()
+                        .filter_map(|after| {
+                            let before = before_all_annotations
+                                .iter()
+                                .find(|a| a.id == after.id)?
+                                .clone();
+                            Some(HistoryChange {
+                                before: Some(before),
+                                after: Some(after),
+                            })
+                        }),
+                );
                 self.history.record_applied(
                     context.board_id,
                     HistoryAction::document(

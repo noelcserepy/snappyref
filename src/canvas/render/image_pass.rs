@@ -291,22 +291,10 @@ fn paint_canvas_items_interleaved(
             CanvasStackItem::Placement(id) | CanvasStackItem::Annotation(id) => id,
         };
         let clip = state
-            .group_for_member(id)
-            .and_then(|g| {
-                state
-                    .groups()
-                    .iter()
-                    .find(|group| group.id == g && group.layout.clip)
-            })
-            .map(|g| {
-                let bounds = g.container.unrotated_bounds();
-                egui::Rect::from_min_max(
-                    state.world_to_screen(bounds.min, rect),
-                    state.world_to_screen(bounds.max, rect),
-                )
-                .intersect(painter.clip_rect())
-            })
-            .unwrap_or_else(|| painter.clip_rect());
+            .member_clip_screen_rect(rect, id)
+            .map_or(painter.clip_rect(), |clip| {
+                clip.intersect(painter.clip_rect())
+            });
         let clipped = painter.with_clip_rect(clip);
         let painter = &clipped;
         let mut item_ui = ui.new_child(egui::UiBuilder::new().max_rect(rect));

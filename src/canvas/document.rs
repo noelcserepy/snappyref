@@ -124,7 +124,6 @@ impl CanvasState {
             .collect()
     }
 
-    #[cfg(test)]
     pub(crate) fn annotations(&self) -> Vec<CanvasAnnotation> {
         self.document.annotations.clone()
     }

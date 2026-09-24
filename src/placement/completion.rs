@@ -265,9 +265,11 @@ impl PlacementCreation {
                 && canvas.placement_for_id(id).is_some_and(|p| p.is_loaded())
             {
                 canvas.finish_group_arrival(id)?;
-                context
-                    .editing
-                    .resolve_document_changes(board_id, canvas.take_document_changes())?;
+                context.editing.resolve_group_arrival(
+                    board_id,
+                    id,
+                    canvas.take_document_changes(),
+                )?;
             }
         }
         for batch in self.batches.finish_queue_id(board_id, queue_id, id) {

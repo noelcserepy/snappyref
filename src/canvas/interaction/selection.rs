@@ -169,25 +169,16 @@ pub(crate) fn update_marquee_selection(
     state.set_marquee_selection(selected, selected_annotation_ids, shift_held);
 }
 
-/// Clip hides a member's pixels outside its container, so marquee can't reach them.
+/// Marquee can't reach a member's clipped pixels.
 fn visible_screen_rect(
     state: &CanvasState,
     rect: egui::Rect,
     id: i64,
     item: egui::Rect,
 ) -> Option<egui::Rect> {
-    let Some(group) = state
-        .groups()
-        .iter()
-        .find(|group| group.layout.clip && group.members.contains(&id))
-    else {
+    let Some(container) = state.member_clip_screen_rect(rect, id) else {
         return Some(item);
     };
-    let bounds = group.container.unrotated_bounds();
-    let container = egui::Rect::from_min_max(
-        state.world_to_screen(bounds.min, rect),
-        state.world_to_screen(bounds.max, rect),
-    );
     let visible = item.intersect(container);
     visible.is_positive().then_some(visible)
 }

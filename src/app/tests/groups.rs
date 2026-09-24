@@ -970,6 +970,54 @@ fn member_paste_redo_restores_reflowed_members() {
 }
 
 #[test]
+fn member_delete_undo_restores_reflowed_textbox() {
+    let (_root, mut h, ids) = dock_fixture();
+    let ctx = h.ctx.clone();
+    let app = h.state_mut();
+    let note = app.library.as_ref().unwrap().new_canvas_annotation(
+        CanvasAnnotationKind::Textbox,
+        egui::pos2(-200.0, 200.0),
+        egui::pos2(40.0, 256.0),
+        "note".to_owned(),
+        CanvasTextSize::M,
+        CanvasStrokeWidth::M,
+        crate::data::CanvasAnnotationColor::Sky,
+        true,
+    );
+    app.canvas.add_annotation(note.clone());
+    let group = app.canvas.groups()[0].id;
+    app.canvas.add_members_to_group(group, &[note.id]).unwrap();
+    for _ in 0..8 {
+        h.step();
+    }
+    let center = |h: &Harness<'_, SnappyRefApp>| {
+        h.state()
+            .canvas
+            .annotation_for_id(note.id)
+            .unwrap()
+            .geometry
+    };
+    let before = center(&h);
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
+    let first = h.state().canvas.placement_for_id(ids[0]).unwrap();
+    let pos = inspect_world_to_screen(first.state.geometry.center, screen);
+    h.event_modifiers(egui::Event::PointerMoved(pos), CMD);
+    inspect_click_at(&h, pos, CMD);
+    h.step();
+    h.state_mut()
+        .delete_selected_items_from_board(test_screen_rect());
+    for _ in 0..8 {
+        h.step();
+    }
+    assert_ne!(center(&h), before);
+    h.state_mut().undo_document_history(&ctx);
+    for _ in 0..8 {
+        h.step();
+    }
+    assert_eq!(center(&h), before);
+}
+
+#[test]
 fn dragging_a_member_moves_every_selected_group() {
     let (_root, mut h, ids) = dock_fixture();
     let app = h.state_mut();
@@ -1027,6 +1075,21 @@ fn dragging_a_member_moves_every_selected_group() {
         note.start() + egui::vec2(90.0, 60.0)
     );
     assert_eq!(h.state().canvas.selected_group_ids().len(), 3);
+
+    // A drag from the textbox moves only textboxes itself; image Groups still follow.
+    let from = inspect_world_to_screen(egui::pos2(10.0, 228.0) + egui::vec2(90.0, 60.0), screen);
+    drag(
+        &mut h,
+        from,
+        from + egui::vec2(90.0, 60.0),
+        egui::Modifiers::NONE,
+    );
+    let moved = containers(&h)
+        .iter()
+        .zip(&before)
+        .map(|(after, before)| *after - *before)
+        .collect::<Vec<_>>();
+    assert_eq!(moved, [egui::vec2(180.0, 120.0); 3]);
 }
 
 #[test]

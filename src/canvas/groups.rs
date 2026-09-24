@@ -26,6 +26,18 @@ impl CanvasState {
             self.document.groups_dirty = true;
         }
     }
+    /// Clip crops a member's paint, text editor and hits to its container.
+    pub(super) fn member_clip_screen_rect(&self, rect: egui::Rect, id: i64) -> Option<egui::Rect> {
+        let group = self
+            .groups()
+            .iter()
+            .find(|g| g.layout.clip && g.members.contains(&id))?;
+        let bounds = group.container.unrotated_bounds();
+        Some(egui::Rect::from_min_max(
+            self.world_to_screen(bounds.min, rect),
+            self.world_to_screen(bounds.max, rect),
+        ))
+    }
     pub fn group_for_member(&self, id: i64) -> Option<GroupId> {
         self.groups()
             .iter()
@@ -315,27 +327,41 @@ impl CanvasState {
 }
 
 impl CanvasState {
-    /// Selected Groups follow the selection. Its first placement is the reference, since input moves every
-    /// selected placement but no textbox.
-    pub(super) fn group_transform_origin(&self) -> Option<(i64, RectGeometry)> {
+    /// Selected Groups follow the selection. Input moves either every selected placement or, from
+    /// a textbox, every selected textbox, so the first of each kind is a candidate reference.
+    pub(super) fn group_transform_origin(&self) -> Vec<(i64, RectGeometry)> {
         if self.interaction.editing_group_id.is_some()
             || self.interaction.selected_group_ids.is_empty()
         {
-            return None;
+            return Vec::new();
         }
-        let id = *self.interaction.selected_placement_ids.first()?;
-        Some((id, self.placement_for_id(id)?.state.geometry))
+        let placement = self.interaction.selected_placement_ids.first();
+        let textbox = self
+            .interaction
+            .selected_annotation_ids
+            .iter()
+            .find(|&&id| self.group_member_geometry(id).is_some());
+        [placement, textbox]
+            .into_iter()
+            .flatten()
+            .filter_map(|&id| Some((id, self.group_member_geometry(id)?)))
+            .collect()
     }
-    pub(super) fn follow_group_member_transforms(&mut self, origin: Option<(i64, RectGeometry)>) {
-        let Some((reference, before)) = origin else {
+    pub(super) fn follow_group_member_transforms(&mut self, origin: Vec<(i64, RectGeometry)>) {
+        let Some((reference, before, after)) = origin.into_iter().find_map(|(id, before)| {
+            let after = self.group_member_geometry(id)?;
+            (after.center != before.center || after.scale != before.scale)
+                .then_some((id, before, after))
+        }) else {
             return;
         };
-        let Some(after) = self.placement_for_id(reference).map(|p| p.state.geometry) else {
-            return;
+        let moved_by_input = |state: &Self, m: i64| {
+            if state.placement_for_id(reference).is_some() {
+                state.is_selected(m)
+            } else {
+                state.is_annotation_selected(m)
+            }
         };
-        if after.center == before.center && after.scale == before.scale {
-            return;
-        }
         let factor = after.scale / before.scale;
         let follow = |center: egui::Pos2| after.center + (center - before.center) * factor;
         for id in self.selected_group_ids() {
@@ -349,7 +375,7 @@ impl CanvasState {
             group.padding *= factor;
             // Release persists the members, so a drag never records per-frame edits.
             for m in group.members.clone() {
-                if self.is_selected(m) {
+                if moved_by_input(self, m) {
                     continue;
                 }
                 if let Some(p) = self
