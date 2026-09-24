@@ -30,11 +30,11 @@ fn grouping_default_member_modes_are_inferred() {
         },
     }]);
     canvas
-        .group_edit(|state| state.setMemberMode(2, 1, 0, true))
+        .group_edit(|state| state.set_member_mode(2, 1, 0, true))
         .unwrap();
     assert!(canvas.groups()[0].layout.members[&1].fill[0]);
     canvas
-        .group_edit(|state| state.setMemberMode(2, 1, 0, false))
+        .group_edit(|state| state.set_member_mode(2, 1, 0, false))
         .unwrap();
     assert!(canvas.groups()[0].layout.members.is_empty());
 
@@ -51,7 +51,7 @@ fn grouping_default_member_modes_are_inferred() {
     restored_canvas.add_unresolved_placement(restored.placements[0].clone());
     restored_canvas.restore_groups(restored.groups);
     let projected = restored_canvas.grouping_state();
-    assert!(projected.board.members[&1].fill.is_empty());
+    assert_eq!(projected.board.members[&1].fill, [false, false]);
     assert!(!projected.board.members[&1].absolute);
 }
 
@@ -101,7 +101,7 @@ fn grouping_zero_fill_history_and_reopen() {
         },
     }]);
     canvas
-        .group_edit(|state| state.setMemberMode(group_id, id, 0, true))
+        .group_edit(|state| state.set_member_mode(group_id, id, 0, true))
         .unwrap();
     let zero = canvas.placement_for_id(id).unwrap();
     assert_eq!(zero.state.geometry.size, egui::Vec2::ZERO);
@@ -160,7 +160,9 @@ fn grouping_zero_fill_history_and_reopen() {
     recovered.add_unresolved_placement(restored.placements[0].clone());
     recovered.restore_groups(restored.groups);
     recovered
-        .group_edit(|state| state.setAxisMode(group_id, 0, crate::grouping::AxisMode::Fixed(200.)))
+        .group_edit(|state| {
+            state.set_axis_mode(group_id, 0, crate::grouping::AxisMode::Fixed(200.))
+        })
         .unwrap();
     assert_eq!(
         recovered

@@ -1,7 +1,8 @@
 //! The grouping artboards intentionally use a 52 px dock, 30 px controls and a 14 px radius.
 //! Keep these local exceptions here; shared color and motion meanings come from ui.
 use super::CanvasState;
-use crate::grouping::{Board, Control, Dock, Member, Panel, State};
+use crate::data::{GapMode, GroupFlow};
+use crate::grouping::{Board, Control, Dock, Member, MemberKind, Panel, State};
 use crate::placement::group_pixels::{Pixels, config};
 use crate::ui::{motion, theme};
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Response, Sense, Stroke, Vec2};
@@ -92,14 +93,14 @@ impl CanvasState {
                 .document
                 .placements
                 .iter()
-                .map(|p| (p.state.id, p.state.geometry, "Image"))
+                .map(|p| (p.state.id, p.state.geometry, MemberKind::Image))
                 .chain(
                     self.document
                         .annotations
                         .iter()
                         .filter_map(|a| match a.geometry {
                             crate::data::CanvasAnnotationGeometry::Rect(rect) => {
-                                Some((a.id, rect, "Textbox"))
+                                Some((a.id, rect, MemberKind::Textbox))
                             }
                             _ => None,
                         }),
@@ -107,7 +108,7 @@ impl CanvasState {
             for (m, rect, kind) in geometries.filter(|(m, _, _)| members.contains(m)) {
                 let mode = group.layout.members.get(&m).copied().unwrap_or_default();
                 let mut member = Member::fixed(kind, rect.visual_bounds().size().into());
-                member.fill = (0..2).filter(|&a| mode.fill[a]).collect();
+                member.fill = mode.fill;
                 member.absolute = mode.absolute;
                 board.live.insert(m);
                 board.members.insert(m, member);
@@ -119,13 +120,13 @@ impl CanvasState {
     }
     pub(crate) fn escape_group_dock(&mut self, ctx: &egui::Context) {
         let mut state = self.grouping_state();
-        state.focusText(
+        state.focus_text(
             state.dock.text_focus
                 || ctx.egui_wants_keyboard_input()
                 || self.interaction.editing_text_annotation_id.is_some(),
         );
         let was_group = state.dock.group_shown();
-        state.pressKey("Escape", 0, &[], 1.0);
+        state.escape();
         if was_group && state.dock.panel == Panel::Hidden {
             self.interaction.selected_placement_ids.clear();
             self.interaction.selected_annotation_ids.clear();
@@ -213,7 +214,7 @@ impl CanvasState {
                                             label(ui, "/", 16.0, SEPARATOR);
                                             label(
                                                 ui,
-                                                &format!("Member {}", model.dockMemberNumber()),
+                                                &format!("Member {}", model.dock_member_number()),
                                                 13.0,
                                                 theme::TEXT,
                                             );
@@ -242,8 +243,7 @@ impl CanvasState {
                                                                     );
                                                                     let selected =
                                                                         model.board.members[&m]
-                                                                            .fill
-                                                                            .contains(&a)
+                                                                            .fill[a]
                                                                             == fill;
                                                                     if button(
                                                                         ui,
@@ -251,7 +251,7 @@ impl CanvasState {
                                                                         &format!("{axis} {title}"),
                                                                         Some(title),
                                                                         selected,
-                                                                        model.controlEnabled(&c),
+                                                                        model.control_enabled(&c),
                                                                         false,
                                                                     )
                                                                     .clicked()
@@ -295,7 +295,7 @@ impl CanvasState {
                                                         name,
                                                         Some(icon),
                                                         false,
-                                                        model.controlEnabled(&c),
+                                                        model.control_enabled(&c),
                                                         false,
                                                     )
                                                     .clicked()
@@ -310,7 +310,7 @@ impl CanvasState {
                                                 "Detach",
                                                 Some("Detach"),
                                                 false,
-                                                model.controlEnabled(&Control::Detach),
+                                                model.control_enabled(&Control::Detach),
                                                 true,
                                             )
                                             .clicked()
@@ -342,8 +342,8 @@ impl CanvasState {
                                                 ui,
                                                 &format!(
                                                     "{} {}",
-                                                    model.dockCount(),
-                                                    if model.dockCount() == 1 {
+                                                    model.dock_count(),
+                                                    if model.dock_count() == 1 {
                                                         "item"
                                                     } else {
                                                         "items"
@@ -354,15 +354,21 @@ impl CanvasState {
                                             );
                                             separator(ui);
                                             bed(ui, |ui| {
-                                                for flow in ["Row", "Column", "Wrap", "Free"] {
-                                                    let c = Control::Flow(flow.into());
+                                                for flow in [
+                                                    GroupFlow::Row,
+                                                    GroupFlow::Column,
+                                                    GroupFlow::Wrap,
+                                                    GroupFlow::Free,
+                                                ] {
+                                                    let c = Control::Flow(flow);
+                                                    let name = flow.as_str();
                                                     if button(
                                                         ui,
-                                                        flow,
-                                                        flow,
-                                                        Some(flow),
-                                                        group.flow.as_str() == flow,
-                                                        model.controlEnabled(&c),
+                                                        name,
+                                                        name,
+                                                        Some(name),
+                                                        group.flow == flow,
+                                                        model.control_enabled(&c),
                                                         false,
                                                     )
                                                     .clicked()
@@ -385,7 +391,7 @@ impl CanvasState {
                                                     Control::Padding(group.padding),
                                                 ),
                                             ] {
-                                                if !model.controlShown(&c) {
+                                                if !model.control_shown(&c) {
                                                     continue;
                                                 }
                                                 field_frame().show(ui, |ui| {
@@ -401,7 +407,7 @@ impl CanvasState {
                                                                 name,
                                                                 &format!("{number:.0}"),
                                                                 34.0,
-                                                                model.controlEnabled(&c),
+                                                                model.control_enabled(&c),
                                                                 13.0,
                                                             );
                                                             text_focus |= focused;
@@ -437,7 +443,7 @@ impl CanvasState {
                                                 "Alignment",
                                                 Some("Alignment"),
                                                 false,
-                                                model.alignEnabled(),
+                                                model.align_enabled(),
                                                 false,
                                             );
                                             preview(
@@ -498,7 +504,7 @@ impl CanvasState {
                                                                 ui,
                                                                 axis,
                                                                 !group.layout.fixed[a],
-                                                                model.controlEnabled(&c),
+                                                                model.control_enabled(&c),
                                                             )
                                                             .clicked()
                                                             {
@@ -525,7 +531,7 @@ impl CanvasState {
                                                 "Ungroup",
                                                 Some("Ungroup"),
                                                 false,
-                                                model.controlEnabled(&Control::Ungroup),
+                                                model.control_enabled(&Control::Ungroup),
                                                 true,
                                             )
                                             .clicked()
@@ -570,7 +576,7 @@ impl CanvasState {
                                         &name,
                                         egui::vec2(28.0, 28.0),
                                         selected,
-                                        model.controlEnabled(&c),
+                                        model.control_enabled(&c),
                                         theme::SURFACE_ELEVATED,
                                     );
                                     ui.painter().rect_filled(
@@ -593,19 +599,19 @@ impl CanvasState {
                         ui.add_space(4.0);
                         bed(ui, |ui| {
                             for (mode, title) in [
-                                ("Number", "Off"),
-                                ("Between", "Between"),
-                                ("Evenly", "Evenly"),
-                                ("Around", "Around"),
+                                (GapMode::Number, "Off"),
+                                (GapMode::Between, "Between"),
+                                (GapMode::Evenly, "Evenly"),
+                                (GapMode::Around, "Around"),
                             ] {
-                                let c = Control::Auto(mode.into());
+                                let c = Control::Auto(mode);
                                 if button(
                                     ui,
                                     title,
                                     title,
                                     None,
                                     group.layout.auto == mode,
-                                    model.controlEnabled(&c),
+                                    model.control_enabled(&c),
                                     false,
                                 )
                                 .clicked()
@@ -633,13 +639,13 @@ impl CanvasState {
         }
         // Focus/dismissal never run a layout pass. Only accepted control edits enter the pixel adapter.
         if dismiss {
-            model.dismissAlign();
+            model.dismiss_align();
         }
         if toggle {
-            model.toggleAlign();
+            let _ = model.toggle_align();
         }
         if model.dock.text_focus != text_focus {
-            model.focusText(text_focus);
+            model.focus_text(text_focus);
         }
         if active {
             self.interaction.group_dock = model.dock;
@@ -647,7 +653,7 @@ impl CanvasState {
         // Blur commits belong to the old control context, even when the clicked
         // command was rendered earlier and will change which fields are enabled.
         for control in field_submissions.into_iter().chain(clicked_controls) {
-            let _ = self.group_edit(|s| s.useDock(control));
+            let _ = self.group_edit(|s| s.use_dock(control));
         }
         Some(bounds)
     }
@@ -818,7 +824,7 @@ fn choose(
         text,
         icon,
         selected,
-        model.controlEnabled(&c),
+        model.control_enabled(&c),
         false,
     )
     .clicked()

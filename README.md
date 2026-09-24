@@ -113,15 +113,6 @@ every pull request. `cargo test --locked`
 runs the full suite. UI behavior is verified through inspect scenarios; list
 them with `docs/skills/inspect/scripts/run-scenario.sh --list`.
 
-Grouping's board model uses Quint 0.32.0. `sh .specs/grouping/check.sh` runs
-its scenarios and random search. `sh .specs/grouping/replay.sh` generates 200
-traces of 30 operations and compares each state and outcome with Rust; CI runs
-both. `sh .specs/grouping/verify.sh` exhaustively checks the finite board model
-with Java 21. Traces stay gitignored under `.specs/traces/`.
-Sizing and pixel geometry use Rust checks, not numeric model categories.
-The `group-dock`, `member-dock`, and `group-dock-narrow` inspect scenarios
-capture dock presentation and control access against the canonical specs.
-
 ## Code map
 
 [AGENTS.md](AGENTS.md) has the process model, the module map, and the repo

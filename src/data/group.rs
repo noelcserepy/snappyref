@@ -19,7 +19,7 @@ pub struct Group {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GroupLayoutSettings {
     pub fixed: [bool; 2],
-    pub auto: String,
+    pub auto: GapMode,
     pub row_gap: f32,
     pub align: [usize; 2],
     pub clip: bool,
@@ -29,13 +29,22 @@ impl Default for GroupLayoutSettings {
     fn default() -> Self {
         Self {
             fixed: [true, false],
-            auto: "Number".into(),
+            auto: GapMode::Number,
             row_gap: 0.0,
             align: [0, 0],
             clip: false,
             members: BTreeMap::new(),
         }
     }
+}
+/// Number spaces flowing members by the Group gap. The others distribute leftover space.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum GapMode {
+    #[default]
+    Number,
+    Between,
+    Evenly,
+    Around,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MemberLayout {

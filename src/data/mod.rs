@@ -13,7 +13,7 @@ pub use annotation::{
 pub use asset::Asset;
 pub(crate) use geometry::rotated_display_size;
 pub use geometry::{RectGeometry, SegmentGeometry};
-pub use group::{Group, GroupFlow, GroupId, GroupLayoutSettings, MemberLayout};
+pub use group::{GapMode, Group, GroupFlow, GroupId, GroupLayoutSettings, MemberLayout};
 pub use placement::{
     ContentResolutionSource, Placement, PlacementContent, PlacementId, PlacementLifecycle,
     PlacementState,

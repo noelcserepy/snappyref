@@ -8,5 +8,3 @@ tests/fixtures/external/files/
 perf-assets/images
 perf-assets/runs
 **/__pycache__/
-.specs/traces/
-_apalache-out/

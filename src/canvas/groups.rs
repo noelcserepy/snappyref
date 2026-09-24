@@ -1,6 +1,6 @@
 use super::CanvasState;
 use crate::data::{Group, GroupFlow, GroupId, RectGeometry};
-use crate::grouping::{AxisMode, Geometry};
+use crate::grouping::{AxisMode, Direction, Geometry};
 use eframe::egui;
 
 impl CanvasState {
@@ -113,11 +113,7 @@ impl CanvasState {
             return Ok(None);
         };
         let mut state = self.grouping_state();
-        if let crate::grouping::Outcome::Rejected(reason) =
-            state.create(id, selected, bounds.width().max(1.0))
-        {
-            return Err(reason.into());
-        }
+        state.create(id, selected, bounds.width().max(1.0))?;
         if !state.board.groups.contains_key(&id) {
             return Ok(None);
         }
@@ -170,19 +166,11 @@ impl CanvasState {
         }
         let g = group.id;
         self.group_edit(|s| {
-            let mut result = crate::grouping::Outcome::Ok;
-            macro_rules! edit {
-                ($op:expr) => {
-                    if result == crate::grouping::Outcome::Ok {
-                        result = $op;
-                    }
-                };
-            }
             if old.flow != group.flow {
-                edit!(s.setFlow(g, group.flow.as_str()));
+                s.set_flow(g, group.flow)?;
             }
             if old.gap != group.gap || old.layout.auto != group.layout.auto {
-                edit!(s.setGap(g, &group.layout.auto, group.gap));
+                s.set_gap(g, group.layout.auto, group.gap)?;
             }
             for a in 0..2 {
                 // A resized axis is fixed at its new outer extent.
@@ -195,16 +183,16 @@ impl CanvasState {
                     } else {
                         AxisMode::Hug
                     };
-                    edit!(s.setAxisMode(g, a, mode));
+                    s.set_axis_mode(g, a, mode)?;
                 }
             }
             let stored = s.board.groups.get_mut(&g).unwrap();
             stored.clip = group.layout.clip;
             stored.align = group.layout.align;
             stored.padding = group.padding;
-            stored.rowGap = group.layout.row_gap;
+            stored.row_gap = group.layout.row_gap;
             s.refresh_sizes();
-            result
+            Ok(())
         })?;
         if let Some(saved) = self.document.groups.iter_mut().find(|g| g.id == group.id)
             && saved.name != group.name
@@ -220,9 +208,9 @@ impl CanvasState {
             && self
                 .group_edit(|s| {
                     for id in ids {
-                        s.ungroup(id);
+                        let _ = s.ungroup(id);
                     }
-                    crate::grouping::Outcome::Ok
+                    Ok(())
                 })
                 .is_ok();
         self.interaction.selected_group_ids.clear();
@@ -232,9 +220,9 @@ impl CanvasState {
     pub(super) fn remove_group_members(&mut self, ids: &[i64]) {
         let _ = self.group_edit(|s| {
             for &m in ids {
-                s.deleteMember(m);
+                let _ = s.delete_member(m);
             }
-            crate::grouping::Outcome::Ok
+            Ok(())
         });
     }
     pub(crate) fn reflow_dirty_group_members(&mut self) {
@@ -274,7 +262,7 @@ impl CanvasState {
                 let group = self.groups().iter().find(|x| x.id == g).unwrap();
                 let outside = !group.container.unrotated_bounds().contains(rect.center);
                 let slot = self.group_insertion_slot(g, m, rect.center);
-                let _ = self.group_edit(|s| s.dropMember(g, m, slot, outside));
+                let _ = self.group_edit(|s| s.drop_member(g, m, slot, outside));
             } else if let Some(g) = self
                 .groups()
                 .iter()
@@ -283,7 +271,7 @@ impl CanvasState {
                 .map(|g| g.id)
             {
                 let slot = self.group_insertion_slot(g, m, rect.center);
-                let _ = self.group_edit(|s| s.dragIn(g, m, slot));
+                let _ = self.group_edit(|s| s.drag_in(g, m, slot));
             }
         }
         if self.interaction.editing_group_id.is_some()
@@ -739,13 +727,13 @@ impl CanvasState {
     ) -> bool {
         if !ui.ctx().egui_wants_keyboard_input() && self.current_group_dock().member().is_some() {
             for (key, direction) in [
-                (egui::Key::ArrowLeft, "Left"),
-                (egui::Key::ArrowRight, "Right"),
-                (egui::Key::ArrowUp, "Up"),
-                (egui::Key::ArrowDown, "Down"),
+                (egui::Key::ArrowLeft, Direction::Left),
+                (egui::Key::ArrowRight, Direction::Right),
+                (egui::Key::ArrowUp, Direction::Up),
+                (egui::Key::ArrowDown, Direction::Down),
             ] {
                 if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key)) {
-                    let _ = self.group_edit(|s| s.pressKey(direction, 0, &[], 1.0));
+                    let _ = self.group_edit(|s| s.press_arrow(direction));
                 }
             }
         }
@@ -824,9 +812,9 @@ impl CanvasState {
             {
                 let _ = self.group_edit(|s| {
                     if edges.iter().all(|&edge| edge != 0) {
-                        s.doubleClickCorner()
+                        s.double_click_corner()
                     } else {
-                        s.doubleClickHandle(usize::from(edges[1] != 0))
+                        s.double_click_handle(usize::from(edges[1] != 0))
                     }
                 });
                 self.interaction.group_gesture = None;
@@ -976,9 +964,9 @@ impl CanvasState {
             {
                 let _ = self.group_edit(|s| {
                     if edges.iter().all(|&edge| edge != 0) {
-                        s.doubleClickCorner()
+                        s.double_click_corner()
                     } else {
-                        s.doubleClickHandle(usize::from(edges[1] != 0))
+                        s.double_click_handle(usize::from(edges[1] != 0))
                     }
                 });
                 return true;

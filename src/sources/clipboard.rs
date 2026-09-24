@@ -653,10 +653,9 @@ pub(crate) fn validate_clipboard_payload(payload: &ClipboardBoardSelection) -> R
             || group.padding < 0.
             || !group.layout.row_gap.is_finite()
             || group.layout.align.iter().any(|&a| a > 2)
-            || !["Number", "Between", "Evenly", "Around"].contains(&group.layout.auto.as_str())
             || (group.flow == crate::data::GroupFlow::Wrap && !group.layout.fixed[0])
             || (group.flow != crate::data::GroupFlow::Free
-                && group.layout.auto != "Number"
+                && group.layout.auto != crate::data::GapMode::Number
                 && !group.layout.fixed[usize::from(group.flow == crate::data::GroupFlow::Column)])
             || group
                 .layout

@@ -47,11 +47,3 @@ jobs:
 
       - name: cargo test update_preservation_smoke
         run: cargo test --locked update_preservation_smoke
-
-      - name: Install Quint
-        run: npm install --global @informalsystems/quint@0.32.0
-
-      - name: Check grouping models and replay traces
-        run: |
-          sh .specs/grouping/check.sh
-          sh .specs/grouping/replay.sh

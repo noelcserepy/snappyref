@@ -1,7 +1,7 @@
 //! Canvas geometry/history adapter around the grouping state machine.
 use super::CanvasState;
 use crate::data::{CanvasAnnotationGeometry, Group, GroupFlow, MemberLayout, RectGeometry};
-use crate::grouping::{Board, Member, Outcome, State};
+use crate::grouping::{Board, Member, MemberKind, Outcome, State};
 use crate::placement::group_pixels::{Pixels, config};
 use eframe::egui::{self, Vec2};
 
@@ -47,7 +47,10 @@ impl CanvasState {
                 board.live.insert(p.state.id);
                 board.members.insert(
                     p.state.id,
-                    Member::fixed("Image", p.state.geometry.visual_bounds().size().into()),
+                    Member::fixed(
+                        MemberKind::Image,
+                        p.state.geometry.visual_bounds().size().into(),
+                    ),
                 );
                 pixels.rects.insert(p.state.id, p.state.geometry);
                 if let Some(asset) = p.loaded_asset() {
@@ -66,7 +69,7 @@ impl CanvasState {
                 board.live.insert(a.id);
                 board.members.insert(
                     a.id,
-                    Member::fixed("Textbox", r.visual_bounds().size().into()),
+                    Member::fixed(MemberKind::Textbox, r.visual_bounds().size().into()),
                 );
                 pixels.rects.insert(a.id, r);
             }
@@ -77,7 +80,7 @@ impl CanvasState {
                 if let Some(member) = board.members.get_mut(&id) {
                     let mode = group.layout.members.get(&id).copied().unwrap_or_default();
                     member.absolute = mode.absolute;
-                    member.fill = (0..2).filter(|&a| mode.fill[a]).collect();
+                    member.fill = mode.fill;
                 }
             }
         }
@@ -90,9 +93,7 @@ impl CanvasState {
         edit: impl FnOnce(&mut State<Pixels>) -> Outcome,
     ) -> Result<(), String> {
         let mut state = self.grouping_state();
-        if let Outcome::Rejected(reason) = edit(&mut state) {
-            return Err(reason.into());
-        }
+        edit(&mut state)?;
         self.apply_group_state(state, None)
     }
     pub(super) fn apply_group_state(
@@ -115,17 +116,12 @@ impl CanvasState {
             let old_padding = group.padding;
             group.name = config.name.clone();
             group.members = config.order.clone();
-            group.flow = match config.flow.as_str() {
-                "Row" => GroupFlow::Row,
-                "Column" => GroupFlow::Column,
-                "Free" => GroupFlow::Free,
-                _ => GroupFlow::Wrap,
-            };
-            group.gap = config.number;
+            group.flow = config.flow;
+            group.gap = config.gap;
             group.padding = config.padding;
-            group.layout.fixed = [config.fixed.contains(&0), config.fixed.contains(&1)];
-            group.layout.auto = config.gap.clone();
-            group.layout.row_gap = config.rowGap;
+            group.layout.fixed = config.fixed;
+            group.layout.auto = config.auto;
+            group.layout.row_gap = config.row_gap;
             group.layout.align = config.align;
             group.layout.clip = config.clip;
             group.layout.members = config
@@ -136,7 +132,7 @@ impl CanvasState {
                     (
                         m,
                         MemberLayout {
-                            fill: [member.fill.contains(&0), member.fill.contains(&1)],
+                            fill: member.fill,
                             absolute: member.absolute,
                         },
                     )
@@ -189,7 +185,7 @@ impl CanvasState {
                 resize_observation(
                     rect,
                     desired,
-                    member.kind == "Image",
+                    member.kind == MemberKind::Image,
                     self.group_image_size(m),
                 );
                 if member.absolute {
@@ -209,7 +205,7 @@ impl CanvasState {
                 resize_observation(
                     rect,
                     Vec2::from(member.size),
-                    member.kind == "Image",
+                    member.kind == MemberKind::Image,
                     self.group_image_size(id),
                 );
             }
@@ -278,16 +274,10 @@ impl CanvasState {
             return Ok(());
         }
         let mut state = self.grouping_state();
-        let selection = match context {
-            Some((g, -1)) => Some(state.selectGroup(g)),
-            Some((_, anchor)) => Some(state.editMember(anchor)),
-            None => {
-                state.dock = Default::default();
-                None
-            }
-        };
-        if let Some(Outcome::Rejected(reason)) = selection {
-            return Err(reason.into());
+        match context {
+            Some((g, -1)) => state.select_group(g)?,
+            Some((_, anchor)) => state.edit_member(anchor)?,
+            None => state.clear_selection(),
         }
         for &(id, _) in members {
             if let Some(member) = state.board.members.get(&id).cloned() {
@@ -299,12 +289,9 @@ impl CanvasState {
             let Some(member) = state.geometry.intake.get(&id).cloned() else {
                 continue;
             };
-            let result = match source {
-                Some(source) => state.duplicate(source, id),
-                None => state.paste(id, member.size[0]),
-            };
-            if let Outcome::Rejected(reason) = result {
-                return Err(reason.into());
+            match source {
+                Some(source) => state.duplicate(source, id)?,
+                None => state.paste(id, member.size[0])?,
             }
         }
         self.apply_group_state(state, None)
@@ -322,9 +309,7 @@ impl CanvasState {
         let order = &mut state.board.groups.get_mut(&g).unwrap().order;
         let slot = order.iter().position(|&id| id == m).unwrap();
         order.remove(slot);
-        if let Outcome::Rejected(reason) = state.dragIn(g, m, slot as i64) {
-            return Err(reason.into());
-        }
+        state.drag_in(g, m, slot as i64)?;
         self.apply_group_state(state, None)
     }
 }

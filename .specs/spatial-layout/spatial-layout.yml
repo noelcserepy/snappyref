@@ -168,9 +168,9 @@ interface:
     group-sizing:
       statement: Fill requires a Fixed parent axis; entering Hug freezes Fill at rendered size on that axis and restores the last numeric primary gap if that axis is primary, while changing Fill to Fixed freezes its rendered size.
       checks:
-        - src/grouping/tests.rs::sizing::autoHugConversionTest
-        - src/grouping/tests.rs::sizing::editConstraintsTest
-        - src/grouping/tests.rs::sizing::transferFillToHugTest
+        - src/grouping/tests.rs::sizing::auto_hug_conversion
+        - src/grouping/tests.rs::sizing::edit_constraints
+        - src/grouping/tests.rs::sizing::transfer_fill_to_hug
         - src/grouping/tests.rs::stored_auto_variant_and_number
     group-mode-admission: Wrap must refuse Hug width without changing flow; Free and Absolute keep sizing intent dormant and refuse member sizing edits; Auto fixes the primary axis at its current rendered size and Off restores the last numeric gap.
     group-mode-conversion: Changing flow must preserve explicit sizing choices except that Wrap requires Fixed width and active Auto requires a Fixed primary axis; transfer must preserve compatible Fill intent and freeze incompatible axes at rendered size.

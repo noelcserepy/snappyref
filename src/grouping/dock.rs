@@ -20,6 +20,21 @@ pub struct Dock {
     pub text_focus: bool,
 }
 impl Dock {
+    pub fn for_group(group: Id) -> Self {
+        Self {
+            panel: Panel::GroupDock {
+                group,
+                align_open: false,
+            },
+            text_focus: false,
+        }
+    }
+    pub fn for_member(group: Id, member: Id) -> Self {
+        Self {
+            panel: Panel::MemberDock { group, member },
+            text_focus: false,
+        }
+    }
     pub fn group(&self) -> Option<Id> {
         match self.panel {
             Panel::Hidden => None,
@@ -50,7 +65,7 @@ impl Dock {
             Panel::GroupDock { group, align_open } if b.groups.contains_key(&group) => {
                 self.panel = Panel::GroupDock {
                     group,
-                    align_open: align_open && b.groups[&group].flow != "Free",
+                    align_open: align_open && b.groups[&group].flow != GroupFlow::Free,
                 };
                 return self;
             }
@@ -76,12 +91,12 @@ impl Dock {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Control {
     Name(String),
-    Flow(String),
+    Flow(GroupFlow),
     Gap(f32),
     RowGap(f32),
     Padding(f32),
     Align([usize; 2]),
-    Auto(String),
+    Auto(GapMode),
     Dimension(usize, f32),
     Hug(usize),
     Clip,
@@ -101,12 +116,13 @@ impl Control {
     }
 }
 impl<G: Geometry> State<G> {
-    pub fn dockCount(&self) -> usize {
+    /// Counts and ordinals include Absolute members.
+    pub fn dock_count(&self) -> usize {
         self.dock
             .group()
             .map_or(0, |g| self.board.groups[&g].order.len())
     }
-    pub fn dockMemberNumber(&self) -> usize {
+    pub fn dock_member_number(&self) -> usize {
         self.dock.member().map_or(0, |m| {
             self.board.groups[&self.dock.group().unwrap()]
                 .order
@@ -116,16 +132,11 @@ impl<G: Geometry> State<G> {
                 + 1
         })
     }
-    pub fn memberLayoutEnabled(&self) -> bool {
-        self.dock.member().is_some_and(|m| {
-            !self.board.members[&m].absolute
-                && self.board.groups[&self.dock.group().unwrap()].flow != "Free"
-        })
+    pub fn align_enabled(&self) -> bool {
+        self.dock.group_shown()
+            && self.board.groups[&self.dock.group().unwrap()].flow != GroupFlow::Free
     }
-    pub fn alignEnabled(&self) -> bool {
-        self.dock.group_shown() && self.board.groups[&self.dock.group().unwrap()].flow != "Free"
-    }
-    pub fn controlShown(&self, c: &Control) -> bool {
+    pub fn control_shown(&self, c: &Control) -> bool {
         if c.member_control() {
             return self.dock.member().is_some();
         }
@@ -133,201 +144,160 @@ impl<G: Geometry> State<G> {
             Control::Align(_) | Control::Auto(_) => self.dock.align_shown(),
             Control::RowGap(_) => {
                 self.dock.group_shown()
-                    && self.board.groups[&self.dock.group().unwrap()].flow == "Wrap"
+                    && self.board.groups[&self.dock.group().unwrap()].flow == GroupFlow::Wrap
             }
             _ => self.dock.group_shown(),
         }
     }
-    /// A control is enabled exactly when its submission guard accepts it.
-    pub fn controlEnabled(&self, c: &Control) -> bool {
-        self.controlReason(c).is_empty()
+    /// A control is enabled exactly when its submission is admitted.
+    pub fn control_enabled(&self, c: &Control) -> bool {
+        self.control_admission(c).is_ok()
     }
     /// The Hug button toggles: a fixed axis hugs, a hugging axis freezes at its current size.
     fn hug_target(g: &Group, a: usize) -> AxisMode {
-        if g.fixed.contains(&a) {
+        if g.fixed.get(a).copied().unwrap_or(false) {
             AxisMode::Hug
         } else {
             AxisMode::Fixed(g.size.get(a).copied().unwrap_or(0.0))
         }
     }
-    fn order_direction(&self, later: bool) -> &'static str {
+    fn order_direction(&self, later: bool) -> Direction {
         match (
-            self.board.groups[&self.dock.group().unwrap()].flow == "Column",
+            self.board.groups[&self.dock.group().unwrap()].flow == GroupFlow::Column,
             later,
         ) {
-            (true, true) => "Down",
-            (true, false) => "Up",
-            (false, true) => "Right",
-            (false, false) => "Left",
+            (true, true) => Direction::Down,
+            (true, false) => Direction::Up,
+            (false, true) => Direction::Right,
+            (false, false) => Direction::Left,
         }
     }
-    pub fn controlReason(&self, c: &Control) -> &'static str {
+    fn control_admission(&self, c: &Control) -> Outcome {
         if (c.member_control() && self.dock.member().is_none())
             || (!c.member_control() && !self.dock.group_shown())
         {
-            return "dock_unavailable";
+            return Err("dock_unavailable");
         }
         let id = self.dock.group().unwrap();
         let g = &self.board.groups[&id];
+        let free = g.flow == GroupFlow::Free;
         match c {
-            Control::Name(n) if n.trim().is_empty() => "invalid_value",
-            Control::Padding(n) if !n.is_finite() || *n < 0.0 => "invalid_value",
-            Control::Gap(n) | Control::RowGap(n) if !n.is_finite() => "invalid_value",
-            Control::Gap(_) if g.flow == "Free" || g.gap != "Number" => "control_inactive",
-            Control::RowGap(_) if g.flow != "Wrap" => "control_inactive",
-            Control::Align(_) | Control::Auto(_) if !self.dock.align_shown() => "popover_closed",
-            Control::Align(_) | Control::Auto(_) if g.flow == "Free" => "control_inactive",
-            Control::Align(xy) if g.gap != "Number" && xy[g.primary()] != g.align[g.primary()] => {
-                "primary_alignment_inactive"
+            Control::Name(n) if n.trim().is_empty() => Err("invalid_value"),
+            Control::Padding(n) if !n.is_finite() || *n < 0.0 => Err("invalid_value"),
+            Control::Gap(n) | Control::RowGap(n) if !n.is_finite() => Err("invalid_value"),
+            Control::Gap(_) if free || g.auto != GapMode::Number => Err("control_inactive"),
+            Control::RowGap(_) if g.flow != GroupFlow::Wrap => Err("control_inactive"),
+            Control::Align(_) | Control::Auto(_) if !self.dock.align_shown() => {
+                Err("popover_closed")
             }
-            Control::Dimension(a, n) => self.axis_reason(id, *a, AxisMode::Fixed(*n)),
-            Control::Hug(a) => self.axis_reason(id, *a, Self::hug_target(g, *a)),
+            Control::Align(_) | Control::Auto(_) if free => Err("control_inactive"),
+            Control::Align(xy)
+                if g.auto != GapMode::Number && xy[g.primary()] != g.align[g.primary()] =>
+            {
+                Err("primary_alignment_inactive")
+            }
+            Control::Dimension(a, n) => self.axis_admission(id, *a, AxisMode::Fixed(*n)),
+            Control::Hug(a) => self.axis_admission(id, *a, Self::hug_target(g, *a)),
             Control::MemberMode(a, fill) => {
-                self.member_mode_reason(id, self.dock.member().unwrap(), *a, *fill)
+                self.member_mode_admission(id, self.dock.member().unwrap(), *a, *fill)
             }
-            Control::Earlier | Control::Later => {
-                if self
-                    .arrowTarget(
-                        id,
-                        self.dock.member().unwrap(),
-                        self.order_direction(matches!(c, Control::Later)),
-                    )
-                    .is_some()
-                {
-                    ""
-                } else {
-                    "no_neighbor"
-                }
-            }
-            _ => "",
+            Control::Earlier | Control::Later => self
+                .arrow_target(
+                    id,
+                    self.dock.member().unwrap(),
+                    self.order_direction(matches!(c, Control::Later)),
+                )
+                .map(|_| ())
+                .ok_or("no_neighbor"),
+            _ => Ok(()),
         }
     }
-    pub fn selectGroup(&mut self, g: Id) -> Outcome {
-        let reason = if self.board.groups.contains_key(&g) {
-            ""
-        } else {
-            "group_missing"
-        };
-        self.apply(
-            self.board.clone(),
-            reason,
-            Dock {
-                panel: Panel::GroupDock {
-                    group: g,
-                    align_open: false,
-                },
-                text_focus: false,
-            },
-        )
+    /// Dock-only changes leave the board and its measured sizes alone.
+    fn set_dock(&mut self, dock: Dock) {
+        self.dock = dock.normalized(&self.board);
     }
-    pub fn editMember(&mut self, m: Id) -> Outcome {
-        let Some(g) = self.board.owner(m) else {
-            return self.commit(self.board.clone(), "member_missing", "editMember");
-        };
-        self.apply(
-            self.board.clone(),
-            "",
-            Dock {
-                panel: Panel::MemberDock {
-                    group: g,
-                    member: m,
-                },
-                text_focus: false,
-            },
-        )
+    pub fn select_group(&mut self, g: Id) -> Outcome {
+        self.group_admission(g)?;
+        self.set_dock(Dock::for_group(g));
+        Ok(())
     }
-    pub fn clearSelection(&mut self) -> Outcome {
-        self.apply(self.board.clone(), "", Dock::default())
+    pub fn edit_member(&mut self, m: Id) -> Outcome {
+        let g = self.board.owner(m).ok_or("member_missing")?;
+        self.set_dock(Dock::for_member(g, m));
+        Ok(())
     }
-    pub fn toggleAlign(&mut self) -> Outcome {
-        if !self.alignEnabled() {
-            return self.commit(self.board.clone(), "control_inactive", "toggleAlign");
+    pub fn clear_selection(&mut self) {
+        self.set_dock(Dock::default());
+    }
+    pub fn toggle_align(&mut self) -> Outcome {
+        if !self.align_enabled() {
+            return Err("control_inactive");
         }
-        self.apply(
-            self.board.clone(),
-            "",
-            Dock {
-                panel: Panel::GroupDock {
-                    group: self.dock.group().unwrap(),
-                    align_open: !self.dock.align_shown(),
-                },
-                text_focus: false,
+        self.set_dock(Dock {
+            panel: Panel::GroupDock {
+                group: self.dock.group().unwrap(),
+                align_open: !self.dock.align_shown(),
             },
-        )
+            text_focus: false,
+        });
+        Ok(())
     }
-    pub fn dismissAlign(&mut self) -> Outcome {
+    pub fn dismiss_align(&mut self) {
         let mut d = self.dock.clone();
         if let Panel::GroupDock { align_open, .. } = &mut d.panel {
             *align_open = false;
         }
-        self.apply(self.board.clone(), "", d)
+        self.set_dock(d);
     }
-    pub fn focusText(&mut self, active: bool) -> Outcome {
+    pub fn focus_text(&mut self, active: bool) {
         let mut d = self.dock.clone();
         d.text_focus = active;
-        self.apply(self.board.clone(), "", d)
+        self.set_dock(d);
     }
-    pub fn escape(&mut self) -> Outcome {
+    /// Dismisses one level: text focus, then alignment or member editing, then the group.
+    pub fn escape(&mut self) {
         let mut d = self.dock.clone();
         if d.text_focus {
             d.text_focus = false;
         } else if d.align_shown() || d.member().is_some() {
-            d.panel = Panel::GroupDock {
-                group: d.group().unwrap(),
-                align_open: false,
-            };
+            d = Dock::for_group(d.group().unwrap());
         } else {
             d = Dock::default();
         }
-        self.apply(self.board.clone(), "", d)
+        self.set_dock(d);
     }
-    pub fn useDock(&mut self, c: Control) -> Outcome {
-        let reason = self.controlReason(&c);
-        if !reason.is_empty() {
-            return self.commit(self.board.clone(), reason, "useDock");
-        }
+    pub fn use_dock(&mut self, c: Control) -> Outcome {
+        self.control_admission(&c)?;
         let g = self.dock.group().unwrap();
         let config = self.board.groups[&g].clone();
         match c {
-            Control::Name(n) => {
-                let mut b = self.board.clone();
-                b.groups.get_mut(&g).unwrap().name = n.trim().into();
-                self.commit(b, "", "rename")
-            }
-            Control::Flow(f) => self.setFlow(g, &f),
-            Control::Gap(n) => self.setGap(g, "Number", n),
-            Control::Auto(mode) => self.setGap(g, &mode, config.number),
-            Control::Dimension(a, n) => self.setAxisMode(g, a, AxisMode::Fixed(n)),
-            Control::Hug(a) => self.setAxisMode(g, a, Self::hug_target(&config, a)),
-            Control::RowGap(_) | Control::Padding(_) | Control::Align(_) | Control::Clip => {
+            Control::Flow(f) => self.set_flow(g, f),
+            Control::Gap(n) => self.set_gap(g, GapMode::Number, n),
+            Control::Auto(mode) => self.set_gap(g, mode, config.gap),
+            Control::Dimension(a, n) => self.set_axis_mode(g, a, AxisMode::Fixed(n)),
+            Control::Hug(a) => self.set_axis_mode(g, a, Self::hug_target(&config, a)),
+            Control::Name(_)
+            | Control::RowGap(_)
+            | Control::Padding(_)
+            | Control::Align(_)
+            | Control::Clip => {
                 let mut b = self.board.clone();
                 let group = b.groups.get_mut(&g).unwrap();
-                let op = match c {
-                    Control::RowGap(n) => {
-                        group.rowGap = n;
-                        "rowGap"
-                    }
-                    Control::Padding(n) => {
-                        group.padding = n;
-                        "padding"
-                    }
-                    Control::Align(xy) => {
-                        group.align = xy;
-                        "align"
-                    }
-                    Control::Clip => {
-                        group.clip = !group.clip;
-                        "clip"
-                    }
+                match c {
+                    Control::Name(n) => group.name = n.trim().into(),
+                    Control::RowGap(n) => group.row_gap = n,
+                    Control::Padding(n) => group.padding = n,
+                    Control::Align(xy) => group.align = xy,
+                    Control::Clip => group.clip = !group.clip,
                     _ => unreachable!(),
-                };
-                self.commit(b, "", op)
+                }
+                self.commit(b)
             }
             Control::Ungroup => self.ungroup(g),
             Control::MemberMode(a, fill) => {
-                self.setMemberMode(g, self.dock.member().unwrap(), a, fill)
+                self.set_member_mode(g, self.dock.member().unwrap(), a, fill)
             }
-            Control::Absolute(slot) => self.toggleAbsolute(g, self.dock.member().unwrap(), slot),
+            Control::Absolute(slot) => self.toggle_absolute(g, self.dock.member().unwrap(), slot),
             Control::Earlier | Control::Later => self.arrow(
                 g,
                 self.dock.member().unwrap(),
@@ -336,87 +306,60 @@ impl<G: Geometry> State<G> {
             Control::Detach => self.detach(g, self.dock.member().unwrap()),
         }
     }
-    pub fn arrowTarget(&self, g: Id, m: Id, direction: &str) -> Option<usize> {
+    pub fn arrow_target(&self, g: Id, m: Id, direction: Direction) -> Option<usize> {
         let group = &self.board.groups[&g];
-        if self.board.members[&m].absolute || group.flow == "Free" {
+        if self.board.members[&m].absolute || group.flow == GroupFlow::Free {
             return None;
         }
         let xs = self.board.flowing(g);
         let i = xs.iter().position(|&x| x == m)?;
-        let horizontal = ["Left", "Right"].contains(&direction);
-        let delta = if ["Left", "Up"].contains(&direction) {
-            -1
-        } else {
-            1
-        };
-        let target = if group.flow == "Wrap" && !horizontal {
+        let target = if group.flow == GroupFlow::Wrap && !direction.horizontal() {
             self.geometry
                 .wrap_arrow_target(&self.board, g, m, direction)?
-        } else if (group.flow == "Column") != horizontal {
-            *xs.get((i as i64 + delta) as usize)?
+        } else if (group.flow == GroupFlow::Column) != direction.horizontal() {
+            let neighbor = if direction.forward() {
+                i + 1
+            } else {
+                i.checked_sub(1)?
+            };
+            *xs.get(neighbor)?
         } else {
             return None;
         };
         group.order.iter().position(|&x| x == target)
     }
-    pub fn arrowEnabled(&self, direction: &str) -> bool {
-        self.memberLayoutEnabled()
-            && !self.dock.text_focus
-            && self
-                .arrowTarget(
-                    self.dock.group().unwrap(),
-                    self.dock.member().unwrap(),
-                    direction,
-                )
-                .is_some()
-    }
-    pub fn pressKey(&mut self, key: &str, identity: Id, selection: &[Id], width: f32) -> Outcome {
-        if key == "Escape" {
-            return self.escape();
-        }
+    /// Arrow keys move the edited member. Text focus owns them while it is active.
+    pub fn press_arrow(&mut self, direction: Direction) -> Outcome {
         if self.dock.text_focus {
-            return self.commit(self.board.clone(), "text_owns_key", "pressKey");
+            return Err("text_owns_key");
         }
-        match key {
-            "Left" | "Right" | "Up" | "Down" => {
-                if self.arrowEnabled(key) {
-                    self.arrow(self.dock.group().unwrap(), self.dock.member().unwrap(), key)
-                } else {
-                    self.commit(self.board.clone(), "no_neighbor", "pressKey")
-                }
-            }
-            "Primary+G" => self.create(identity, selection, width),
-            "Primary+Shift+G" => self.useDock(Control::Ungroup),
-            "Primary+V" => self.paste(identity, width),
-            "Primary+D" if self.dock.member().is_some() => {
-                self.duplicate(self.dock.member().unwrap(), identity)
-            }
-            "Delete" if self.dock.member().is_some() => {
-                self.deleteMember(self.dock.member().unwrap())
-            }
-            _ => self.commit(self.board.clone(), "unhandled_key", "pressKey"),
+        let (Some(g), Some(m)) = (self.dock.group(), self.dock.member()) else {
+            return Err("no_neighbor");
+        };
+        if self.arrow_target(g, m, direction).is_none() {
+            return Err("no_neighbor");
         }
+        self.arrow(g, m, direction)
     }
-    pub fn doubleClickHandle(&mut self, a: usize) -> Outcome {
-        if self.dock.group_shown() {
-            self.setAxisMode(self.dock.group().unwrap(), a, AxisMode::Hug)
-        } else {
-            self.commit(self.board.clone(), "dock_unavailable", "doubleClickHandle")
-        }
-    }
-    pub fn doubleClickCorner(&mut self) -> Outcome {
+    pub fn double_click_handle(&mut self, a: usize) -> Outcome {
         if !self.dock.group_shown() {
-            return self.commit(self.board.clone(), "dock_unavailable", "hugCorner");
+            return Err("dock_unavailable");
+        }
+        self.set_axis_mode(self.dock.group().unwrap(), a, AxisMode::Hug)
+    }
+    pub fn double_click_corner(&mut self) -> Outcome {
+        if !self.dock.group_shown() {
+            return Err("dock_unavailable");
         }
         let g = self.dock.group().unwrap();
-        if self.board.groups[&g].flow != "Wrap" {
-            self.setAxisMode(g, 0, AxisMode::Hug);
+        if self.board.groups[&g].flow != GroupFlow::Wrap {
+            self.set_axis_mode(g, 0, AxisMode::Hug)?;
         }
-        self.setAxisMode(g, 1, AxisMode::Hug)
+        self.set_axis_mode(g, 1, AxisMode::Hug)
     }
 
-    pub fn dropMember(&mut self, g: Id, m: Id, slot: i64, outside: bool) -> Outcome {
-        if outside && self.member_reason(g, m).is_empty() && !self.board.members[&m].absolute {
+    pub fn drop_member(&mut self, g: Id, m: Id, slot: i64, outside: bool) -> Outcome {
+        if outside && self.member_admission(g, m).is_ok() && !self.board.members[&m].absolute {
             self.detach(g, m)
         } else {
             self.reorder(g, m, slot)

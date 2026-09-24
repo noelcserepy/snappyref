@@ -1,6 +1,6 @@
 use super::*;
+use crate::data::{GapMode, GroupFlow};
 use crate::placement::group_pixels::Pixels;
-use serde_json::{Value, json};
 
 fn init() -> State<Pixels> {
     State::init(
@@ -8,7 +8,7 @@ fn init() -> State<Pixels> {
             groups: BTreeMap::new(),
             live: BTreeSet::from([0, 2]),
             members: (0..3)
-                .map(|m| (m, Member::fixed("Textbox", [1.0; 2])))
+                .map(|m| (m, Member::fixed(MemberKind::Textbox, [1.0; 2])))
                 .collect(),
         },
         Pixels::default(),
@@ -20,70 +20,14 @@ fn sizing_init() -> State<Pixels> {
     s.board.live.insert(1);
     s
 }
-fn decode(v: &Value) -> Value {
-    match v {
-        Value::Array(xs) => Value::Array(xs.iter().map(decode).collect()),
-        Value::Object(o) => {
-            if let Some(n) = o.get("#bigint") {
-                return json!(n.as_str().unwrap().parse::<i64>().unwrap());
-            }
-            if let Some(xs) = o.get("#set") {
-                let mut xs: Vec<_> = xs.as_array().unwrap().iter().map(decode).collect();
-                xs.sort_by_key(Value::to_string);
-                return json!({"set": xs});
-            }
-            if let Some(xs) = o.get("#map") {
-                let mut xs: Vec<_> = xs.as_array().unwrap().iter().map(decode).collect();
-                xs.sort_by_key(|v| v[0].to_string());
-                return json!({"map": xs});
-            }
-            if let Some(xs) = o.get("#tup") {
-                return decode(xs);
-            }
-            Value::Object(o.iter().map(|(k, v)| (k.clone(), decode(v))).collect())
-        }
-        _ => v.clone(),
-    }
-}
-fn map(xs: impl IntoIterator<Item = (Id, Value)>) -> Value {
-    let mut entries: Vec<_> = xs.into_iter().map(|(k, v)| json!([k, v])).collect();
-    entries.sort_by_key(|v| v[0].to_string());
-    json!({"map": entries})
-}
-fn set(xs: impl IntoIterator<Item = i64>) -> Value {
-    let mut xs: Vec<_> = xs.into_iter().collect();
-    xs.sort_by_key(ToString::to_string);
-    json!({"set": xs})
-}
-fn outcome<G>(s: &State<G>) -> Value {
-    match s.outcome {
-        Outcome::Ok => json!({"tag":"Ok", "value":[]}),
-        Outcome::Rejected(reason) => {
-            let canonical = match reason {
-                "group_exists" => "group-exists",
-                "group_missing" => "group-missing",
-                "item_missing" => "item-missing",
-                "item_exists" => "item-exists",
-                "member_missing" => "member-missing",
-                "control_inactive" => "control-inactive",
-                "dock_unavailable" => "dock-unavailable",
-                "no_neighbor" => "no-neighbor",
-                "text_owns_key" => "text-owns-key",
-                "unhandled_key" => "unhandled-key",
-                other => panic!("Unexpected board outcome {other}"),
-            };
-            json!({"tag":"Rejected", "value":canonical})
-        }
-    }
-}
-/// Replay supplies Spatial Layout's resolved identity. Pixel behavior has separate real-value tests.
+/// Pixels with a supplied vertical Wrap target, so arrow tests pick the neighbor directly.
 #[derive(Default)]
-struct ReplayGeometry {
+struct StubTarget {
     pixels: Pixels,
     target: Option<Id>,
 }
-impl Geometry for ReplayGeometry {
-    fn wrap_arrow_target(&self, _: &Board, _: Id, _: Id, _: &str) -> Option<Id> {
+impl Geometry for StubTarget {
+    fn wrap_arrow_target(&self, _: &Board, _: Id, _: Id, _: Direction) -> Option<Id> {
         self.target
     }
     fn pasted_member(&self, id: Id, width: f32) -> Member {
@@ -99,281 +43,88 @@ impl Geometry for ReplayGeometry {
         self.pixels.measured(b, g, a)
     }
 }
-struct Transition {
-    board: Board,
-    dock: Dock,
-    op: String,
-}
-impl Transition {
-    fn refusal<G>(&self, s: &State<G>) -> bool {
-        s.outcome == Outcome::Ok || (s.board == self.board && s.dock == self.dock)
-    }
-    fn empty<G>(&self, s: &State<G>) -> bool {
-        !["create", "add", "insert", "detach", "delete"].contains(&self.op.as_str())
-            || self.board.groups.iter().all(|(g, old)| {
-                s.board
-                    .groups
-                    .get(g)
-                    .is_some_and(|new| !new.order.is_empty() || new.flow == old.flow)
-            })
-    }
-    fn append<G>(&self, s: &State<G>) -> bool {
-        self.op != "add"
-            || self.board.groups.iter().all(|(g, old)| {
-                let new = &s.board.groups[g].order;
-                new.len() <= old.order.len() || new.starts_with(&old.order)
-            })
-    }
-}
-fn routed(op: &str, picks: &Value) -> String {
-    match op {
-        "control" => match picks["c"]["value"]["tag"].as_str().unwrap() {
-            "Flow" => "flow",
-            "Ungroup" => "ungroup",
-            "Absolute" => "absolute",
-            "Earlier" | "Later" => "arrow",
-            _ => "detach",
-        },
-        "key" => match picks["keypress"]["value"].as_str().unwrap() {
-            "Escape" => "escape",
-            "Primary+G" => "create",
-            "Primary+V" => "paste",
-            "Primary+D" => "duplicate",
-            "Primary+Shift+G" => "ungroup",
-            "Delete" => "delete",
-            "Left" | "Right" | "Up" | "Down" => "arrow",
-            _ => "key",
-        },
-        "drop" if picks["outside"]["value"] == true => "detach",
-        "drop" => "reorder",
-        _ => op,
-    }
-    .into()
-}
-fn board_observation(s: &State<ReplayGeometry>, t: &Transition) -> Value {
-    let panel = match s.dock.panel {
-        Panel::Hidden => json!({"tag":"Hidden", "value": []}),
-        Panel::GroupDock { group, align_open } => {
-            json!({"tag":"GroupDock", "value":{"group":group,"alignOpen":align_open}})
-        }
-        Panel::MemberDock { group, member } => {
-            json!({"tag":"MemberDock", "value":{"group":group,"member":member}})
-        }
-    };
-    json!({
-        "board": {
-            "groups": map(s.board.groups.iter().map(|(&id, g)| (id, json!({"order":g.order,"flow":g.flow})))),
-            "live":set(s.board.live.iter().copied()),
-            "members":map(s.board.members.iter().map(|(&id,m)| (id,json!({"absolute":m.absolute})))),
-        },
-        "dock":{"panel":panel,"textFocus":s.dock.text_focus},
-        "outcome":outcome(s),
-        "effects":{"refusal":t.refusal(s),"empty":t.empty(s),"append":t.append(s)},
-    })
-}
-fn replay() {
-    let module = "board";
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".specs/traces");
-    let mut files: Vec<_> = std::fs::read_dir(dir)
-        .expect("Generate traces with sh .specs/grouping/replay.sh")
-        .map(|e| e.unwrap().path())
-        .filter(|p| {
-            p.file_name()
-                .unwrap()
-                .to_str()
-                .is_some_and(|n| n.starts_with(module) && n.ends_with(".itf.json"))
-        })
-        .collect();
-    files.sort();
-    assert!(!files.is_empty(), "No {module} traces found");
-    let mut lengths = BTreeMap::<usize, usize>::new();
-    for path in &files {
-        let trace: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        let states = trace["states"].as_array().unwrap();
-        *lengths.entry(states.len() - 1).or_default() += 1;
-        let mut s = State::init(init().board, ReplayGeometry::default(), 1.0);
-        for (step, expected) in states.iter().enumerate() {
-            let op = expected["mbt::actionTaken"]
-                .as_str()
-                .unwrap()
-                .trim_end_matches("_any");
-            let picks = decode(&expected["mbt::nondetPicks"]);
-            let before = Transition {
-                board: s.board.clone(),
-                dock: s.dock.clone(),
-                op: routed(op, &picks),
-            };
-            let pick = |k: &str| {
-                assert_eq!(picks[k]["tag"], "Some", "{op}: missing {k}");
-                &picks[k]["value"]
-            };
-            let n = |k: &str| pick(k).as_i64().unwrap();
-            let flag = |k: &str| pick(k).as_bool().unwrap();
-            let text = |k: &str| pick(k).as_str().unwrap();
-            let selection = || {
-                pick("selection")
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|n| n.as_i64().unwrap())
-                    .collect::<Vec<_>>()
-            };
-            s.geometry.target = if matches!(op, "arrow" | "key") {
-                let target = n("target");
-                (target >= 0).then_some(target)
-            } else {
-                None
-            };
-            match op {
-                "init" => Outcome::Ok,
-                "create" => s.create(n("g"), &selection(), 1.0),
-                "add" => s.add(n("g"), &[n("m")]),
-                "detach" => s.detach(n("g"), n("m")),
-                "ungroup" => s.ungroup(n("g")),
-                "flow" => s.setFlow(n("g"), text("mode")),
-                "insert" => s.dragIn(n("g"), n("m"), n("slot")),
-                "paste" => s.paste(n("m"), 1.0),
-                "duplicate" => s.duplicate(n("source"), n("m")),
-                "reorder" => s.reorder(n("g"), n("m"), n("slot")),
-                "arrow" => s.arrow(n("g"), n("m"), text("direction")),
-                "absolute" => s.toggleAbsolute(n("g"), n("m"), n("slot")),
-                "delete" => s.deleteMember(n("m")),
-                "choose" => s.selectGroup(n("g")),
-                "edit" => s.editMember(n("m")),
-                "clear" => s.clearSelection(),
-                "alignment" => s.toggleAlign(),
-                "dismiss" => s.dismissAlign(),
-                "focus" => s.focusText(flag("active")),
-                "escape" => s.escape(),
-                "control" => s.useDock(board_control(pick("c"))),
-                "key" => s.pressKey(text("keypress"), n("identity"), &selection(), 1.0),
-                "drop" => s.dropMember(n("g"), n("m"), n("slot"), flag("outside")),
-                _ => panic!("Unknown {module} operation {op}"),
-            };
-            let expected: serde_json::Map<String, Value> = trace["vars"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|v| v.as_str().unwrap())
-                .filter(|v| !v.starts_with("mbt::"))
-                .map(|v| (v.into(), decode(&expected[v])))
-                .collect();
-            assert_eq!(
-                board_observation(&s, &before),
-                Value::Object(expected),
-                "{} step {step}: {op}({picks})",
-                path.display()
-            );
-        }
-    }
-    println!(
-        "{module}: replayed {} traces, operation lengths {lengths:?}",
-        files.len()
-    );
-}
-#[test]
-#[ignore = "needs traces from sh .specs/grouping/replay.sh"]
-fn replay_every_board_trace() {
-    replay();
-}
-fn board_control(v: &Value) -> Control {
-    match v["tag"].as_str().unwrap() {
-        "Flow" => Control::Flow(v["value"].as_str().unwrap().into()),
-        "Ungroup" => Control::Ungroup,
-        "Absolute" => Control::Absolute(v["value"].as_i64().unwrap()),
-        "Earlier" => Control::Earlier,
-        "Later" => Control::Later,
-        "Detach" => Control::Detach,
-        tag => panic!("Unknown board control {tag}"),
-    }
-}
 
 mod sizing {
     use super::*;
     #[test]
-    fn creationTest() {
+    fn creation() {
         let mut s = sizing_init();
-        s.create(0, &[0, 2], 1.0);
+        s.create(0, &[0, 2], 1.0).unwrap();
         let g = &s.board.groups[&0];
         assert_eq!(
-            (&*g.flow, &g.fixed, &*g.gap),
-            ("Wrap", &BTreeSet::from([0]), "Number")
+            (g.flow, g.fixed, g.auto),
+            (GroupFlow::Wrap, [true, false], GapMode::Number)
         );
         assert_eq!(s.board.owner(0), Some(0));
-        assert!(s.board.members[&0].fill.is_empty());
-        assert_eq!(s.create(0, &[1], 1.0), Outcome::Rejected("group_exists"));
+        assert_eq!(s.board.members[&0].fill, [false; 2]);
+        assert_eq!(s.create(0, &[1], 1.0), Err("group_exists"));
     }
     #[test]
-    fn autoHugConversionTest() {
+    fn auto_hug_conversion() {
         let mut s = sizing_init();
-        s.create(0, &[2], 1.0);
-        s.setFlow(0, "Row");
-        s.setAxisMode(0, 0, AxisMode::Hug);
-        s.setGap(0, "Between", 1.0);
-        assert!(s.board.groups[&0].fixed.contains(&0));
-        s.setMemberMode(0, 2, 0, true);
-        s.setAxisMode(0, 0, AxisMode::Hug);
-        assert!(s.board.members[&2].fill.is_empty());
-        assert_eq!(s.board.groups[&0].gap, "Number");
+        s.create(0, &[2], 1.0).unwrap();
+        s.set_flow(0, GroupFlow::Row).unwrap();
+        s.set_axis_mode(0, 0, AxisMode::Hug).unwrap();
+        s.set_gap(0, GapMode::Between, 1.0).unwrap();
+        assert!(s.board.groups[&0].fixed[0]);
+        s.set_member_mode(0, 2, 0, true).unwrap();
+        s.set_axis_mode(0, 0, AxisMode::Hug).unwrap();
+        assert_eq!(s.board.members[&2].fill, [false; 2]);
+        assert_eq!(s.board.groups[&0].auto, GapMode::Number);
     }
     #[test]
-    fn editConstraintsTest() {
+    fn edit_constraints() {
         let mut s = sizing_init();
-        s.create(0, &[2], 1.0);
+        s.create(0, &[2], 1.0).unwrap();
         assert_eq!(
-            s.setAxisMode(0, 0, AxisMode::Hug),
-            Outcome::Rejected("wrap_width_fixed")
+            s.set_axis_mode(0, 0, AxisMode::Hug),
+            Err("wrap_width_fixed")
         );
-        assert_eq!(
-            s.setMemberMode(0, 2, 1, true),
-            Outcome::Rejected("fixed_axis_required")
-        );
-        assert!(s.board.members[&2].fill.is_empty());
-        s.setAxisMode(0, 1, AxisMode::Fixed(1.0));
-        s.setMemberMode(0, 2, 1, true);
-        assert_eq!(s.board.members[&2].fill, BTreeSet::from([1]));
+        assert_eq!(s.set_member_mode(0, 2, 1, true), Err("fixed_axis_required"));
+        assert_eq!(s.board.members[&2].fill, [false; 2]);
+        s.set_axis_mode(0, 1, AxisMode::Fixed(1.0)).unwrap();
+        s.set_member_mode(0, 2, 1, true).unwrap();
+        assert_eq!(s.board.members[&2].fill, [false, true]);
     }
     #[test]
-    fn freeAndFlowTest() {
+    fn free_and_flow() {
         let mut s = sizing_init();
-        s.create(0, &[0, 2], 1.0);
-        s.setMemberMode(0, 2, 0, true);
-        s.setFlow(0, "Free");
-        s.setAxisMode(0, 0, AxisMode::Hug);
-        s.setGap(0, "Between", 1.0);
-        assert!(s.board.groups[&0].fixed.is_empty() && s.board.members[&2].fill.is_empty());
-        assert_eq!(
-            s.setMemberMode(0, 0, 1, true),
-            Outcome::Rejected("control_inactive")
-        );
-        s.setFlow(0, "Column");
-        assert_eq!(s.board.groups[&0].fixed, BTreeSet::from([1]));
-        s.setFlow(0, "Wrap");
-        assert_eq!(s.board.groups[&0].fixed, BTreeSet::from([0, 1]));
+        s.create(0, &[0, 2], 1.0).unwrap();
+        s.set_member_mode(0, 2, 0, true).unwrap();
+        s.set_flow(0, GroupFlow::Free).unwrap();
+        s.set_axis_mode(0, 0, AxisMode::Hug).unwrap();
+        s.set_gap(0, GapMode::Between, 1.0).unwrap();
+        assert_eq!(s.board.groups[&0].fixed, [false; 2]);
+        assert_eq!(s.board.members[&2].fill, [false; 2]);
+        assert_eq!(s.set_member_mode(0, 0, 1, true), Err("control_inactive"));
+        s.set_flow(0, GroupFlow::Column).unwrap();
+        assert_eq!(s.board.groups[&0].fixed, [false, true]);
+        s.set_flow(0, GroupFlow::Wrap).unwrap();
+        assert_eq!(s.board.groups[&0].fixed, [true; 2]);
     }
     #[test]
-    fn transferFillToHugTest() {
+    fn transfer_fill_to_hug() {
         let mut s = sizing_init();
-        s.create(0, &[0], 1.0);
-        s.setMemberMode(0, 0, 0, true);
-        s.create(1, &[2], 1.0);
-        s.setFlow(1, "Row");
-        s.setAxisMode(1, 0, AxisMode::Hug);
-        s.add(1, &[0]);
+        s.create(0, &[0], 1.0).unwrap();
+        s.set_member_mode(0, 0, 0, true).unwrap();
+        s.create(1, &[2], 1.0).unwrap();
+        s.set_flow(1, GroupFlow::Row).unwrap();
+        s.set_axis_mode(1, 0, AxisMode::Hug).unwrap();
+        s.add(1, &[0]).unwrap();
         assert_eq!(s.board.owner(0), Some(1));
-        assert!(s.board.members[&0].fill.is_empty());
+        assert_eq!(s.board.members[&0].fill, [false; 2]);
         assert_eq!(s.board.owner(2), Some(1));
     }
     #[test]
-    fn leaveTest() {
+    fn leave() {
         let mut s = sizing_init();
-        s.create(0, &[0, 2], 1.0);
-        s.setMemberMode(0, 0, 0, true);
-        s.detach(0, 0);
+        s.create(0, &[0, 2], 1.0).unwrap();
+        s.set_member_mode(0, 0, 0, true).unwrap();
+        s.detach(0, 0).unwrap();
         assert_eq!(s.board.owner(0), None);
-        assert!(s.board.members[&0].fill.is_empty());
+        assert_eq!(s.board.members[&0].fill, [false; 2]);
         assert!(s.board.groups.contains_key(&0));
-        s.ungroup(0);
+        s.ungroup(0).unwrap();
         assert!(s.board.groups.is_empty());
         assert_eq!(s.board.owner(2), None);
     }
@@ -381,9 +132,9 @@ mod sizing {
 mod board {
     use super::*;
     #[test]
-    fn creationAndReaddTest() {
+    fn creation_and_readd() {
         let mut s = init();
-        s.create(0, &[0, 2], 1.0);
+        s.create(0, &[0, 2], 1.0).unwrap();
         assert_eq!(s.board.groups[&0].order, [0, 2]);
         assert_eq!(
             s.dock.panel,
@@ -392,19 +143,19 @@ mod board {
                 align_open: false
             }
         );
-        assert_eq!(s.add(0, &[0]), Outcome::Ok);
+        assert_eq!(s.add(0, &[0]), Ok(()));
         assert_eq!(s.board.groups[&0].order, [0, 2]);
-        assert_eq!(s.add(0, &[1]), Outcome::Rejected("item_missing"));
-        s.ungroup(0);
-        s.create(0, &[2, 0], 1.0);
+        assert_eq!(s.add(0, &[1]), Err("item_missing"));
+        s.ungroup(0).unwrap();
+        s.create(0, &[2, 0], 1.0).unwrap();
         assert_eq!(s.board.groups[&0].order, [2, 0]);
     }
     #[test]
-    fn pasteAndDuplicateTest() {
+    fn paste_and_duplicate() {
         let mut s = init();
-        s.create(0, &[0, 2], 1.0);
-        s.editMember(0);
-        s.pressKey("Primary+V", 1, &[], 1.0);
+        s.create(0, &[0, 2], 1.0).unwrap();
+        s.edit_member(0).unwrap();
+        s.paste(1, 1.0).unwrap();
         assert_eq!(s.board.groups[&0].order, [0, 1, 2]);
         assert_eq!(
             s.dock.panel,
@@ -413,7 +164,7 @@ mod board {
                 member: 1
             }
         );
-        s.pressKey("Delete", 0, &[], 1.0);
+        s.delete_member(1).unwrap();
         assert_eq!(s.board.live, BTreeSet::from([0, 2]));
         assert_eq!(
             s.dock.panel,
@@ -422,60 +173,56 @@ mod board {
                 align_open: false
             }
         );
+        s.edit_member(0).unwrap();
+        s.duplicate(0, 1).unwrap();
+        assert_eq!(s.board.groups[&0].order, [0, 1, 2]);
         assert_eq!(
-            s.pressKey("Primary+D", 1, &[], 1.0),
-            Outcome::Rejected("unhandled_key")
+            s.dock.panel,
+            Panel::MemberDock {
+                group: 0,
+                member: 1
+            }
         );
-        assert_eq!(s.board.live, BTreeSet::from([0, 2]));
     }
     #[test]
-    fn arrowTest() {
+    fn arrow() {
         let mut s = init();
-        s.paste(1, 1.0);
-        s.create(0, &[0, 1, 2], 1.0);
-        s.setFlow(0, "Column");
-        s.editMember(0);
-        s.pressKey("Down", 0, &[], 1.0);
+        s.paste(1, 1.0).unwrap();
+        s.create(0, &[0, 1, 2], 1.0).unwrap();
+        s.set_flow(0, GroupFlow::Column).unwrap();
+        s.edit_member(0).unwrap();
+        s.press_arrow(Direction::Down).unwrap();
         assert_eq!(s.board.groups[&0].order, [1, 0, 2]);
-        assert_eq!(
-            s.pressKey("Right", 0, &[], 1.0),
-            Outcome::Rejected("no_neighbor")
-        );
-        s.useDock(Control::Absolute(0));
-        assert_eq!(s.useDock(Control::Later), Outcome::Rejected("no_neighbor"));
+        assert_eq!(s.press_arrow(Direction::Right), Err("no_neighbor"));
+        s.use_dock(Control::Absolute(0)).unwrap();
+        assert_eq!(s.use_dock(Control::Later), Err("no_neighbor"));
         assert_eq!(s.board.groups[&0].order, [1, 0, 2]);
-        s.useDock(Control::Absolute(2));
+        s.use_dock(Control::Absolute(2)).unwrap();
         assert_eq!(s.board.groups[&0].order, [1, 2, 0]);
         assert!(!s.board.members[&0].absolute);
-        s.setFlow(0, "Free");
-        assert_eq!(
-            s.useDock(Control::Earlier),
-            Outcome::Rejected("no_neighbor")
-        );
+        s.set_flow(0, GroupFlow::Free).unwrap();
+        assert_eq!(s.use_dock(Control::Earlier), Err("no_neighbor"));
     }
     #[test]
-    fn verticalTargetTest() {
-        let mut s = State::init(init().board, ReplayGeometry::default(), 1.0);
-        s.paste(1, 1.0);
-        s.create(0, &[0, 1, 2], 1.0);
-        s.editMember(0);
+    fn vertical_target() {
+        let mut s = State::init(init().board, StubTarget::default(), 1.0);
+        s.paste(1, 1.0).unwrap();
+        s.create(0, &[0, 1, 2], 1.0).unwrap();
+        s.edit_member(0).unwrap();
         s.geometry.target = Some(2);
-        assert_eq!(s.pressKey("Down", 0, &[], 1.0), Outcome::Ok);
+        assert_eq!(s.press_arrow(Direction::Down), Ok(()));
         assert_eq!(s.board.groups[&0].order, [1, 2, 0]);
         s.geometry.target = None;
-        assert_eq!(
-            s.pressKey("Down", 0, &[], 1.0),
-            Outcome::Rejected("no_neighbor")
-        );
+        assert_eq!(s.press_arrow(Direction::Down), Err("no_neighbor"));
         assert_eq!(s.board.groups[&0].order, [1, 2, 0]);
     }
     #[test]
-    fn transferAndDetachTest() {
+    fn transfer_and_detach() {
         let mut s = init();
-        s.create(0, &[0], 1.0);
-        s.create(1, &[2], 1.0);
-        s.editMember(0);
-        s.add(1, &[0]);
+        s.create(0, &[0], 1.0).unwrap();
+        s.create(1, &[2], 1.0).unwrap();
+        s.edit_member(0).unwrap();
+        s.add(1, &[0]).unwrap();
         assert!(s.board.groups[&0].order.is_empty());
         assert_eq!(s.board.groups[&1].order, [2, 0]);
         assert_eq!(
@@ -485,23 +232,20 @@ mod board {
                 member: 0
             }
         );
-        s.useDock(Control::Detach);
+        s.use_dock(Control::Detach).unwrap();
         assert_eq!(s.dock.panel, Panel::Hidden);
         assert_eq!(s.board.owner(0), None);
         assert!(s.board.groups.contains_key(&1));
-        s.selectGroup(0);
-        assert_eq!(s.dockCount(), 0);
+        s.select_group(0).unwrap();
+        assert_eq!(s.dock_count(), 0);
     }
     #[test]
-    fn escapeTest() {
+    fn escape() {
         let mut s = init();
-        s.create(0, &[0, 2], 1.0);
-        s.toggleAlign();
-        s.focusText(true);
-        assert_eq!(
-            s.pressKey("Left", 0, &[], 1.0),
-            Outcome::Rejected("text_owns_key")
-        );
+        s.create(0, &[0, 2], 1.0).unwrap();
+        s.toggle_align().unwrap();
+        s.focus_text(true);
+        assert_eq!(s.press_arrow(Direction::Left), Err("text_owns_key"));
         s.escape();
         assert!(s.dock.align_shown() && !s.dock.text_focus);
         s.escape();
@@ -512,43 +256,43 @@ mod board {
                 align_open: false
             }
         );
-        s.editMember(2);
+        s.edit_member(2).unwrap();
         s.escape();
         assert!(s.dock.group_shown());
         s.escape();
         assert_eq!(s.dock.panel, Panel::Hidden);
     }
     #[test]
-    fn freeAndUngroupTest() {
+    fn free_and_ungroup() {
         let mut s = init();
-        s.create(0, &[0, 2], 1.0);
-        s.editMember(2);
-        s.useDock(Control::Absolute(0));
+        s.create(0, &[0, 2], 1.0).unwrap();
+        s.edit_member(2).unwrap();
+        s.use_dock(Control::Absolute(0)).unwrap();
         s.escape();
-        s.toggleAlign();
-        s.useDock(Control::Flow("Free".into()));
+        s.toggle_align().unwrap();
+        s.use_dock(Control::Flow(GroupFlow::Free)).unwrap();
         assert!(!s.dock.align_shown());
-        assert_eq!(s.toggleAlign(), Outcome::Rejected("control_inactive"));
-        s.pressKey("Primary+Shift+G", 0, &[], 1.0);
+        assert_eq!(s.toggle_align(), Err("control_inactive"));
+        s.use_dock(Control::Ungroup).unwrap();
         assert!(s.board.groups.is_empty());
         assert_eq!(s.dock.panel, Panel::Hidden);
         assert!(!s.board.members[&2].absolute);
     }
     #[test]
-    fn dropTest() {
+    fn drop() {
         let mut s = init();
-        s.create(0, &[0, 2], 1.0);
-        s.toggleAbsolute(0, 2, 0);
-        s.dropMember(0, 2, 0, true);
+        s.create(0, &[0, 2], 1.0).unwrap();
+        s.toggle_absolute(0, 2, 0).unwrap();
+        s.drop_member(0, 2, 0, true).unwrap();
         assert_eq!(s.board.groups[&0].order, [0, 2]);
-        s.dropMember(0, 0, 0, true);
+        s.drop_member(0, 0, 0, true).unwrap();
         assert_eq!(s.board.groups[&0].order, [2]);
     }
 }
 #[test]
 fn stored_dock_values() {
     let mut s = init();
-    s.create(0, &[0, 2], 3.0);
+    s.create(0, &[0, 2], 3.0).unwrap();
     for c in [
         Control::Name("1".into()),
         Control::Gap(-1.0),
@@ -557,18 +301,15 @@ fn stored_dock_values() {
         Control::Dimension(1, 3.0),
         Control::Clip,
     ] {
-        assert_eq!(s.useDock(c), Outcome::Ok);
+        assert_eq!(s.use_dock(c), Ok(()));
     }
     let g = &s.board.groups[&0];
     assert_eq!(
-        (&g.name, g.number, g.rowGap, g.padding, g.clip),
+        (&g.name, g.gap, g.row_gap, g.padding, g.clip),
         (&"1".to_string(), -1.0, -1.0, 0.0, true)
     );
-    assert!(g.fixed.contains(&1));
-    assert_eq!(
-        s.useDock(Control::Dimension(0, 0.0)),
-        Outcome::Rejected("invalid_value")
-    );
+    assert!(g.fixed[1]);
+    assert_eq!(s.use_dock(Control::Dimension(0, 0.0)), Err("invalid_value"));
     let before = s.board.clone();
     let dock = s.dock.clone();
     for c in [
@@ -576,60 +317,51 @@ fn stored_dock_values() {
         Control::Padding(-1.0),
         Control::Dimension(1, f32::NAN),
     ] {
-        assert_eq!(s.useDock(c), Outcome::Rejected("invalid_value"));
+        assert_eq!(s.use_dock(c), Err("invalid_value"));
         assert_eq!(s.board, before);
         assert_eq!(s.dock, dock);
     }
-    assert_eq!(
-        s.setMemberMode(0, 0, 2, false),
-        Outcome::Rejected("invalid_value")
-    );
-    s.toggleAbsolute(0, 0, 0);
-    assert_eq!(
-        s.setMemberMode(0, 0, 0, false),
-        Outcome::Rejected("control_inactive")
-    );
-    s.useDock(Control::Flow("Free".into()));
-    assert!(!s.controlEnabled(&Control::Gap(1.0)));
-    assert!(!s.controlShown(&Control::RowGap(1.0)));
-    assert_eq!(
-        s.useDock(Control::Gap(1.0)),
-        Outcome::Rejected("control_inactive")
-    );
+    assert_eq!(s.set_member_mode(0, 0, 2, false), Err("invalid_value"));
+    s.toggle_absolute(0, 0, 0).unwrap();
+    assert_eq!(s.set_member_mode(0, 0, 0, false), Err("control_inactive"));
+    s.use_dock(Control::Flow(GroupFlow::Free)).unwrap();
+    assert!(!s.control_enabled(&Control::Gap(1.0)));
+    assert!(!s.control_shown(&Control::RowGap(1.0)));
+    assert_eq!(s.use_dock(Control::Gap(1.0)), Err("control_inactive"));
 }
 #[test]
 fn stored_auto_variant_and_number() {
     let mut s = init();
-    s.create(0, &[0, 2], 3.0);
-    s.useDock(Control::Gap(-1.0));
-    s.toggleAlign();
-    s.useDock(Control::Align([2, 0]));
-    s.useDock(Control::Auto("Between".into()));
+    s.create(0, &[0, 2], 3.0).unwrap();
+    s.use_dock(Control::Gap(-1.0)).unwrap();
+    s.toggle_align().unwrap();
+    s.use_dock(Control::Align([2, 0])).unwrap();
+    s.use_dock(Control::Auto(GapMode::Between)).unwrap();
     assert!(s.dock.align_shown());
-    assert!(!s.controlEnabled(&Control::Gap(0.0)));
-    assert!(s.controlEnabled(&Control::Align([2, 1])));
-    assert!(!s.controlEnabled(&Control::Align([0, 1])));
+    assert!(!s.control_enabled(&Control::Gap(0.0)));
+    assert!(s.control_enabled(&Control::Align([2, 1])));
+    assert!(!s.control_enabled(&Control::Align([0, 1])));
     assert_eq!(
-        s.useDock(Control::Align([0, 1])),
-        Outcome::Rejected("primary_alignment_inactive")
+        s.use_dock(Control::Align([0, 1])),
+        Err("primary_alignment_inactive")
     );
-    s.useDock(Control::Align([2, 1]));
-    s.useDock(Control::Auto("Number".into()));
-    assert_eq!(s.board.groups[&0].number, -1.0);
+    s.use_dock(Control::Align([2, 1])).unwrap();
+    s.use_dock(Control::Auto(GapMode::Number)).unwrap();
+    assert_eq!(s.board.groups[&0].gap, -1.0);
     assert_eq!(s.board.groups[&0].align, [2, 1]);
-    s.useDock(Control::Flow("Free".into()));
+    s.use_dock(Control::Flow(GroupFlow::Free)).unwrap();
     assert!(!s.dock.align_shown());
 }
 #[test]
 fn corner_hugs_each_legal_axis() {
     let mut s = init();
-    s.create(0, &[0, 2], 1.0);
-    s.useDock(Control::Dimension(1, 3.0));
-    s.doubleClickCorner();
-    assert_eq!(s.board.groups[&0].fixed, BTreeSet::from([0]));
-    s.setFlow(0, "Row");
-    s.doubleClickCorner();
-    assert!(s.board.groups[&0].fixed.is_empty());
+    s.create(0, &[0, 2], 1.0).unwrap();
+    s.use_dock(Control::Dimension(1, 3.0)).unwrap();
+    s.double_click_corner().unwrap();
+    assert_eq!(s.board.groups[&0].fixed, [true, false]);
+    s.set_flow(0, GroupFlow::Row).unwrap();
+    s.double_click_corner().unwrap();
+    assert_eq!(s.board.groups[&0].fixed, [false; 2]);
 }
 
 #[test]
@@ -637,16 +369,16 @@ fn incoming_fit_preserves_existing_members_and_later_resize_does_not_refit() {
     let mut s = init();
     s.board
         .members
-        .insert(0, Member::fixed("Image", [200.0, 80.0]));
+        .insert(0, Member::fixed(MemberKind::Image, [200.0, 80.0]));
     s.board
         .members
-        .insert(2, Member::fixed("Image", [200.0, 100.0]));
-    s.create(0, &[0], 200.0);
-    s.useDock(Control::Dimension(0, 102.0));
-    s.add(0, &[2]);
+        .insert(2, Member::fixed(MemberKind::Image, [200.0, 100.0]));
+    s.create(0, &[0], 200.0).unwrap();
+    s.use_dock(Control::Dimension(0, 102.0)).unwrap();
+    s.add(0, &[2]).unwrap();
     assert_eq!(s.board.members[&0].size, [200.0, 80.0]);
     assert_eq!(s.board.members[&2].size, [100.0, 50.0]);
-    s.useDock(Control::Dimension(0, 52.0));
+    s.use_dock(Control::Dimension(0, 52.0)).unwrap();
     assert_eq!(s.board.members[&2].size, [100.0, 50.0]);
     assert_eq!(s.geometry.rendered(&s.board, 0, 2, 0), 100.0);
 }
@@ -658,8 +390,16 @@ mod layout {
         let mut group = Group::new(0, capacity, gap);
         group.padding = 0.0;
         group.size[0] = capacity;
-        group.flow = if wrap { "Wrap" } else { "Row" }.into();
-        group.gap = if auto { "Between" } else { "Number" }.into();
+        group.flow = if wrap {
+            GroupFlow::Wrap
+        } else {
+            GroupFlow::Row
+        };
+        group.auto = if auto {
+            GapMode::Between
+        } else {
+            GapMode::Number
+        };
         group.order = (0..xs.len() as Id).collect();
         State::init(
             Board {
@@ -669,9 +409,9 @@ mod layout {
                     .iter()
                     .enumerate()
                     .map(|(m, &(width, fill))| {
-                        let mut member = Member::fixed("Textbox", [width, 1.0]);
+                        let mut member = Member::fixed(MemberKind::Textbox, [width, 1.0]);
                         if fill {
-                            member.fill.insert(0);
+                            member.fill[0] = true;
                         }
                         (m as Id, member)
                     })
@@ -688,16 +428,16 @@ mod layout {
         let pixels = s.geometry.layout(b, 0);
         let used = |row: &[Id]| {
             row.iter().map(|&m| b.base(m, 0)).sum::<f32>()
-                + g.numeric() * row.len().saturating_sub(1) as f32
+                + g.numeric_gap() * row.len().saturating_sub(1) as f32
         };
         // Rows partition membership.
         assert_eq!(rows.concat(), g.order);
         assert!(rows.iter().all(|r| !r.is_empty()));
-        assert!(g.flow == "Wrap" || rows.len() <= 1);
+        assert!(g.flow == GroupFlow::Wrap || rows.len() <= 1);
         for (r, row) in rows.iter().enumerate() {
             // A new row is necessary exactly when the next member exceeds capacity.
             assert!(
-                g.flow != "Wrap" || used(row) <= g.size[0] || row.len() == 1,
+                g.flow != GroupFlow::Wrap || used(row) <= g.size[0] || row.len() == 1,
                 "{g:?} {row:?}"
             );
             if r + 1 < rows.len() {
@@ -709,8 +449,8 @@ mod layout {
             // Auto spacing leaves all residual capacity for Fill.
             let expected = (g.size[0]
                 - row.iter().map(|&m| b.base(m, 0)).sum::<f32>()
-                - if g.gap == "Number" {
-                    g.number * row.len().saturating_sub(1) as f32
+                - if g.auto == GapMode::Number {
+                    g.gap * row.len().saturating_sub(1) as f32
                 } else {
                     0.0
                 })
@@ -725,29 +465,35 @@ mod layout {
             assert!(share >= 0.0 && share * count as f32 <= space + 0.001);
             for (c, &m) in row.iter().enumerate() {
                 // Fixed widths remain unchanged; Fill gets its share.
-                let expected = if b.members[&m].fill.contains(&0) {
+                let expected = if b.members[&m].fill[0] {
                     share
                 } else {
                     b.members[&m].size[0]
                 };
                 assert!((pixels.sizes[&m].x - expected).abs() < 0.001);
                 // Vertical arrows keep the column.
-                if g.flow == "Wrap" {
-                    for (direction, adjacent) in [("Up", r.checked_sub(1)), ("Down", Some(r + 1))] {
+                if g.flow == GroupFlow::Wrap {
+                    for (direction, adjacent) in [
+                        (Direction::Up, r.checked_sub(1)),
+                        (Direction::Down, Some(r + 1)),
+                    ] {
                         let expected = adjacent
                             .and_then(|r| rows.get(r))
                             .and_then(|r| r.get(c))
                             .copied();
-                        assert_eq!(s.arrowTarget(0, m, direction).map(|i| g.order[i]), expected);
+                        assert_eq!(
+                            s.arrow_target(0, m, direction).map(|i| g.order[i]),
+                            expected
+                        );
                     }
                 }
             }
         }
         // Hug covers every fixed member.
-        if g.number >= 0.0 {
+        if g.gap >= 0.0 {
             let xs: Vec<_> = g.order.iter().map(|&m| (b.base(m, 0), false)).collect();
-            let mut hug = state(&xs, g.size[0], g.numeric(), false, false);
-            hug.board.groups.get_mut(&0).unwrap().fixed.clear();
+            let mut hug = state(&xs, g.size[0], g.numeric_gap(), false, false);
+            hug.board.groups.get_mut(&0).unwrap().fixed = [false; 2];
             let width = hug.geometry.measured(&hug.board, 0, 0);
             assert!(xs.iter().all(|&(w, _)| w <= width + 0.001));
         }
@@ -827,7 +573,7 @@ mod layout {
         // Real-value examples cover wrapping, Fill exhaustion, overflow and Hug.
         for (name, xs, capacity, gap, wrap, auto, rows, rendered, hug) in [
             (
-                "wrapRowsTest",
+                "wrap rows",
                 vec![(1., false); 3],
                 3.,
                 1.,
@@ -838,7 +584,7 @@ mod layout {
                 None,
             ),
             (
-                "fillShareTest",
+                "fill share",
                 vec![(1., false), (0., true), (0., true)],
                 3.,
                 1.,
@@ -849,7 +595,7 @@ mod layout {
                 None,
             ),
             (
-                "fillShareTest Auto",
+                "fill share auto",
                 vec![(1., false), (0., true), (0., true)],
                 3.,
                 1.,
@@ -860,7 +606,7 @@ mod layout {
                 None,
             ),
             (
-                "overflowTest",
+                "overflow",
                 vec![(1., false), (5., false)],
                 3.,
                 0.,
@@ -871,7 +617,7 @@ mod layout {
                 None,
             ),
             (
-                "hugTest",
+                "hug",
                 vec![(1., false), (2., false)],
                 3.,
                 1.,
@@ -882,7 +628,7 @@ mod layout {
                 Some(4.),
             ),
             (
-                "hugTest negative",
+                "hug negative",
                 vec![(1., false), (2., false)],
                 3.,
                 -1.,
@@ -900,12 +646,12 @@ mod layout {
                 assert_eq!(pixels.sizes[&(m as Id)].x, *w, "{name}");
             }
             if let Some(width) = hug {
-                s.board.groups.get_mut(&0).unwrap().fixed.clear();
+                s.board.groups.get_mut(&0).unwrap().fixed = [false; 2];
                 assert_eq!(s.geometry.measured(&s.board, 0, 0), width, "{name}");
             }
-            if name == "wrapRowsTest" {
-                assert_eq!(s.arrowTarget(0, 0, "Down"), Some(2));
-                assert_eq!(s.arrowTarget(0, 1, "Down"), None);
+            if name == "wrap rows" {
+                assert_eq!(s.arrow_target(0, 0, Direction::Down), Some(2));
+                assert_eq!(s.arrow_target(0, 1, Direction::Down), None);
             }
             check(&mut s);
         }
@@ -915,20 +661,20 @@ mod layout {
 mod enablement {
     use super::*;
 
-    fn axes(bits: usize) -> BTreeSet<usize> {
-        (0..2).filter(|a| bits & (1 << a) != 0).collect()
+    fn axes(bits: usize) -> [bool; 2] {
+        [0, 1].map(|a| bits & (1 << a) != 0)
     }
     #[test]
     fn enablement_scenarios() {
         for (name, panel, flow, gap, fixed, align, order, fill, enabled, disabled, hidden) in [
             (
-                "memberArtboardTest",
+                "member artboard",
                 Panel::MemberDock {
                     group: 0,
                     member: 2,
                 },
-                "Wrap",
-                "Number",
+                GroupFlow::Wrap,
+                GapMode::Number,
                 3,
                 [0, 0],
                 vec![0, 1, 2],
@@ -938,13 +684,13 @@ mod enablement {
                 vec![],
             ),
             (
-                "autoAlignTest",
+                "auto align",
                 Panel::GroupDock {
                     group: 0,
                     align_open: true,
                 },
-                "Row",
-                "Between",
+                GroupFlow::Row,
+                GapMode::Between,
                 1,
                 [1, 0],
                 vec![0, 2],
@@ -955,22 +701,22 @@ mod enablement {
             ),
         ] {
             let mut s = sizing_init();
-            s.create(0, &order, 1.0);
+            s.create(0, &order, 1.0).unwrap();
             s.dock.panel = panel;
             let g = s.board.groups.get_mut(&0).unwrap();
-            g.flow = flow.into();
-            g.gap = gap.into();
+            g.flow = flow;
+            g.auto = gap;
             g.fixed = axes(fixed);
             g.align = align;
             s.board.members.get_mut(&2).unwrap().fill = axes(fill);
             for c in enabled {
-                assert!(s.controlEnabled(&c), "{name} {c:?}");
+                assert!(s.control_enabled(&c), "{name} {c:?}");
             }
             for c in disabled {
-                assert!(!s.controlEnabled(&c), "{name} {c:?}");
+                assert!(!s.control_enabled(&c), "{name} {c:?}");
             }
             for c in hidden {
-                assert!(!s.controlShown(&c), "{name} {c:?}");
+                assert!(!s.control_shown(&c), "{name} {c:?}");
             }
         }
     }

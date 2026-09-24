@@ -29,7 +29,7 @@ interface:
             in supplied order, transfer selected members with Absolute cleared, and select the new group; an empty
             eligible selection must be an accepted no-op.
           checks:
-            - src/grouping/tests.rs::board::creationAndReaddTest
+            - src/grouping/tests.rs::board::creation_and_readd
         admission: An existing group identity must produce group-exists, including for an empty eligible selection.
       caller_obligations: {}
     add:
@@ -51,7 +51,7 @@ interface:
             re-added to the same group must keep its slot, and transfer must retain Absolute and follow spatial-layout
             sizing rules.
           checks:
-            - src/grouping/tests.rs::board::transferAndDetachTest
+            - src/grouping/tests.rs::board::transfer_and_detach
         admission: An absent group must produce group-missing before checking the placement; for an existing group,
           an absent live placement must produce item-missing.
       caller_obligations: {}
@@ -91,7 +91,7 @@ interface:
           statement: Paste must insert after the edited member and edit the new member, append to the selected group,
             or remain loose when the dock is hidden; no previous destination may capture it.
           checks:
-            - src/grouping/tests.rs::board::pasteAndDuplicateTest
+            - src/grouping/tests.rs::board::paste_and_duplicate
         admission: An already live destination identity must produce item-exists.
       caller_obligations: {}
     duplicate:
@@ -147,10 +147,6 @@ interface:
         direction:
           type: ArrowDirection
           description: Left, Right, Up, or Down.
-        target:
-          type: OptionalPlacementId
-          description: The spatial-layout target for vertical Wrap movement, absent when no adjacent-row same-column
-            member exists.
       outcomes:
         accepted: {}
         group-missing: {}
@@ -158,16 +154,14 @@ interface:
       behavior:
         effect:
           statement: Row must use Left and Right, Column Up and Down, and Wrap horizontal keys the flowing order
-            and vertical keys the supplied spatial target; Free, Absolute, and a missing neighbor must produce an
+            and vertical keys the spatial-layout Wrap target; Free, Absolute, and a missing neighbor must produce an
             accepted no-op.
           checks:
-            - src/grouping/tests.rs::board::arrowTest
-            - src/grouping/tests.rs::board::verticalTargetTest
+            - src/grouping/tests.rs::board::arrow
+            - src/grouping/tests.rs::board::vertical_target
         admission: An absent group must produce group-missing; an existing group that does not contain the placement
           must produce member-missing.
-      caller_obligations:
-        resolved-target: Supply a current spatial-layout target for vertical Wrap movement; any present target must
-          be a different flowing member in this group.
+      caller_obligations: {}
     detach:
       description: Removes one member from its group.
       input:
@@ -186,7 +180,7 @@ interface:
           statement: Detach must keep the placement and rendered geometry, clear Absolute, leave the empty group
             intact, select the loose placement, and hide its member dock.
           checks:
-            - src/grouping/tests.rs::board::transferAndDetachTest
+            - src/grouping/tests.rs::board::transfer_and_detach
         admission: An absent group must produce group-missing; an existing group that does not contain the placement
           must produce member-missing.
       caller_obligations: {}
@@ -211,7 +205,7 @@ interface:
           statement: Turning Absolute on must retain its order slot and rendered geometry; turning it off must reinsert
             it at the resolved slot and apply spatial-layout rules.
           checks:
-            - src/grouping/tests.rs::board::arrowTest
+            - src/grouping/tests.rs::board::arrow
         admission: An absent group must produce group-missing; an existing group that does not contain the placement
           must produce member-missing.
       caller_obligations: {}
@@ -232,7 +226,7 @@ interface:
           statement: The group must retain its order and apply spatial-layout flow conversion; choosing Free must
             close its alignment popover.
           checks:
-            - src/grouping/tests.rs::board::freeAndUngroupTest
+            - src/grouping/tests.rs::board::free_and_ungroup
         admission: An absent group must produce group-missing.
       caller_obligations: {}
     ungroup:
@@ -249,7 +243,7 @@ interface:
           statement: Ungroup must keep all members including Absolute members at their rendered geometry, clear
             membership and Absolute, remove the group, and hide its dock.
           checks:
-            - src/grouping/tests.rs::board::freeAndUngroupTest
+            - src/grouping/tests.rs::board::free_and_ungroup
         admission: An absent group must produce group-missing.
       caller_obligations: {}
     delete:
@@ -266,7 +260,7 @@ interface:
           statement: Deleting the edited member must return to the retained group dock even when the group becomes
             empty.
           checks:
-            - src/grouping/tests.rs::board::pasteAndDuplicateTest
+            - src/grouping/tests.rs::board::paste_and_duplicate
         admission: An absent live placement must produce item-missing.
       caller_obligations: {}
     choose:
@@ -345,7 +339,7 @@ interface:
           statement: Escape must discard and release an unsubmitted text draft first, then close alignment, then
             leave member editing for the group, then clear group selection.
           checks:
-            - src/grouping/tests.rs::board::escapeTest
+            - src/grouping/tests.rs::board::escape
       caller_obligations: {}
     control:
       description: Submits a grouping control against the current dock context.
@@ -363,43 +357,30 @@ interface:
             and Later must reject at an endpoint or for Free or Absolute, and accepted controls must dispatch the
             corresponding operation.
           checks:
-            - src/grouping/tests.rs::board::arrowTest
-            - src/grouping/tests.rs::board::freeAndUngroupTest
+            - src/grouping/tests.rs::board::arrow
+            - src/grouping/tests.rs::board::free_and_ungroup
         admission: A control outside its group or member editing mode must produce dock-unavailable before checking
           its operation; Earlier and Later without a flowing neighbor must produce no-neighbor.
       caller_obligations: {}
     key:
-      description: Routes a keyboard command through the current editing context.
+      description: Routes a direction key to the edited member.
       input:
-        keypress:
-          type: GroupingKey
-          description: Escape, direction, primary Group, Ungroup, Paste, Duplicate, Delete, or an unhandled key.
-        identity:
-          type: FreshIdentity
-          description: Fresh group or placement identity where required.
-        selection:
-          type: OrderedPlacementSelection
-          description: Distinct eligible image and textbox identities in the caller-supplied order.
-        target:
-          type: OptionalPlacementId
-          description: The current spatial target for a vertical Wrap arrow, otherwise absent.
+        direction:
+          type: ArrowDirection
+          description: Left, Right, Up, or Down.
       outcomes:
         accepted: {}
         text-owns-key: {}
         no-neighbor: {}
-        dock-unavailable: {}
-        group-exists: {}
-        item-exists: {}
-        unhandled-key: {}
       behavior:
         effect:
-          statement: Escape must dismiss one level; text focus must refuse other board keys; primary Group, Ungroup,
-            Paste, member Duplicate, member Delete, and directional keys must dispatch their operation, while unrelated
-            keys and whole-selection commands fall through.
+          statement: Text focus must refuse the key; without an edited member or a neighbor in that direction the key
+            must produce no-neighbor so the board can handle it; otherwise the key must apply arrow.
           checks:
-            - src/grouping/tests.rs::board::escapeTest
-      caller_obligations:
-        resolved-target: Supply the same current spatial target required by arrow when routing a vertical Wrap arrow.
+            - src/grouping/tests.rs::board::arrow
+            - src/grouping/tests.rs::board::vertical_target
+            - src/grouping/tests.rs::board::escape
+      caller_obligations: {}
     drop:
       description: Applies an edited-member drop.
       input:
@@ -424,7 +405,7 @@ interface:
           statement: An outside drop must detach a non-absolute member while preserving final dropped geometry;
             an Absolute member must remain attached outside, and an inside drop must apply reorder.
           checks:
-            - src/grouping/tests.rs::board::dropTest
+            - src/grouping/tests.rs::board::drop
         admission: An absent group must produce group-missing; an existing group that does not contain the placement
           must produce member-missing.
       caller_obligations: {}
@@ -433,42 +414,48 @@ interface:
       statement: Every grouped placement must be live and occur once in one flat group; groups cannot contain groups,
         lines, or arrows.
       checks:
-        - src/grouping/tests.rs::replay_every_board_trace
+        - src/grouping/tests.rs::board::creation_and_readd
+        - src/grouping/tests.rs::board::transfer_and_detach
     absolute:
       statement: Only a grouped placement may be Absolute.
       checks:
-        - src/grouping/tests.rs::replay_every_board_trace
+        - src/grouping/tests.rs::board::free_and_ungroup
+        - src/grouping/tests.rs::sizing::leave
     refusal:
       statement: A refused operation must leave board and dock unchanged.
       checks:
-        - src/grouping/tests.rs::replay_every_board_trace
+        - src/grouping/tests.rs::stored_dock_values
     retention:
       statement: Removing or transferring the last member must retain the group and its settings.
       checks:
-        - src/grouping/tests.rs::replay_every_board_trace
+        - src/grouping/tests.rs::board::transfer_and_detach
+        - src/grouping/tests.rs::sizing::leave
     append:
       statement: Picker addition must append without reordering the existing destination prefix.
       checks:
-        - src/grouping/tests.rs::replay_every_board_trace
+        - src/grouping/tests.rs::board::transfer_and_detach
     selection:
       statement: The dock must refer to an existing group or member, follow an edited member on transfer, and never
         retain an open alignment popover for a Free group.
       checks:
-        - src/grouping/tests.rs::replay_every_board_trace
+        - src/grouping/tests.rs::board::transfer_and_detach
+        - src/grouping/tests.rs::board::free_and_ungroup
+        - src/grouping/tests.rs::stored_auto_variant_and_number
     ordinal:
       statement: Dock counts and member ordinals must derive from full membership order, including Absolute members;
         an empty group must show zero.
       checks:
-        - src/grouping/tests.rs::replay_every_board_trace
+        - src/grouping/tests.rs::board::transfer_and_detach
     typing:
       statement: While a text editor owns focus, board arrow shortcuts must remain inactive.
       checks:
-        - src/grouping/tests.rs::replay_every_board_trace
+        - src/grouping/tests.rs::board::escape
     enablement:
       statement: A shown grouping control must be enabled exactly when control would accept its valid submission;
         hidden controls must be disabled, and disabled controls must not change settings to enable themselves.
       checks:
-        - src/grouping/tests.rs::replay_every_board_trace
+        - src/grouping/tests.rs::enablement::enablement_scenarios
+        - src/grouping/tests.rs::stored_dock_values
   requires:
     spatial-layout:
       target: '[[spatial-layout#/interface/operations/layout-group]]'
@@ -476,11 +463,10 @@ interface:
     wrap-arrow-target:
       target: '[[spatial-layout#/interface/operations/layout-group/behavior/wrap-arrow-target]]'
       reason: Supplies the neighboring placement for vertical Wrap movement.
-  model: board.qnt
 decisions:
   geometry-boundary:
-    current: Resolve geometric insertion slots and vertical Wrap neighbors through spatial-layout before applying
-      membership and order transitions.
+    current: Callers resolve insertion slots through spatial-layout before submitting a transition; vertical Wrap
+      neighbors come from spatial-layout through the Geometry boundary during arrow.
     affects:
       - '[[#/interface/operations/arrow]]'
       - '[[#/interface/operations/reorder]]'
@@ -490,8 +476,7 @@ decisions:
     consequences:
       - Grouping consumes resolved placement identities and insertion slots without owning row geometry.
     reconsider_when:
-      - Grouping and layout acquire a shared operation that can resolve the current spatial target without duplicating
-        geometry rules.
+      - Grouping needs a geometric answer that the Geometry boundary cannot supply without duplicating layout rules.
     explored_paths:
       single-member-rows:
         status: rejected

@@ -33,12 +33,12 @@ fn image_canvas(rotation: f32) -> CanvasState {
 fn grouping_padding_exhausts_fixed_capacity() {
     let mut canvas = image_canvas(0.0);
     canvas
-        .group_edit(|s| s.setAxisMode(7, 0, AxisMode::Fixed(100.0)))
+        .group_edit(|s| s.set_axis_mode(7, 0, AxisMode::Fixed(100.0)))
         .unwrap();
     let fixed_member = canvas.group_member_geometry(1).unwrap().scaled_size();
     for padding in [50.0, 70.0, 20.0] {
         canvas
-            .group_edit(|s| s.useDock(Control::Padding(padding)))
+            .group_edit(|s| s.use_dock(Control::Padding(padding)))
             .unwrap();
         assert_eq!(canvas.groups()[0].container.scaled_size().x, 100.0);
         assert_eq!(
@@ -51,10 +51,10 @@ fn grouping_padding_exhausts_fixed_capacity() {
         );
     }
     canvas
-        .group_edit(|s| s.setMemberMode(7, 1, 0, true))
+        .group_edit(|s| s.set_member_mode(7, 1, 0, true))
         .unwrap();
     canvas
-        .group_edit(|s| s.useDock(Control::Padding(70.0)))
+        .group_edit(|s| s.use_dock(Control::Padding(70.0)))
         .unwrap();
     assert_eq!(canvas.groups()[0].container.scaled_size().x, 100.0);
     assert_eq!(
@@ -68,17 +68,17 @@ fn grouping_zero_fill_recovers_asset_ratio() {
     for rotation in [0.0, 0.37, std::f32::consts::FRAC_PI_2] {
         let mut canvas = image_canvas(rotation);
         canvas
-            .group_edit(|s| s.setMemberMode(7, 1, 0, true))
+            .group_edit(|s| s.set_member_mode(7, 1, 0, true))
             .unwrap();
         canvas
-            .group_edit(|s| s.useDock(Control::Padding(200.0)))
+            .group_edit(|s| s.use_dock(Control::Padding(200.0)))
             .unwrap();
         assert_eq!(
             canvas.group_member_geometry(1).unwrap().scaled_size(),
             Vec2::ZERO
         );
         canvas
-            .group_edit(|s| s.useDock(Control::Padding(10.0)))
+            .group_edit(|s| s.use_dock(Control::Padding(10.0)))
             .unwrap();
         let geometry = canvas.group_member_geometry(1).unwrap();
         assert!(geometry.size.is_finite());
@@ -96,24 +96,28 @@ fn zero_fill_recovers_when_flow_or_absolute_resumes() {
     for absolute in [false, true] {
         let mut canvas = image_canvas(0.37);
         canvas
-            .group_edit(|s| s.setMemberMode(7, 1, 0, true))
+            .group_edit(|s| s.set_member_mode(7, 1, 0, true))
             .unwrap();
         canvas
-            .group_edit(|s| s.useDock(Control::Padding(200.)))
+            .group_edit(|s| s.use_dock(Control::Padding(200.)))
             .unwrap();
         if absolute {
-            canvas.group_edit(|s| s.toggleAbsolute(7, 1, 0)).unwrap();
+            canvas.group_edit(|s| s.toggle_absolute(7, 1, 0)).unwrap();
         } else {
-            canvas.group_edit(|s| s.setFlow(7, "Free")).unwrap();
+            canvas
+                .group_edit(|s| s.set_flow(7, crate::data::GroupFlow::Free))
+                .unwrap();
         }
         canvas
-            .group_edit(|s| s.useDock(Control::Padding(10.)))
+            .group_edit(|s| s.use_dock(Control::Padding(10.)))
             .unwrap();
         assert_eq!(canvas.group_member_geometry(1).unwrap().size, Vec2::ZERO);
         if absolute {
-            canvas.group_edit(|s| s.toggleAbsolute(7, 1, 0)).unwrap();
+            canvas.group_edit(|s| s.toggle_absolute(7, 1, 0)).unwrap();
         } else {
-            canvas.group_edit(|s| s.setFlow(7, "Row")).unwrap();
+            canvas
+                .group_edit(|s| s.set_flow(7, crate::data::GroupFlow::Row))
+                .unwrap();
         }
         let rect = canvas.group_member_geometry(1).unwrap();
         assert!(
@@ -130,23 +134,25 @@ fn zero_fill_to_fixed_or_hug_freezes_complete_image_geometry() {
     for hug in [false, true] {
         for rotation in [0.0, 0.37] {
             let mut canvas = image_canvas(rotation);
-            canvas.group_edit(|s| s.setFlow(7, "Row")).unwrap();
             canvas
-                .group_edit(|s| s.setMemberMode(7, 1, 0, true))
+                .group_edit(|s| s.set_flow(7, crate::data::GroupFlow::Row))
                 .unwrap();
             canvas
-                .group_edit(|s| s.useDock(Control::Padding(200.)))
+                .group_edit(|s| s.set_member_mode(7, 1, 0, true))
+                .unwrap();
+            canvas
+                .group_edit(|s| s.use_dock(Control::Padding(200.)))
                 .unwrap();
             let before = canvas.group_member_geometry(1).unwrap();
             assert_eq!(before.size, Vec2::ZERO);
             assert_eq!(canvas.grouping_state().board.members[&1].size, [0., 0.]);
             if hug {
                 canvas
-                    .group_edit(|s| s.setAxisMode(7, 0, AxisMode::Hug))
+                    .group_edit(|s| s.set_axis_mode(7, 0, AxisMode::Hug))
                     .unwrap();
             } else {
                 canvas
-                    .group_edit(|s| s.setMemberMode(7, 1, 0, false))
+                    .group_edit(|s| s.set_member_mode(7, 1, 0, false))
                     .unwrap();
             }
             let after = canvas.group_member_geometry(1).unwrap();
@@ -156,14 +162,14 @@ fn zero_fill_to_fixed_or_hug_freezes_complete_image_geometry() {
             assert_eq!(canvas.groups()[0].container.size.y, 401.);
             assert!(canvas.groups()[0].layout.members.is_empty());
             canvas
-                .group_edit(|s| s.useDock(Control::Padding(10.)))
+                .group_edit(|s| s.use_dock(Control::Padding(10.)))
                 .unwrap();
             assert_eq!(canvas.group_member_geometry(1).unwrap().size, Vec2::ZERO);
             canvas
-                .group_edit(|s| s.setAxisMode(7, 0, AxisMode::Fixed(100.)))
+                .group_edit(|s| s.set_axis_mode(7, 0, AxisMode::Fixed(100.)))
                 .unwrap();
             canvas
-                .group_edit(|s| s.setMemberMode(7, 1, 0, true))
+                .group_edit(|s| s.set_member_mode(7, 1, 0, true))
                 .unwrap();
             let recovered = canvas.group_member_geometry(1).unwrap();
             assert!(recovered.size.min_elem() > 0.);
@@ -199,8 +205,10 @@ fn images_canvas(sizes: &[(f32, f32)]) -> CanvasState {
 #[test]
 fn absolute_members_do_not_decide_insertion_slot() {
     let mut canvas = images_canvas(&[(120.0, 60.0); 3]);
-    canvas.group_edit(|s| s.setFlow(7, "Row")).unwrap();
-    canvas.group_edit(|s| s.toggleAbsolute(7, 1, 0)).unwrap();
+    canvas
+        .group_edit(|s| s.set_flow(7, crate::data::GroupFlow::Row))
+        .unwrap();
+    canvas.group_edit(|s| s.toggle_absolute(7, 1, 0)).unwrap();
     let [b, c] = [2, 3].map(|id| canvas.group_member_geometry(id).unwrap().center);
     let mut a = canvas.group_member_geometry(1).unwrap();
     a.center.x = c.x + 500.0;
@@ -217,8 +225,8 @@ fn assert_clip_keeps_sizes(canvas: &mut CanvasState) {
     for _ in 0..2 {
         canvas
             .group_edit(|s| {
-                s.selectGroup(7);
-                s.useDock(Control::Clip)
+                s.select_group(7).unwrap();
+                s.use_dock(Control::Clip)
             })
             .unwrap();
         assert_eq!(sizes(canvas), before);
@@ -229,13 +237,13 @@ fn assert_clip_keeps_sizes(canvas: &mut CanvasState) {
 fn cross_fill_image_width_follows_its_row_not_the_last_render() {
     let mut wrap = images_canvas(&[(80.0, 100.0), (60.0, 60.0)]);
     wrap.group_edit(|s| {
-        s.setAxisMode(7, 0, AxisMode::Fixed(170.0));
-        s.setAxisMode(7, 1, AxisMode::Fixed(120.0));
-        s.selectGroup(7);
-        s.useDock(Control::Padding(10.0));
-        s.useDock(Control::Gap(10.0));
-        s.useDock(Control::RowGap(10.0));
-        s.setMemberMode(7, 2, 1, true)
+        s.set_axis_mode(7, 0, AxisMode::Fixed(170.0)).unwrap();
+        s.set_axis_mode(7, 1, AxisMode::Fixed(120.0)).unwrap();
+        s.select_group(7).unwrap();
+        s.use_dock(Control::Padding(10.0)).unwrap();
+        s.use_dock(Control::Gap(10.0)).unwrap();
+        s.use_dock(Control::RowGap(10.0)).unwrap();
+        s.set_member_mode(7, 2, 1, true)
     })
     .unwrap();
     let filled = wrap.group_member_geometry(2).unwrap().scaled_size();
@@ -244,15 +252,15 @@ fn cross_fill_image_width_follows_its_row_not_the_last_render() {
 
     let mut row = images_canvas(&[(100.0, 100.0), (100.0, 100.0)]);
     row.group_edit(|s| {
-        s.setFlow(7, "Row");
-        s.setAxisMode(7, 0, AxisMode::Fixed(300.0));
-        s.setAxisMode(7, 1, AxisMode::Fixed(100.0));
-        s.selectGroup(7);
-        s.useDock(Control::Padding(0.0));
-        s.useDock(Control::Gap(0.0));
-        s.setMemberMode(7, 1, 1, true);
-        s.setMemberMode(7, 2, 0, true);
-        s.setAxisMode(7, 1, AxisMode::Fixed(200.0))
+        s.set_flow(7, crate::data::GroupFlow::Row).unwrap();
+        s.set_axis_mode(7, 0, AxisMode::Fixed(300.0)).unwrap();
+        s.set_axis_mode(7, 1, AxisMode::Fixed(100.0)).unwrap();
+        s.select_group(7).unwrap();
+        s.use_dock(Control::Padding(0.0)).unwrap();
+        s.use_dock(Control::Gap(0.0)).unwrap();
+        s.set_member_mode(7, 1, 1, true).unwrap();
+        s.set_member_mode(7, 2, 0, true).unwrap();
+        s.set_axis_mode(7, 1, AxisMode::Fixed(200.0))
     })
     .unwrap();
     let size = |id| row.group_member_geometry(id).unwrap().scaled_size();
@@ -269,13 +277,13 @@ fn batch_transfer_freezes_every_member_at_its_source_size() {
         let mut canvas = images_canvas(&[(200.0, 100.0), (200.0, 100.0)]);
         canvas
             .group_edit(|s| {
-                s.setFlow(7, "Row");
-                s.setAxisMode(7, 0, AxisMode::Fixed(220.0));
-                s.selectGroup(7);
-                s.useDock(Control::Padding(10.0));
-                s.useDock(Control::Gap(10.0));
-                s.setMemberMode(7, 1, 0, true);
-                s.setMemberMode(7, 2, 0, true)
+                s.set_flow(7, crate::data::GroupFlow::Row).unwrap();
+                s.set_axis_mode(7, 0, AxisMode::Fixed(220.0)).unwrap();
+                s.select_group(7).unwrap();
+                s.use_dock(Control::Padding(10.0)).unwrap();
+                s.use_dock(Control::Gap(10.0)).unwrap();
+                s.set_member_mode(7, 1, 0, true).unwrap();
+                s.set_member_mode(7, 2, 0, true)
             })
             .unwrap();
         let size = |canvas: &CanvasState| {
@@ -310,8 +318,8 @@ fn batch_transfer_freezes_every_member_at_its_source_size() {
             canvas.create_named_group(8, "B".into(), &[3]).unwrap();
             canvas
                 .group_edit(|s| {
-                    s.setFlow(8, "Row");
-                    s.setAxisMode(8, 0, AxisMode::Hug)
+                    s.set_flow(8, crate::data::GroupFlow::Row).unwrap();
+                    s.set_axis_mode(8, 0, AxisMode::Hug)
                 })
                 .unwrap();
             canvas.add_members_to_group(8, &[1, 2]).unwrap();
@@ -338,18 +346,18 @@ fn filled_textbox_renders_its_allocated_size() {
     canvas.create_named_group(7, "Group".into(), &[1]).unwrap();
     canvas
         .group_edit(|s| {
-            s.setFlow(7, "Row");
-            s.setAxisMode(7, 0, AxisMode::Fixed(120.0));
-            s.selectGroup(7);
-            s.useDock(Control::Padding(10.0));
-            s.setMemberMode(7, 1, 0, true)
+            s.set_flow(7, crate::data::GroupFlow::Row).unwrap();
+            s.set_axis_mode(7, 0, AxisMode::Fixed(120.0)).unwrap();
+            s.select_group(7).unwrap();
+            s.use_dock(Control::Padding(10.0)).unwrap();
+            s.set_member_mode(7, 1, 0, true)
         })
         .unwrap();
     for (padding, width) in [(10.0, 100.0), (60.0, 0.0)] {
         canvas
             .group_edit(|s| {
-                s.selectGroup(7);
-                s.useDock(Control::Padding(padding))
+                s.select_group(7).unwrap();
+                s.use_dock(Control::Padding(padding))
             })
             .unwrap();
         let textbox = canvas.annotation_by_id(1).unwrap();
@@ -365,7 +373,7 @@ fn member_editing_reaches_visible_overflow_only() {
     use crate::canvas::interaction::{hit_test_canvas_item, hit_test_member};
     let mut canvas = images_canvas(&[(150.0, 100.0)]);
     canvas
-        .group_edit(|s| s.setAxisMode(7, 0, AxisMode::Fixed(80.0)))
+        .group_edit(|s| s.set_axis_mode(7, 0, AxisMode::Fixed(80.0)))
         .unwrap();
     let viewport = egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(2000.0, 2000.0));
     let container = canvas.groups()[0].container.unrotated_bounds();
@@ -381,8 +389,8 @@ fn member_editing_reaches_visible_overflow_only() {
         );
         canvas
             .group_edit(|s| {
-                s.selectGroup(7);
-                s.useDock(Control::Clip)
+                s.select_group(7).unwrap();
+                s.use_dock(Control::Clip)
             })
             .unwrap();
     }

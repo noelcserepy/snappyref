@@ -1,6 +1,6 @@
 //! Pixel observations used by the grouping core and by canvas placement.
-use crate::data::{Group, RectGeometry};
-use crate::grouping::{self, Board, Geometry, Id};
+use crate::data::{GapMode, Group, GroupFlow, RectGeometry};
+use crate::grouping::{self, Board, Direction, Geometry, Id, MemberKind};
 use eframe::egui::{self, Pos2, Vec2};
 use std::collections::BTreeMap;
 
@@ -25,11 +25,11 @@ impl Pixels {
     // replace the displayed sizes stored by the edit core or frozen by conversions.
     fn fill_inputs<'a>(&self, b: &'a Board, g: Id) -> std::borrow::Cow<'a, Board> {
         let mut inputs = std::borrow::Cow::Borrowed(b);
-        if b.groups[&g].flow != "Free" {
+        if b.groups[&g].flow != GroupFlow::Free {
             for &m in &b.groups[&g].order {
                 let member = &b.members[&m];
                 if !member.absolute
-                    && !member.fill.is_empty()
+                    && member.fill != [false; 2]
                     && member.size.contains(&0.0)
                     && let Some(size) = self.image_sizes.get(&m)
                 {
@@ -57,7 +57,7 @@ impl Pixels {
         let rows = b.rows(g);
         let primary = group.primary();
         let cross = 1 - primary;
-        if group.flow == "Free" {
+        if group.flow == GroupFlow::Free {
             for &m in &group.order {
                 result.sizes.insert(m, Vec2::from(b.members[&m].size));
             }
@@ -82,33 +82,33 @@ impl Pixels {
             for &m in row {
                 let member = &b.members[&m];
                 let mut size = Vec2::from(member.size);
-                if member.fill.contains(&primary) {
+                if member.fill[primary] {
                     let dimension = if count == 0 {
                         0.0
                     } else {
                         space / count as f32
                     };
                     primary_cells.insert(m, dimension);
-                    if member.kind == "Image" && size[primary] > 0.0 {
+                    if member.kind == MemberKind::Image && size[primary] > 0.0 {
                         size *= dimension / size[primary];
                     } else {
                         size[primary] = dimension;
                     }
                 }
-                if !member.fill.contains(&cross) {
+                if !member.fill[cross] {
                     height = height.max(size[cross]);
                 }
                 result.sizes.insert(m, size);
             }
             row_heights.push(height);
-            row_fills.push(row.iter().any(|m| b.members[m].fill.contains(&cross)));
+            row_fills.push(row.iter().any(|m| b.members[m].fill[cross]));
         }
-        let row_gaps = group.rowGap * rows.len().saturating_sub(1) as f32;
+        let row_gaps = group.row_gap * rows.len().saturating_sub(1) as f32;
         let fill_rows = row_fills.iter().filter(|&&fill| fill).count();
         let remaining =
             (group.capacity(cross) - row_heights.iter().sum::<f32>() - row_gaps).max(0.0);
         for (i, height) in row_heights.iter_mut().enumerate() {
-            if group.fixed.contains(&cross) {
+            if group.fixed[cross] {
                 if rows.len() == 1 {
                     *height = group.capacity(cross);
                 } else if row_fills[i] && fill_rows > 0 {
@@ -117,7 +117,7 @@ impl Pixels {
             }
         }
         let stack_size = row_heights.iter().sum::<f32>() + row_gaps;
-        let mut cross_pos = if group.fixed.contains(&cross) {
+        let mut cross_pos = if group.fixed[cross] {
             alignment(group.align[cross], group.capacity(cross) - stack_size)
         } else {
             0.0
@@ -127,8 +127,8 @@ impl Pixels {
             for &m in row {
                 let member = &b.members[&m];
                 let mut size = result.sizes[&m];
-                if member.fill.contains(&cross) {
-                    if member.kind == "Image" {
+                if member.fill[cross] {
+                    if member.kind == MemberKind::Image {
                         let original = Vec2::from(member.size);
                         if original[cross] > 0.0 {
                             let cross_factor = row_heights[r] / original[cross];
@@ -157,8 +157,8 @@ impl Pixels {
             let used = row.iter().map(cell_size).sum::<f32>();
             let n = row.len() as f32;
             let leftover = (group.capacity(primary) - used).max(0.0);
-            let (gap, mut position) = match group.gap.as_str() {
-                "Between" => (
+            let (gap, mut position) = match group.auto {
+                GapMode::Between => (
                     if row.len() > 1 {
                         leftover / (n - 1.0)
                     } else {
@@ -166,14 +166,14 @@ impl Pixels {
                     },
                     0.0,
                 ),
-                "Evenly" => (leftover / (n + 1.0), leftover / (n + 1.0)),
-                "Around" => (leftover / n, leftover / n * 0.5),
-                _ => (
-                    group.number,
-                    if group.fixed.contains(&primary) {
+                GapMode::Evenly => (leftover / (n + 1.0), leftover / (n + 1.0)),
+                GapMode::Around => (leftover / n, leftover / n * 0.5),
+                GapMode::Number => (
+                    group.gap,
+                    if group.fixed[primary] {
                         alignment(
                             group.align[primary],
-                            group.capacity(primary) - used - group.number * (n - 1.0),
+                            group.capacity(primary) - used - group.gap * (n - 1.0),
                         )
                     } else {
                         0.0
@@ -186,7 +186,7 @@ impl Pixels {
                 let cell = cell_size(&m);
                 offset[primary] = position
                     + alignment(
-                        if group.gap == "Number" {
+                        if group.auto == GapMode::Number {
                             group.align[primary]
                         } else {
                             0
@@ -200,7 +200,7 @@ impl Pixels {
                 bounds = Some(bounds.map_or(rect, |b| b.union(rect)));
                 position += cell + gap;
             }
-            cross_pos += row_heights[r] + group.rowGap;
+            cross_pos += row_heights[r] + group.row_gap;
         }
         result.min = bounds.map_or(Vec2::ZERO, |bounds| bounds.min.to_vec2().min(Vec2::ZERO));
         result.content = bounds.map_or(Vec2::new(group.capacity(0), group.capacity(1)), |b| {
@@ -225,7 +225,7 @@ fn reserve_cross_fill<'a>(
 ) -> std::borrow::Cow<'a, Board> {
     let mut inputs = std::borrow::Cow::Borrowed(b);
     let group = &b.groups[&g];
-    if group.flow == "Free" {
+    if group.flow == GroupFlow::Free {
         return inputs;
     }
     let primary = group.primary();
@@ -233,10 +233,7 @@ fn reserve_cross_fill<'a>(
     for (r, row) in b.rows(g).iter().enumerate() {
         for m in row {
             let member = &b.members[m];
-            if member.kind == "Image"
-                && member.fill.contains(&cross)
-                && !member.fill.contains(&primary)
-            {
+            if member.kind == MemberKind::Image && member.fill[cross] && !member.fill[primary] {
                 let size = &mut inputs.to_mut().members.get_mut(m).unwrap().size;
                 let factor = match heights {
                     Some(heights) if size[cross] > 0.0 => heights[r] / size[cross],
@@ -250,12 +247,12 @@ fn reserve_cross_fill<'a>(
     inputs
 }
 impl Geometry for Pixels {
-    fn wrap_arrow_target(&self, b: &Board, g: Id, m: Id, direction: &str) -> Option<Id> {
+    fn wrap_arrow_target(&self, b: &Board, g: Id, m: Id, direction: Direction) -> Option<Id> {
         let inputs = self.fill_inputs(b, g);
         let rows = inputs.rows(g);
         let row = rows.iter().position(|row| row.contains(&m))?;
         let column = rows[row].iter().position(|&member| member == m)?;
-        let adjacent = if direction == "Up" {
+        let adjacent = if direction == Direction::Up {
             row.checked_sub(1)?
         } else {
             row + 1
@@ -267,7 +264,7 @@ impl Geometry for Pixels {
         self.intake
             .get(&id)
             .cloned()
-            .unwrap_or_else(|| grouping::Member::fixed("Image", [width; 2]))
+            .unwrap_or_else(|| grouping::Member::fixed(MemberKind::Image, [width; 2]))
     }
     fn fit(&self, member: &grouping::Member, width: f32) -> [f32; 2] {
         let factor = if member.size[0] > width {
@@ -281,7 +278,7 @@ impl Geometry for Pixels {
         self.layout(b, g).sizes[&m][a]
     }
     fn measured(&self, b: &Board, g: Id, a: usize) -> f32 {
-        if b.groups[&g].fixed.contains(&a) || b.flowing(g).is_empty() {
+        if b.groups[&g].fixed[a] || b.flowing(g).is_empty() {
             b.groups[&g].size[a]
         } else {
             self.layout(b, g).content[a].max(1.0) + b.groups[&g].padding * 2.0
@@ -291,12 +288,12 @@ impl Geometry for Pixels {
 pub(crate) fn config(group: &Group) -> grouping::Group {
     grouping::Group {
         order: group.members.clone(),
-        flow: group.flow.as_str().into(),
-        fixed: (0..2).filter(|&a| group.layout.fixed[a]).collect(),
+        flow: group.flow,
+        fixed: group.layout.fixed,
         size: group.container.scaled_size().into(),
-        gap: group.layout.auto.clone(),
-        number: group.gap,
-        rowGap: group.layout.row_gap,
+        auto: group.layout.auto,
+        gap: group.gap,
+        row_gap: group.layout.row_gap,
         padding: group.padding,
         align: group.layout.align,
         clip: group.layout.clip,
@@ -307,12 +304,11 @@ pub(crate) fn config(group: &Group) -> grouping::Group {
 #[cfg(test)]
 mod dock_geometry_examples {
     use super::*;
-    use std::collections::BTreeSet;
 
-    fn board(sizes: &[[f32; 2]], kind: &str) -> Board {
+    fn board(sizes: &[[f32; 2]], kind: MemberKind) -> Board {
         let mut group = grouping::Group::new(0, 300.0, 10.0);
-        group.flow = "Row".into();
-        group.fixed = BTreeSet::from([0, 1]);
+        group.flow = GroupFlow::Row;
+        group.fixed = [true; 2];
         group.size = [320.0, 120.0];
         group.order = (0..sizes.len() as i64).collect();
         Board {
@@ -329,10 +325,10 @@ mod dock_geometry_examples {
     fn grouping_numeric_fill_and_overflow_examples() {
         let mut b = board(
             &[[100.0, 20.0], [80.0, 20.0], [20.0, 20.0], [20.0, 20.0]],
-            "Textbox",
+            MemberKind::Textbox,
         );
         for m in [2, 3] {
-            b.members.get_mut(&m).unwrap().fill.insert(0);
+            b.members.get_mut(&m).unwrap().fill[0] = true;
         }
         let p = Pixels::default();
         let layout = p.layout(&b, 0);
@@ -345,24 +341,24 @@ mod dock_geometry_examples {
     }
     #[test]
     fn grouping_image_aspect_fit_example() {
-        let mut b = board(&[[400.0, 200.0]], "Image");
+        let mut b = board(&[[400.0, 200.0]], MemberKind::Image);
         let g = b.groups.get_mut(&0).unwrap();
         g.size = [120.0, 120.0];
         g.align = [1, 1];
-        b.members.get_mut(&0).unwrap().fill = BTreeSet::from([0, 1]);
+        b.members.get_mut(&0).unwrap().fill = [true; 2];
         let layout = Pixels::default().layout(&b, 0);
         assert_eq!(layout.sizes[&0], egui::vec2(100.0, 50.0));
         assert_eq!(layout.offsets[&0], egui::vec2(0.0, 25.0));
     }
     #[test]
     fn grouping_auto_spacing_examples() {
-        let mut b = board(&[[40.0, 20.0]; 3], "Textbox");
+        let mut b = board(&[[40.0, 20.0]; 3], MemberKind::Textbox);
         for (mode, start, gap) in [
-            ("Between", 0.0, 90.0),
-            ("Evenly", 45.0, 45.0),
-            ("Around", 30.0, 60.0),
+            (GapMode::Between, 0.0, 90.0),
+            (GapMode::Evenly, 45.0, 45.0),
+            (GapMode::Around, 30.0, 60.0),
         ] {
-            b.groups.get_mut(&0).unwrap().gap = mode.into();
+            b.groups.get_mut(&0).unwrap().auto = mode;
             let layout = Pixels::default().layout(&b, 0);
             for m in 0..3 {
                 assert_eq!(layout.offsets[&m].x, start + m as f32 * (40.0 + gap));
