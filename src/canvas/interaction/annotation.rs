@@ -77,17 +77,22 @@ pub(crate) fn annotation_endpoint_at_pointer(
     }
 }
 
+/// Reaches the visible pixels of an annotation. Clip hides a member's overflow.
 pub(crate) fn hit_test_annotation(
     state: &CanvasState,
     rect: egui::Rect,
     pointer_pos: egui::Pos2,
 ) -> Option<i64> {
+    let world = state.screen_to_world(pointer_pos, rect);
     state
         .document
         .annotations
         .iter()
         .rev()
-        .find(|annotation| annotation_hit_test(state, rect, annotation, pointer_pos))
+        .find(|annotation| {
+            super::grouped_item_reachable(state, annotation.id, world, true)
+                && annotation_hit_test(state, rect, annotation, pointer_pos)
+        })
         .map(|annotation| annotation.id)
 }
 

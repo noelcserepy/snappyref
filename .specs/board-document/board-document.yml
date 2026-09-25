@@ -5,7 +5,7 @@ purpose:
   owns:
     - Board identity and naming.
     - Placement and annotation membership.
-    - Group identity, naming, ordered Placement membership, and saved auto-layout configuration.
+    - Durable Group state, identity allocation, and atomic document history.
     - Stack order across Board items.
     - Per-Board viewport and background state.
     - Document persistence.
@@ -161,16 +161,9 @@ interface:
         history-recorded-once: applied must add one undoable history entry.
         no-history-for-noop: unchanged must not add a history entry.
         persistence-deferred: applied must not wait for durable storage before returning the changed document.
-        group-creation: Creating a Group must assign a stable GroupId and an automatic editable name, and arrange the supplied Placements through Spatial Layout's Group layout operation.
-        group-rename: Renaming a Group must preserve its identity, members, and layout configuration.
-        group-add-existing: Adding to a Group must transfer existing Placements into that Group without creating duplicate Placements or Assets.
-        group-append: Adding Placements must append new members to the destination's ordered membership without sorting existing members.
-        group-add-repeat-safe: Adding a Placement already in the destination Group must not duplicate or reorder that member.
+        group-identity: Creating a Group must allocate a stable GroupId and an automatic editable name; renaming must preserve its identity and other document state.
         group-layout-coordination: Membership, member-size, member-order, container-size, and layout-configuration changes must apply Spatial Layout's Group layout result to each affected Group.
         group-change-atomic: A Group edit and its resulting membership, configuration, and geometry changes must form one document change and one history entry, including both Groups when a member transfers.
-        group-member-removal: Removing or deleting a member must remove its membership before the remaining Group is laid out.
-        group-empty-retained: Removing the last member must retain the Group's identity, name, and layout configuration as an available destination.
-        group-ungroup: Ungrouping must remove the Group while preserving its member Placements and their current geometry.
         group-duplicate: Duplicating a Group must preserve its configuration, ordered membership, and relative member geometry while assigning new Group and Placement identities.
 
       caller_obligations: {}
@@ -263,11 +256,16 @@ interface:
     archived-content-recoverable: Deleting a Board or Board item archives its durable content so Undo can restore the same identities.
     new-board-zoom: A Board without saved view state starts at zoom 0.45.
     group-board-local: A Group and every member Placement must belong to the same Board. Grouping must not change shared Library Assets.
-    group-flat-membership: A Group must contain an ordered set of Placements, not annotations or other Groups. A Placement must belong to at most one Group.
-    group-auto-layout-only: Every Group must use auto-layout rather than a separate manual-group mode.
-    group-durable-state: Group identities, names, ordered memberships, container geometry, flow, spacing, and padding must survive restart and participate in document history.
+    group-member-mode-storage:
+      statement: Stored member layout overrides must contain only nondefault modes for current members; absent entries mean Fixed on both axes and non-absolute.
+      checks:
+        - grouping_default_member_modes_are_inferred
+    group-durable-state: Group identity, name, ordered membership, geometry, flow, Hug or Fixed axes, numeric or Auto gap, row gap, padding, alignment, clipping, and member Fill and absolute intent survive restart and participate in history.
 
   requires:
+    grouping:
+      target: "[[grouping#/interface]]"
+      reason: Owns admitted Group membership and selection changes before atomic document application.
     replay-image-preparation:
       target: "[[image-preparation#/interface/operations/prepare-asset]]"
       reason: Schedules display content required by accepted edits and history replay without asking document callers to coordinate image loading.
@@ -351,4 +349,25 @@ decisions:
       workspace-wide-viewport:
         status: superseded
         reason: One shared viewport loses the spatial context of inactive Boards.
+    sources: []
+
+  member-mode-storage:
+    current: Store only nondefault member sizing and Absolute overrides and infer default modes when no entry exists.
+    affects:
+      - "[[#/interface/guarantees/group-member-mode-storage]]"
+    reasons:
+      - Ordered membership already identifies every member, so a second complete member map duplicates that fact.
+    consequences:
+      - Resetting both axes to Fixed and Absolute off removes the override.
+      - Departed member overrides must be removed.
+    reconsider_when:
+      - Default modes need to vary per member independently of explicit overrides.
+    examples:
+      - given: A member has a saved width Fill override.
+        when: It returns to Fixed on both axes and non-absolute.
+        then: Its override disappears and reload infers those defaults.
+    explored_paths:
+      materialize-every-member:
+        status: rejected
+        reason: A complete default map duplicates ordered membership and creates stale entries.
     sources: []

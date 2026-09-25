@@ -87,8 +87,9 @@ pub(crate) fn handle_textbox_primary_press(
     }
 }
 
+/// Stored geometry is final. Drafts and resizes apply the minimum size when they write it.
 pub(crate) fn textbox_world_rect(annotation: &CanvasAnnotation) -> egui::Rect {
-    normalized_textbox_rect(
+    egui::Rect::from_two_pos(
         egui::pos2(annotation.start().x, annotation.start().y),
         egui::pos2(annotation.end().x, annotation.end().y),
     )

@@ -1,0 +1,89 @@
+schema: v0.1
+
+purpose:
+  outcome: Make Group and member edits reachable in one contextual bottom dock.
+  owns:
+    - Group dock composition, field drafts, presentation and responsive overflow.
+  excludes:
+    - Group membership, selection and command admission.
+    - Layout geometry and sizing conversions.
+    - Durable document edits and history.
+
+interface:
+  operations:
+    present:
+      description: Presents contextual controls from Grouping state and accepts user field drafts or control actions.
+      input:
+        state:
+          type: GroupingView
+          description: Current dock identity, selection, Group values and control admission.
+        viewport:
+          type: CanvasViewport
+          description: The available canvas rectangle.
+        interaction:
+          type: DockInteraction
+          description: A field draft, submitted value, control activation or presentation update.
+      outcomes:
+        hidden: {}
+        visible:
+          view: GroupDockView
+        submitted:
+          action: GroupDockAction
+        invalid-value:
+          draft: DockFieldDraft
+      behavior:
+        provider-state: Presentation must derive mode, identity, count, ordinal and command availability from Grouping and sizing admission from Spatial Layout, without a second inspector or private copy of those rules.
+        group-controls: Group mode must show name, count, Row or Column or Wrap or Free, gap, Wrap-only row gap, padding, alignment, W and H numeric values with Hug toggles, Clip and Ungroup in that order.
+        member-controls: Member mode must replace the same dock contents with the passive group-name and Member N breadcrumb, W and H Fixed or Fill segments, Absolute, earlier and later icon chevrons, Detach, and the hint "esc leaves member editing".
+        value-display: Counts must read "1 item" or "N items", dimensions must show outer size or Hug, and dormant saved choices must remain visible when disabled.
+        field-validation: Submitted names must trim to nonblank text, gaps and row gaps accept signed integers, padding accepts finite nonnegative values, and outer sizes accept finite positive values; invalid drafts must not become document edits or disable the field.
+        draft-focus: Enter or blur must submit valid drafts and release text focus; Escape must discard an unsubmitted draft and release focus before dispatching further dismissal.
+        alignment-popover: One popover above the alignment trigger with an 8 pixel gap must contain nine named alignment cells and Off, Between, Evenly and Around Auto segments under "ALIGN" and "AUTO SPACING" labels.
+        popover-input: Alignment choices must retain the popover, the trigger must only toggle it, and outside presses must dismiss it while still reaching the clicked target.
+        dock-overflow:
+          statement: The dock must keep one natural-width row centered 24 pixels above the canvas bottom, cap its width to the canvas minus 24 pixel side margins, and scroll horizontally when controls exceed that width.
+          checks:
+            - inspect::group-dock
+            - inspect::member-dock
+            - inspect::group-dock-narrow
+        local-dimensions: The dock must use height 52, radius 14, control height 30, control radius 8, control gaps 6, left padding 6 and right padding 10 pixels, with 1 by 20 pixel separators and 4 pixel separator side margins.
+        visual-semantics: The dock must use existing warm theme surfaces, gold selected states, DM Sans, muted nondestructive Ungroup and Detach text, and distinguishable hover, focus and disabled states.
+        motion: Entry must slide up and exit down using shared overlay timing; content replacement and animation must not delay commands.
+        canvas-feedback: Group selection must show a fine gold container outline and name; member editing must soften that outline, show a 2 pixel gold member outline and its ordinal, and drag feedback must mark the insertion slot.
+      caller_obligations: {}
+  guarantees: {}
+  requires:
+    grouping:
+      target: "[[grouping#/interface]]"
+      reason: Owns membership, dock identity, selection, text focus, dismissal order and grouping command admission.
+    sizing:
+      target: "[[spatial-layout#/interface]]"
+      reason: Owns layout values and sizing admission used by dock controls.
+
+decisions:
+  dock-width:
+    current: Use natural width until the viewport cap requires horizontal scrolling.
+    affects:
+      - "[[#/interface/operations/present/behavior/dock-overflow]]"
+    reasons:
+      - Natural width keeps related controls together without stretching across empty canvas.
+      - A viewport cap keeps every control reachable in narrow windows.
+    consequences:
+      - Narrow windows may require scrolling to reach trailing actions.
+    reconsider_when:
+      - Supported narrow viewports cannot keep all controls reachable through horizontal scrolling.
+    examples:
+      - given: The dock's natural width fits within a 1280 pixel canvas with 24 pixel side margins.
+        when: It appears.
+        then: It stays centered at natural width.
+      - given: The same controls exceed a 640 pixel canvas's available width.
+        when: The dock appears and the user scrolls horizontally.
+        then: Its width stays at most 592 pixels and trailing actions remain reachable.
+    explored_paths:
+      full-width:
+        status: rejected
+        reason: Stretching when content already fits adds empty space without improving access.
+      unconstrained-natural-width:
+        status: superseded
+        reason: Controls outside a narrow viewport become unreachable.
+    sources: []

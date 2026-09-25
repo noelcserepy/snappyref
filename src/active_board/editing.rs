@@ -11,60 +11,6 @@ pub(crate) struct BoardEditing {
 }
 
 impl BoardEditing {
-    fn record_created_selection_history(
-        &mut self,
-        canvas: &mut crate::canvas::CanvasState,
-        library: Option<&crate::library::storage::Library>,
-        board_id: i64,
-        label: String,
-        before_stack_order: Vec<crate::data::CanvasStackItem>,
-    ) -> Result<(), String> {
-        let placement_changes = canvas
-            .selected_placement_ids()
-            .into_iter()
-            .filter_map(|placement_id| canvas.placement_for_id(placement_id))
-            .map(|placement| HistoryChange {
-                before: None,
-                after: Some(placement),
-            })
-            .collect();
-        let annotation_changes = canvas
-            .selected_annotation_ids()
-            .into_iter()
-            .filter_map(|annotation_id| canvas.annotation_for_id(annotation_id))
-            .map(|annotation| HistoryChange {
-                before: None,
-                after: Some(annotation),
-            })
-            .collect();
-        let groups = canvas
-            .pending_document_changes_preview()
-            .groups
-            .map(|after| HistoryChange {
-                before: library.and_then(|library| {
-                    self.accepted_board_document(library, board_id)
-                        .ok()
-                        .map(|document| document.groups)
-                }),
-                after: Some(after),
-            });
-        self.history.record_applied(
-            board_id,
-            HistoryAction::document(
-                label,
-                placement_changes,
-                annotation_changes,
-                Some(HistoryChange {
-                    before: Some(before_stack_order),
-                    after: Some(canvas.canvas_stack_order()),
-                }),
-            )
-            .with_groups(groups),
-        );
-        self.queue_canvas_document(canvas, board_id)?;
-        Ok(())
-    }
-
     pub(crate) fn record_pending_document_changes_history(
         &mut self,
         canvas: &mut crate::canvas::CanvasState,
@@ -193,33 +139,29 @@ impl BoardEditing {
         payload: &crate::sources::clipboard::ClipboardBoardSelection,
         anchor: eframe::egui::Pos2,
     ) -> Result<String, String> {
-        let before = context.canvas.canvas_stack_order();
         let outcome =
             super::commands::paste_board_payload_at(&mut context.command(), payload, anchor)?;
-        self.accept_paste(context, outcome, before)
+        self.accept_paste(context, outcome)
     }
     pub(crate) fn duplicate(
         &mut self,
         context: &mut BoardEditContext<'_>,
     ) -> Result<Option<String>, String> {
-        let before = context.canvas.canvas_stack_order();
         let Some(outcome) = super::commands::duplicate_selection(&mut context.command())? else {
             return Ok(None);
         };
-        self.accept_paste(context, outcome, before).map(Some)
+        self.accept_paste(context, outcome).map(Some)
     }
     fn accept_paste(
         &mut self,
         context: &mut BoardEditContext<'_>,
         outcome: super::commands::PasteCommandOutcome,
-        before: Vec<crate::data::CanvasStackItem>,
     ) -> Result<String, String> {
-        self.record_created_selection_history(
+        self.record_pending_document_changes_history(
             context.canvas,
             context.library,
             context.board_id,
-            outcome.status.clone(),
-            before,
+            &outcome.status,
         )?;
         context.reload(outcome.reload)?;
         Ok(outcome.status)
@@ -291,6 +233,31 @@ impl BoardEditing {
                 ..Default::default()
             },
         )
+    }
+
+    /// Arrival can reflow Group members that the arriving Placement's edit never touched.
+    /// That edit adopts them, so Undo and Redo move them with the arrival.
+    pub(crate) fn resolve_group_arrival(
+        &mut self,
+        board_id: i64,
+        arrival: i64,
+        changes: crate::canvas::CanvasDocumentChanges,
+    ) -> Result<bool, String> {
+        self.history.adopt_completion_changes(
+            board_id,
+            arrival,
+            changes
+                .updated_placements
+                .iter()
+                .filter_map(|p| self.documents.placement(board_id, p.state.id))
+                .collect(),
+            changes
+                .updated_annotations
+                .iter()
+                .filter_map(|a| self.documents.annotation(board_id, a.id))
+                .collect(),
+        );
+        self.resolve_document_changes(board_id, changes)
     }
 
     /// Batch completion can also finish text editing or reflow Groups. Submit
@@ -386,6 +353,7 @@ impl BoardEditing {
     ) -> Result<Option<String>, String> {
         let before_groups = context.canvas.groups().to_vec();
         let before_all = context.canvas.committed_placements();
+        let before_all_annotations = context.canvas.annotations();
         let before_items = context
             .canvas
             .selected_placement_ids()
@@ -430,7 +398,7 @@ impl BoardEditing {
                             })
                         }),
                 );
-                let annotation_changes = before_annotations
+                let mut annotation_changes: Vec<_> = before_annotations
                     .into_iter()
                     .map(|annotation| {
                         let mut archived = annotation.clone();
@@ -441,6 +409,23 @@ impl BoardEditing {
                         }
                     })
                     .collect();
+                annotation_changes.extend(
+                    context
+                        .canvas
+                        .pending_document_changes_preview()
+                        .updated_annotations
+                        .into_iter()
+                        .filter_map(|after| {
+                            let before = before_all_annotations
+                                .iter()
+                                .find(|a| a.id == after.id)?
+                                .clone();
+                            Some(HistoryChange {
+                                before: Some(before),
+                                after: Some(after),
+                            })
+                        }),
+                );
                 self.history.record_applied(
                     context.board_id,
                     HistoryAction::document(

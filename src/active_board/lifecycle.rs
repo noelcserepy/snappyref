@@ -78,6 +78,8 @@ impl BoardLifecycle<'_> {
         match action {
             HistoryAction::Document(document_action) => {
                 let replay = self.apply_history_to_active_canvas(document_action, direction);
+                // Replay's own deletes and reflows are covered by its targets, not a new edit.
+                self.canvas.take_document_changes();
                 self.editing
                     .enqueue_document_changes(*self.active_board_id, replay.document_changes)?;
                 self.load_history_placement_content(ctx, replay.placements_needing_content)

@@ -3,6 +3,7 @@ mod app;
 mod canvas;
 mod data;
 mod diagnostics;
+pub mod grouping;
 mod image_preparation;
 mod library;
 mod local_data_location;

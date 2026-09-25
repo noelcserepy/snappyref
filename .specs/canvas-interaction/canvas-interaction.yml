@@ -9,7 +9,7 @@ purpose:
     - Move, resize, uniform scale, rotation, and crop interaction.
     - Annotation and text-box editing interaction.
     - Copy, paste, duplicate, delete, focus, arrangement, and stack-order commands.
-    - Group selection, member editing, layout controls, and the Add to group destination picker.
+    - Group input routing, visual feedback, and the Add to group destination picker.
     - Presentation of provisional, loading, loaded, and failed Placements.
   excludes:
     - Durable Board ownership and history rules.
@@ -87,15 +87,19 @@ interface:
         search-preview-pointer-anchor: After a Search preview fit, the provisional group must remain positioned at the user's pointer.
         animation-on-engagement: A visible animated image advances while hovered or selected and stays on its current frame while unengaged.
         history-delegated: Undo and redo actions must use Board Document history rather than private Canvas history.
-        group-shortcuts: Command+G on macOS and Control+G on other platforms must create a Group from selected Placements. Adding Shift must ungroup selected Groups. Unmodified G must open Add to group.
-        group-shortcuts-text-safe: Group shortcuts must not execute while the user is editing text.
+        group-shortcuts: Primary+G must dispatch Group creation, Primary+Shift+G whole-Group ungrouping, unmodified G the Add to group picker, Primary+V paste, Primary+D duplicate, and deletion by Backspace on macOS or Delete on Windows; Primary means Command on macOS and Control on Windows, and text focus retains typing before Board shortcuts.
         group-context-menu: The context menu must offer Group, Ungroup, and Add to group for applicable selections.
-        group-selection: Outside member editing, selecting a Group member must select the Group, and dragging the Group must move its members together.
-        group-member-editing: Double-clicking a Group member must enter member editing. Escape must return to Group selection.
-        group-member-reorder: Dragging a member within its Group during member editing must change its ordered position rather than leave it freely positioned outside the layout.
-        group-member-detach: During member editing, dropping a Placement with its center outside the Group container must remove it from the Group and keep its dropped position. Remaining members must reflow. The entire drop must be one undoable edit. Empty Groups must survive.
-        group-controls: A selected Group must expose Row, Column, and Wrap flow controls, spacing, padding, and inline name editing.
-        group-resize-and-scale: Container-resize interaction must request Group reflow from Spatial Layout. Explicit uniform scaling must remain a separate action.
+        group-actions-delegated: Group selection, member editing, membership and keyboard commands must dispatch through Grouping; sizing changes must use Spatial Layout and durable changes must use Board Document.
+        group-presentation-delegated: Group and member controls must use Group Dock presentation.
+        group-drag: Dragging a selected Group must translate its container and all members together.
+        group-drop-geometry: Member drops must supply the final center, container containment, and nearest insertion slot to Grouping and preserve final dropped geometry when detached.
+        group-resize-and-scale: Edge or corner drag must fix touched axes through Spatial Layout; Primary+Alt drag must use its uniform scaling behavior, with Primary meaning Command on macOS and Control on Windows.
+        group-handle-hug:
+          statement: Double-clicking an edge must request Hug for that axis; double-clicking a corner must Hug each legal axis, preserving Wrap width as Fixed while Hugging its height.
+          checks:
+            - corner_hugs_each_legal_axis
+        group-paint-order: Ordered members must paint later above earlier and Absolute members above flowing members; clipping crops all member paint to the container without changing geometry.
+        group-hit-area: Only the container must determine the Group hit area, including when members overflow.
         group-picker-search: Add to group must show a keyboard-searchable picker of destination Groups on the active Board, including their names and empty Groups.
         group-picker-repeat: The picker must initially highlight the last-used destination when it remains available on the active Board. Enter must confirm the highlighted destination.
         group-picker-choice: Typing must filter destinations, and keyboard navigation must allow choosing another destination before confirmation.
@@ -116,10 +120,15 @@ interface:
     provisional-interaction: Provisional Placements support the same selection and transform interactions as committed Placements.
     document-change-routing: Canvas Interaction must route durable Board edits through Board Document rather than write storage during continuous input handling.
     view-change-reporting: Canvas viewport and background changes must produce view-changed without entering Board undo history.
-    group-intake-explicit: A remembered Group destination must not automatically capture Search results, imports, or pastes. Add to group operates on existing selected Placements.
     group-picker-not-radial: Destination selection must use the searchable picker rather than a radial or mouse-wheel selector.
 
   requires:
+    grouping:
+      target: "[[grouping#/interface]]"
+      reason: Owns Group membership, selection, member editing, keyboard admission and dock state.
+    group-dock:
+      target: "[[group-dock#/interface]]"
+      reason: Owns presentation of Group and member controls.
     board-document-change:
       target: "[[board-document#/interface/operations/apply-change/outcomes/applied]]"
       reason: Owns durable document mutation and history.
@@ -211,3 +220,23 @@ decisions:
     sources:
       - label: Preserve Windows file drops and correct the native callback ABI
         url: https://github.com/noelcserepy/snappyref/blob/84d74e575e6c9af2356476636742db6f3fbddcec/docs/adr/0022-preserve-winit-file-drop-on-windows.md
+
+  corner-hug-legal-axes:
+    current: A corner double-click hugs every legal axis and keeps Wrap width Fixed.
+    affects:
+      - "[[#/interface/operations/perform/behavior/group-handle-hug]]"
+    reasons:
+      - A corner gesture should still perform the available height action in Wrap.
+    consequences:
+      - Wrap width restrictions do not reject the whole corner gesture.
+    reconsider_when:
+      - Users need the corner gesture to require both axes to change together.
+    examples:
+      - given: A Wrap Group has Fixed width and height.
+        when: Its corner handle is double-clicked.
+        then: Width stays Fixed and height becomes Hug.
+    explored_paths:
+      reject-corner-atomically:
+        status: rejected
+        reason: One forbidden axis would prevent the useful legal-axis action.
+    sources: []

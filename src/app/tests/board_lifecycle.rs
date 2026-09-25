@@ -1367,7 +1367,11 @@ fn board_delete_undo_restores_document_view_history_and_active_fallback() {
         members: vec![other.state.id, placement.state.id],
         container: placement.state.geometry,
         flow: crate::data::GroupFlow::Column,
-        spacing: 17.0,
+        gap: 17.0,
+        layout: crate::data::GroupLayoutSettings {
+            row_gap: 17.0,
+            ..Default::default()
+        },
         padding: 23.0,
     };
     let mixed_stack = vec![

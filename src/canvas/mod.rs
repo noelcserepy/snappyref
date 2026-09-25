@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 mod document;
 mod geometry;
+mod group_dock;
+mod group_edits;
 mod groups;
 pub(crate) mod guide_snap;
 mod interaction;
@@ -446,9 +448,9 @@ pub fn show(
             if state.interaction.group_picker.is_none()
                 && !state.handle_group_pointer(ui, rect, input_rect, toolbar_rect)
             {
-                let origins = state.group_transform_origins();
+                let origin = state.group_transform_origin();
                 handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
-                state.follow_group_member_transforms(origins);
+                state.follow_group_member_transforms(origin);
             }
         }
         CanvasInputPolicy::ViewportOnly => {

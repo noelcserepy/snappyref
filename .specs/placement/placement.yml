@@ -87,7 +87,12 @@ interface:
       behavior:
         board-space-authority: changed must update RectGeometry without changing Asset pixel metadata.
         identity-preserved: changed must preserve the PlacementRef and its Asset reference, including the absence of one.
-        invalid-geometry-rejected: A non-finite center, size, scale, or rotation, or a non-positive width, height, or scale, produces rejected.
+        invalid-geometry-rejected: A non-finite center, size, scale, or rotation, a negative width or height, or a non-positive scale produces rejected; zero width or height is valid only as a Group Fill layout result or preserved geometry derived from that result.
+        zero-fill-geometry:
+          statement: A zero Group Fill result must preserve Placement identity, Asset reference and recoverable image ratio through subsequent layout, history and persistence.
+          checks:
+            - grouping_zero_fill_recovers_asset_ratio
+            - grouping_zero_fill_history_and_reopen
 
       caller_obligations: {}
 
@@ -196,7 +201,7 @@ decisions:
         url: https://github.com/noelcserepy/snappyref/pull/128
 
   geometry-validity:
-    current: Reject non-finite RectGeometry values and non-positive width, height, or scale at external and persistence boundaries.
+    current: Reject non-finite RectGeometry values, negative dimensions and non-positive scale at boundaries, with zero dimensions admitted only for validated Group Fill results or geometry preserved from those results.
     affects:
       - "[[#/interface/operations/create]]"
       - "[[#/interface/operations/change-geometry]]"
@@ -209,4 +214,27 @@ decisions:
       - Trusted internal transforms do not need to repeat boundary validation on every mutation.
     reconsider_when: []
     explored_paths: {}
+    sources: []
+
+  zero-fill-display-geometry:
+    current: Permit zero display dimensions produced by Group Fill while retaining positive scale and rejecting user-submitted nonpositive sizes.
+    affects:
+      - "[[#/interface/operations/change-geometry/behavior/invalid-geometry-rejected]]"
+      - "[[#/interface/operations/change-geometry/behavior/zero-fill-geometry]]"
+    reasons:
+      - Fixed siblings can consume the entire cell without invalidating its Fill member.
+      - Asset metadata retains the image ratio when displayed dimensions cannot express it.
+    consequences:
+      - Persistence and history must preserve valid zero Fill results.
+      - A later positive allocation can restore visible geometry.
+    reconsider_when:
+      - Asset ratio recovery cannot preserve valid geometry through durable reload.
+    examples:
+      - given: An image with a 2 to 1 Asset ratio has Fill width beside Fixed members that exhaust the row.
+        when: The row grows enough to allocate 100 units to that image.
+        then: Its zero display size recovers to 100 by 50 with the same identity.
+    explored_paths:
+      reject-all-zero-dimensions:
+        status: superseded
+        reason: It makes an otherwise valid exhausted Fill layout impossible to preserve.
     sources: []

@@ -1,0 +1,485 @@
+schema: v0.1
+purpose:
+  outcome: Keep flat group membership, order, and editing context coherent through board operations.
+  owns:
+    - Group membership, transfer, order, and Absolute membership.
+    - Selection-derived group and member editing modes, alignment dismissal, and text focus routing.
+    - Admission and enablement for membership and order controls.
+  excludes:
+    - Geometry, sizing modes, gaps, alignment values, clipping, and rendered dimensions.
+    - Dock appearance and widget drafts.
+    - Durable board edits, history, persistence, and clipboard decoding.
+interface:
+  operations:
+    create:
+      description: Creates a group from the eligible selection.
+      input:
+        g:
+          type: GroupId
+          description: The target group identity.
+        selection:
+          type: OrderedPlacementSelection
+          description: Distinct eligible image and textbox identities in the caller-supplied order.
+      outcomes:
+        accepted: {}
+        group-exists: {}
+      behavior:
+        effect:
+          statement: A fresh identity and nonempty live selection must create a group with spatial-layout defaults
+            in supplied order, transfer selected members with Absolute cleared, and select the new group; an empty
+            eligible selection must be an accepted no-op.
+          checks:
+            - src/grouping/tests.rs::board::creation_and_readd
+        admission: An existing group identity must produce group-exists, including for an empty eligible selection.
+      caller_obligations: {}
+    add:
+      description: Appends a placement to a chosen group.
+      input:
+        g:
+          type: GroupId
+          description: The target group identity.
+        m:
+          type: PlacementId
+          description: The target placement identity.
+      outcomes:
+        accepted: {}
+        group-missing: {}
+        item-missing: {}
+      behavior:
+        effect:
+          statement: A live placement must leave its previous group and append to the destination; an existing member
+            re-added to the same group must keep its slot, and transfer must retain Absolute and follow spatial-layout
+            sizing rules.
+          checks:
+            - src/grouping/tests.rs::board::transfer_and_detach
+        admission: An absent group must produce group-missing before checking the placement; for an existing group,
+          an absent live placement must produce item-missing.
+      caller_obligations: {}
+    insert:
+      description: Adds a dragged placement at the resolved insertion slot.
+      input:
+        g:
+          type: GroupId
+          description: The target group identity.
+        m:
+          type: PlacementId
+          description: The target placement identity.
+        slot:
+          type: InsertionSlot
+          description: The nearest insertion slot resolved from current geometry, clamped to the order ends.
+      outcomes:
+        accepted: {}
+        group-missing: {}
+        item-missing: {}
+      behavior:
+        effect: A live placement must transfer to the supplied slot; dragging an existing member into its own group
+          through this intake operation must be an accepted no-op.
+        admission: An absent group must produce group-missing before checking the placement; for an existing group,
+          an absent live placement must produce item-missing.
+      caller_obligations: {}
+    paste:
+      description: Accepts a decoded clipboard placement into the current selection context.
+      input:
+        m:
+          type: FreshPlacementId
+          description: The new decoded clipboard placement identity.
+      outcomes:
+        accepted: {}
+        item-exists: {}
+      behavior:
+        effect:
+          statement: Paste must insert after the edited member and edit the new member, append to the selected group,
+            or remain loose when the dock is hidden; no previous destination may capture it.
+          checks:
+            - src/grouping/tests.rs::board::paste_and_duplicate
+        admission: An already live destination identity must produce item-exists.
+      caller_obligations: {}
+    duplicate:
+      description: Duplicates a placement with a fresh identity.
+      input:
+        source:
+          type: PlacementId
+          description: The source placement.
+        m:
+          type: FreshPlacementId
+          description: The duplicate identity.
+      outcomes:
+        accepted: {}
+        item-missing: {}
+        item-exists: {}
+      behavior:
+        effect: Duplicate must preserve member settings and insert immediately after a grouped source or remain
+          loose for a loose source; duplicating while editing that group must edit the new member.
+        admission: An absent source must produce item-missing before checking the duplicate identity; an already
+          live duplicate identity must produce item-exists.
+      caller_obligations: {}
+    reorder:
+      description: Applies a member drag within its group.
+      input:
+        g:
+          type: GroupId
+          description: The target group identity.
+        m:
+          type: PlacementId
+          description: The target placement identity.
+        slot:
+          type: InsertionSlot
+          description: The nearest insertion slot resolved from current geometry, clamped to the order ends.
+      outcomes:
+        accepted: {}
+        group-missing: {}
+        member-missing: {}
+      behavior:
+        effect: A flowing member must be removed before insertion at the resolved slot; Free and Absolute member
+          drags must retain membership order while spatial-layout applies manual geometry.
+        admission: An absent group must produce group-missing; an existing group that does not contain the placement
+          must produce member-missing.
+      caller_obligations: {}
+    arrow:
+      description: Moves a member toward the directional neighbor.
+      input:
+        g:
+          type: GroupId
+          description: The target group identity.
+        m:
+          type: PlacementId
+          description: The target placement identity.
+        direction:
+          type: ArrowDirection
+          description: Left, Right, Up, or Down.
+      outcomes:
+        accepted: {}
+        group-missing: {}
+        member-missing: {}
+      behavior:
+        effect:
+          statement: Row must use Left and Right, Column Up and Down, and Wrap horizontal keys the flowing order
+            and vertical keys the spatial-layout Wrap target; Free, Absolute, and a missing neighbor must produce an
+            accepted no-op.
+          checks:
+            - src/grouping/tests.rs::board::arrow
+            - src/grouping/tests.rs::board::vertical_target
+        admission: An absent group must produce group-missing; an existing group that does not contain the placement
+          must produce member-missing.
+      caller_obligations: {}
+    detach:
+      description: Removes one member from its group.
+      input:
+        g:
+          type: GroupId
+          description: The target group identity.
+        m:
+          type: PlacementId
+          description: The target placement identity.
+      outcomes:
+        accepted: {}
+        group-missing: {}
+        member-missing: {}
+      behavior:
+        effect:
+          statement: Detach must keep the placement and rendered geometry, clear Absolute, leave the empty group
+            intact, select the loose placement, and hide its member dock.
+          checks:
+            - src/grouping/tests.rs::board::transfer_and_detach
+        admission: An absent group must produce group-missing; an existing group that does not contain the placement
+          must produce member-missing.
+      caller_obligations: {}
+    absolute:
+      description: Toggles a member between Absolute and flowing membership.
+      input:
+        g:
+          type: GroupId
+          description: The target group identity.
+        m:
+          type: PlacementId
+          description: The target placement identity.
+        slot:
+          type: InsertionSlot
+          description: The nearest insertion slot resolved from current geometry, clamped to the order ends.
+      outcomes:
+        accepted: {}
+        group-missing: {}
+        member-missing: {}
+      behavior:
+        effect:
+          statement: Turning Absolute on must retain its order slot and rendered geometry; turning it off must reinsert
+            it at the resolved slot and apply spatial-layout rules.
+          checks:
+            - src/grouping/tests.rs::board::arrow
+        admission: An absent group must produce group-missing; an existing group that does not contain the placement
+          must produce member-missing.
+      caller_obligations: {}
+    flow:
+      description: Changes the group flow.
+      input:
+        g:
+          type: GroupId
+          description: The target group identity.
+        mode:
+          type: GroupFlow
+          description: Row, Column, Wrap, or Free.
+      outcomes:
+        accepted: {}
+        group-missing: {}
+      behavior:
+        effect:
+          statement: The group must retain its order and apply spatial-layout flow conversion; choosing Free must
+            close its alignment popover.
+          checks:
+            - src/grouping/tests.rs::board::free_and_ungroup
+        admission: An absent group must produce group-missing.
+      caller_obligations: {}
+    ungroup:
+      description: Removes a group while keeping its placements.
+      input:
+        g:
+          type: GroupId
+          description: The target group identity.
+      outcomes:
+        accepted: {}
+        group-missing: {}
+      behavior:
+        effect:
+          statement: Ungroup must keep all members including Absolute members at their rendered geometry, clear
+            membership and Absolute, remove the group, and hide its dock.
+          checks:
+            - src/grouping/tests.rs::board::free_and_ungroup
+        admission: An absent group must produce group-missing.
+      caller_obligations: {}
+    delete:
+      description: Deletes one placement and its membership.
+      input:
+        m:
+          type: PlacementId
+          description: The target placement identity.
+      outcomes:
+        accepted: {}
+        item-missing: {}
+      behavior:
+        effect:
+          statement: Deleting the edited member must return to the retained group dock even when the group becomes
+            empty.
+          checks:
+            - src/grouping/tests.rs::board::paste_and_duplicate
+        admission: An absent live placement must produce item-missing.
+      caller_obligations: {}
+    choose:
+      description: Selects exactly one group.
+      input:
+        g:
+          type: GroupId
+          description: The target group identity.
+      outcomes:
+        accepted: {}
+        group-missing: {}
+      behavior:
+        effect: An ordinary member click must select its group; selecting a group must close alignment and release
+          text focus.
+        admission: An absent group must produce group-missing.
+      caller_obligations: {}
+    edit:
+      description: Enters member editing directly.
+      input:
+        m:
+          type: PlacementId
+          description: The target placement identity.
+      outcomes:
+        accepted: {}
+        member-missing: {}
+      behavior:
+        effect: Double-click or primary-modifier click on a member must show the member dock and release text focus.
+        admission: A placement without a group must produce member-missing.
+      caller_obligations: {}
+    clear:
+      description: Leaves the single-group or member context.
+      input: {}
+      outcomes:
+        accepted: {}
+      behavior:
+        effect: Empty canvas, loose placement, mixed selection, or multiple selection must hide the dock and release
+          its text focus.
+      caller_obligations: {}
+    alignment:
+      description: Toggles the selected group alignment popover.
+      input: {}
+      outcomes:
+        accepted: {}
+        control-inactive: {}
+      behavior:
+        effect: Only a selected non-Free group may toggle its alignment popover, and toggling must release text
+          focus.
+      caller_obligations: {}
+    dismiss:
+      description: Dismisses alignment on an outside press.
+      input: {}
+      outcomes:
+        accepted: {}
+      behavior:
+        effect: A press outside the popover and trigger must close the popover and still reach the clicked target.
+      caller_obligations: {}
+    focus:
+      description: Transfers keyboard ownership to or from a text editor.
+      input:
+        active:
+          type: TextFocus
+          description: Whether a name, numeric, textbox, or other text editor owns typing.
+      outcomes:
+        accepted: {}
+      behavior:
+        effect: Text focus must change without changing membership or selection; the text owner retains drafts and
+          parsing.
+      caller_obligations: {}
+    escape:
+      description: Dismisses one active editing level.
+      input: {}
+      outcomes:
+        accepted: {}
+      behavior:
+        effect:
+          statement: Escape must discard and release an unsubmitted text draft first, then close alignment, then
+            leave member editing for the group, then clear group selection.
+          checks:
+            - src/grouping/tests.rs::board::escape
+      caller_obligations: {}
+    control:
+      description: Submits a grouping control against the current dock context.
+      input:
+        c:
+          type: GroupingControl
+          description: Flow, Ungroup, Absolute with a resolved slot, Earlier, Later, or Detach.
+      outcomes:
+        accepted: {}
+        dock-unavailable: {}
+        no-neighbor: {}
+      behavior:
+        effect:
+          statement: Group controls must target the selected group and member controls the edited member; Earlier
+            and Later must reject at an endpoint or for Free or Absolute, and accepted controls must dispatch the
+            corresponding operation.
+          checks:
+            - src/grouping/tests.rs::board::arrow
+            - src/grouping/tests.rs::board::free_and_ungroup
+        admission: A control outside its group or member editing mode must produce dock-unavailable before checking
+          its operation; Earlier and Later without a flowing neighbor must produce no-neighbor.
+      caller_obligations: {}
+    key:
+      description: Routes a direction key to the edited member.
+      input:
+        direction:
+          type: ArrowDirection
+          description: Left, Right, Up, or Down.
+      outcomes:
+        accepted: {}
+        text-owns-key: {}
+        no-neighbor: {}
+      behavior:
+        effect:
+          statement: Text focus must refuse the key; without an edited member or a neighbor in that direction the key
+            must produce no-neighbor so the board can handle it; otherwise the key must apply arrow.
+          checks:
+            - src/grouping/tests.rs::board::arrow
+            - src/grouping/tests.rs::board::vertical_target
+            - src/grouping/tests.rs::board::escape
+      caller_obligations: {}
+    drop:
+      description: Applies an edited-member drop.
+      input:
+        g:
+          type: GroupId
+          description: The target group identity.
+        m:
+          type: PlacementId
+          description: The target placement identity.
+        slot:
+          type: InsertionSlot
+          description: The nearest insertion slot resolved from current geometry, clamped to the order ends.
+        outside:
+          type: OutsideContainer
+          description: Whether the dropped center lies outside the group container.
+      outcomes:
+        accepted: {}
+        group-missing: {}
+        member-missing: {}
+      behavior:
+        effect:
+          statement: An outside drop must detach a non-absolute member while preserving final dropped geometry;
+            an Absolute member must remain attached outside, and an inside drop must apply reorder.
+          checks:
+            - src/grouping/tests.rs::board::drop
+        admission: An absent group must produce group-missing; an existing group that does not contain the placement
+          must produce member-missing.
+      caller_obligations: {}
+  guarantees:
+    membership:
+      statement: Every grouped placement must be live and occur once in one flat group; groups cannot contain groups,
+        lines, or arrows.
+      checks:
+        - src/grouping/tests.rs::board::creation_and_readd
+        - src/grouping/tests.rs::board::transfer_and_detach
+    absolute:
+      statement: Only a grouped placement may be Absolute.
+      checks:
+        - src/grouping/tests.rs::board::free_and_ungroup
+        - src/grouping/tests.rs::sizing::leave
+    refusal:
+      statement: A refused operation must leave board and dock unchanged.
+      checks:
+        - src/grouping/tests.rs::stored_dock_values
+    retention:
+      statement: Removing or transferring the last member must retain the group and its settings.
+      checks:
+        - src/grouping/tests.rs::board::transfer_and_detach
+        - src/grouping/tests.rs::sizing::leave
+    append:
+      statement: Picker addition must append without reordering the existing destination prefix.
+      checks:
+        - src/grouping/tests.rs::board::transfer_and_detach
+    selection:
+      statement: The dock must refer to an existing group or member, follow an edited member on transfer, and never
+        retain an open alignment popover for a Free group.
+      checks:
+        - src/grouping/tests.rs::board::transfer_and_detach
+        - src/grouping/tests.rs::board::free_and_ungroup
+        - src/grouping/tests.rs::stored_auto_variant_and_number
+    ordinal:
+      statement: Dock counts and member ordinals must derive from full membership order, including Absolute members;
+        an empty group must show zero.
+      checks:
+        - src/grouping/tests.rs::board::transfer_and_detach
+    typing:
+      statement: While a text editor owns focus, board arrow shortcuts must remain inactive.
+      checks:
+        - src/grouping/tests.rs::board::escape
+    enablement:
+      statement: A shown grouping control must be enabled exactly when control would accept its valid submission;
+        hidden controls must be disabled, and disabled controls must not change settings to enable themselves.
+      checks:
+        - src/grouping/tests.rs::enablement::enablement_scenarios
+        - src/grouping/tests.rs::stored_dock_values
+  requires:
+    spatial-layout:
+      target: '[[spatial-layout#/interface/operations/layout-group]]'
+      reason: Owns layout conversion, preserved rendered geometry, insertion slots, and directional Wrap targets.
+    wrap-arrow-target:
+      target: '[[spatial-layout#/interface/operations/layout-group/behavior/wrap-arrow-target]]'
+      reason: Supplies the neighboring placement for vertical Wrap movement.
+decisions:
+  geometry-boundary:
+    current: Callers resolve insertion slots through spatial-layout before submitting a transition; vertical Wrap
+      neighbors come from spatial-layout through the Geometry boundary during arrow.
+    affects:
+      - '[[#/interface/operations/arrow]]'
+      - '[[#/interface/operations/reorder]]'
+      - '[[#/interface/operations/absolute]]'
+    reasons:
+      - Membership order must not assume every Wrap member occupies its own row.
+    consequences:
+      - Grouping consumes resolved placement identities and insertion slots without owning row geometry.
+    reconsider_when:
+      - Grouping needs a geometric answer that the Geometry boundary cannot supply without duplicating layout rules.
+    explored_paths:
+      single-member-rows:
+        status: rejected
+        reason: Treating every Wrap member as its own row invents geometry and makes vertical movement appear checked
+          without exercising actual row targets.
+    sources: []

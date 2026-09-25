@@ -23,8 +23,8 @@ pub(super) use placement_transform::{
     selected_placement_rotation_handle_screen_pos,
 };
 pub(super) use selection::{
-    begin_marquee_selection, hit_test_canvas_item, open_context_menu_at_pointer,
-    update_marquee_selection,
+    begin_marquee_selection, grouped_item_reachable, hit_test_canvas_item, hit_test_member,
+    open_context_menu_at_pointer, update_marquee_selection,
 };
 pub(super) use textbox::{
     handle_textbox_primary_press, hit_test_textbox_resize_handle, moved_textbox_rect,
@@ -236,7 +236,12 @@ pub(super) fn handle_input(
         {
             handle_textbox_primary_press(ui, rect, state, &annotation, pointer_pos);
             return;
-        } else if let Some(hit) = hit_test_canvas_item(state, rect, pointer_pos) {
+        } else if let Some(hit) = if ui.input(|i| i.modifiers.command) {
+            // A primary-modifier press opens member editing, so it reaches overflow too.
+            hit_test_member(state, rect, pointer_pos)
+        } else {
+            hit_test_canvas_item(state, rect, pointer_pos)
+        } {
             match hit {
                 CanvasHit::Annotation(annotation_id) => {
                     let annotation = state.annotation_by_id(annotation_id).cloned();
@@ -554,6 +559,7 @@ pub(super) fn handle_input(
             },
             Some(ActiveGesture::TextboxTransform(transform_state)) => match transform_state {
                 TextboxTransformState::Moving { annotation_ids, .. } => {
+                    state.finish_group_member_drag(&annotation_ids);
                     for annotation_id in annotation_ids {
                         state.mark_annotation_dirty(annotation_id);
                     }
@@ -614,6 +620,15 @@ pub(super) fn handle_input(
             .annotation_by_id(annotation_id)
             .is_some_and(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)
     {
+        if let Some(g) = state.group_for_member(annotation_id)
+            && state.interaction.editing_group_id != Some(g)
+        {
+            state.interaction.editing_group_id = Some(g);
+            state.interaction.selected_group_ids.clear();
+            state.interaction.selected_placement_ids.clear();
+            state.interaction.selected_annotation_ids = vec![annotation_id];
+            return;
+        }
         state.begin_textbox_edit(annotation_id);
         return;
     }
@@ -677,24 +692,27 @@ fn drawing_annotation_kind(ui: &egui::Ui) -> Option<CanvasAnnotationKind> {
     }
 }
 
+/// Reaches the visible pixels of a placement. Clip hides a member's overflow.
 pub(crate) fn hit_test_placement(
     state: &CanvasState,
     rect: egui::Rect,
     pointer_pos: egui::Pos2,
 ) -> Option<i64> {
+    let world = state.screen_to_world(pointer_pos, rect);
     state
         .document
         .placements
         .iter()
         .rev()
         .find(|image| {
-            placement_contains_screen_point(
-                image,
-                pointer_pos,
-                state.pan,
-                state.zoom,
-                rect.center(),
-            )
+            grouped_item_reachable(state, image.state.id, world, true)
+                && placement_contains_screen_point(
+                    image,
+                    pointer_pos,
+                    state.pan,
+                    state.zoom,
+                    rect.center(),
+                )
         })
         .map(|image| image.state.id)
 }

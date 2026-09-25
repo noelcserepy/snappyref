@@ -44,7 +44,17 @@ pub(crate) fn paste_board_payload_at(
     payload: &ClipboardBoardSelection,
     requested_anchor_world: egui::Pos2,
 ) -> Result<PasteCommandOutcome, String> {
+    paste_payload(context, payload, requested_anchor_world, None)
+}
+fn paste_payload(
+    context: &mut ActiveBoardCommandContext<'_>,
+    payload: &ClipboardBoardSelection,
+    requested_anchor_world: egui::Pos2,
+    // Duplicate sources in payload order: selected placements, then annotations.
+    sources: Option<&[i64]>,
+) -> Result<PasteCommandOutcome, String> {
     validate_clipboard_payload(payload)?;
+    let group_context = context.canvas.group_paste_context();
     let Some(library) = context.library else {
         return Err("Storage unavailable".to_owned());
     };
@@ -124,7 +134,13 @@ pub(crate) fn paste_board_payload_at(
             members: group
                 .members
                 .iter()
-                .map(|index| pasted_placement_ids[*index])
+                .map(|member| {
+                    if member.kind == "placement" {
+                        pasted_placement_ids[member.index]
+                    } else {
+                        pasted_annotation_ids[member.index]
+                    }
+                })
                 .collect(),
             container: RectGeometry::new(
                 group.bounds().center() + delta,
@@ -134,7 +150,28 @@ pub(crate) fn paste_board_payload_at(
                 0,
             ),
             flow: group.flow,
-            spacing: group.spacing,
+            layout: {
+                let mut layout = group.layout.clone();
+                layout.members = group
+                    .members
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, member)| {
+                        group.layout.members.get(&(i as i64)).copied().map(|mode| {
+                            (
+                                if member.kind == "placement" {
+                                    pasted_placement_ids[member.index]
+                                } else {
+                                    pasted_annotation_ids[member.index]
+                                },
+                                mode,
+                            )
+                        })
+                    })
+                    .collect();
+                layout
+            },
+            gap: group.gap,
             padding: group.padding,
         });
     }
@@ -143,12 +180,35 @@ pub(crate) fn paste_board_payload_at(
         .canvas
         .select_content(&pasted_placement_ids, &pasted_annotation_ids);
     context.canvas.select_pasted_groups(pasted_group_ids);
-    move_pasted_content_to_front(
-        context.canvas,
-        &pasted_placement_ids,
-        &pasted_annotation_ids,
-        payload,
-    );
+    let created = pasted_stack_order(&pasted_placement_ids, &pasted_annotation_ids, payload);
+    // Copied Groups already own their pasted members.
+    if payload.groups.is_empty() {
+        let fresh = pasted_placement_ids
+            .iter()
+            .chain(&pasted_annotation_ids)
+            .copied()
+            .collect::<Vec<_>>();
+        let members = created
+            .iter()
+            .map(|item| {
+                let id = item.item_id();
+                let source = sources.map(|sources| {
+                    sources[fresh
+                        .iter()
+                        .position(|&f| f == id)
+                        .expect("created is fresh")]
+                });
+                (id, source)
+            })
+            .collect::<Vec<_>>();
+        context
+            .canvas
+            .paste_group_members(group_context, &members)?;
+    }
+    let mut next_stack_order = context.canvas.canvas_stack_order();
+    next_stack_order.retain(|item| !created.contains(item));
+    next_stack_order.extend(created.iter().copied());
+    context.canvas.set_canvas_stack_order(next_stack_order);
     let count = pasted_placement_ids.len() + pasted_annotation_ids.len() + payload.groups.len();
     let noun = if count == 1 { "item" } else { "items" };
     Ok(PasteCommandOutcome {
@@ -170,7 +230,13 @@ pub(crate) fn duplicate_selection(
         context.placement_gap.max(12.0),
         context.placement_gap.max(12.0),
     );
-    let mut outcome = paste_board_payload_at(context, &payload, bounds.center() + offset)?;
+    let sources = context
+        .canvas
+        .selected_placement_ids()
+        .into_iter()
+        .chain(context.canvas.selected_annotation_ids())
+        .collect::<Vec<_>>();
+    let mut outcome = paste_payload(context, &payload, bounds.center() + offset, Some(&sources))?;
     outcome.status = outcome.status.replacen("Pasted", "Duplicated", 1);
     Ok(Some(outcome))
 }
@@ -189,6 +255,7 @@ pub(crate) fn delete_selected_from_board(
         };
         status = Some(format!("Deleted {selected_groups} {noun}"));
     }
+    let placement_ids = context.canvas.selected_placement_ids();
     let annotation_ids = context.canvas.delete_selected_annotations();
     if !annotation_ids.is_empty() {
         let noun = if annotation_ids.len() == 1 {
@@ -199,7 +266,7 @@ pub(crate) fn delete_selected_from_board(
         status = Some(format!("Deleted {} {noun}", annotation_ids.len()));
     }
 
-    let archived_ids = context.canvas.delete_selected_placements();
+    let archived_ids = context.canvas.delete_placements(&placement_ids);
     if archived_ids.is_empty() {
         return Ok(status);
     }
@@ -213,26 +280,25 @@ pub(crate) fn delete_selected_from_board(
     Ok(status)
 }
 
-fn move_pasted_content_to_front(
-    canvas: &mut CanvasState,
+fn pasted_stack_order(
     pasted_placement_ids: &[i64],
     pasted_annotation_ids: &[i64],
     payload: &ClipboardBoardSelection,
-) {
+) -> Vec<CanvasStackItem> {
     let mut pasted_stack_order = Vec::new();
     for entry in &payload.stack_order {
-        match entry.kind.as_str() {
-            "placement" => {
-                if let Some(placement_id) = pasted_placement_ids.get(entry.index) {
-                    pasted_stack_order.push(CanvasStackItem::Placement(*placement_id));
-                }
-            }
-            "annotation" => {
-                if let Some(annotation_id) = pasted_annotation_ids.get(entry.index) {
-                    pasted_stack_order.push(CanvasStackItem::Annotation(*annotation_id));
-                }
-            }
-            _ => {}
+        let item = match entry.kind.as_str() {
+            "placement" => pasted_placement_ids
+                .get(entry.index)
+                .map(|&id| CanvasStackItem::Placement(id)),
+            "annotation" => pasted_annotation_ids
+                .get(entry.index)
+                .map(|&id| CanvasStackItem::Annotation(id)),
+            _ => None,
+        };
+        // Repeated entries would leave another pasted item out of the order and its history.
+        if let Some(item) = item.filter(|item| !pasted_stack_order.contains(item)) {
+            pasted_stack_order.push(item);
         }
     }
     if pasted_stack_order.len() != pasted_placement_ids.len() + pasted_annotation_ids.len() {
@@ -248,11 +314,7 @@ fn move_pasted_content_to_front(
             )
             .collect();
     }
-
-    let mut next_stack_order = canvas.canvas_stack_order();
-    next_stack_order.retain(|item| !pasted_stack_order.contains(item));
-    next_stack_order.extend(pasted_stack_order);
-    canvas.set_canvas_stack_order(next_stack_order);
+    pasted_stack_order
 }
 
 fn placement_anchor_for_payload(
@@ -374,7 +436,13 @@ mod group_tests {
         }
         let mut malformed: ClipboardBoardSelection =
             serde_json::from_str(&payload.payload_json).unwrap();
-        malformed.groups[0].members = vec![0, 0];
+        malformed.groups[0].members = vec![
+            crate::sources::clipboard::ClipboardStackEntry {
+                kind: "placement".into(),
+                index: 0
+            };
+            2
+        ];
         let before = context.canvas.all_placement_ids();
         assert!(paste_board_payload_at(&mut context, &malformed, egui::Pos2::ZERO).is_err());
         assert_eq!(context.canvas.all_placement_ids(), before);
@@ -430,7 +498,11 @@ mod group_tests {
                     0,
                 ),
                 flow: crate::data::GroupFlow::Wrap,
-                spacing: 7.,
+                layout: crate::data::GroupLayoutSettings {
+                    row_gap: 5.0,
+                    ..Default::default()
+                },
+                gap: 7.,
                 padding: 10.,
             }]);
             source
@@ -461,7 +533,7 @@ mod group_tests {
             source.apply_placement_history_state(Some(scaled));
             let mut group = source.groups()[0].clone();
             group.container = layout.container;
-            group.spacing = layout.spacing;
+            group.gap = layout.gap;
             group.padding = layout.padding;
             source.replace_groups(vec![group]);
             source.select_group(group_id);
@@ -502,7 +574,7 @@ mod group_tests {
                 expected.center - source.groups()[0].container.center
             );
             assert_eq!(pasted_group.padding, source.groups()[0].padding);
-            assert_eq!(pasted_group.spacing, source.groups()[0].spacing);
+            assert_eq!(pasted_group.gap, source.groups()[0].gap);
             let mut source_context = ActiveBoardCommandContext {
                 canvas: &mut source,
                 library: Some(&library),
@@ -527,6 +599,115 @@ mod group_tests {
                 duplicated.state.geometry.center - duplicated_group.container.center,
                 expected.center - source_context.canvas.groups()[0].container.center
             );
+        }
+    }
+
+    #[test]
+    fn exhausted_groups_and_zero_fill_geometry_round_trip_clipboard() {
+        let root = crate::test_support::TempRoot::new("group-zero-clipboard");
+        let library = Library::initialize(root.to_path_buf()).unwrap();
+        let path = library
+            .store_rgba_image("wide", &vec![255; 20 * 10 * 4], 20, 10)
+            .unwrap();
+        let asset = library
+            .register_original(&path, "image/png", 20, 10, 800, None)
+            .unwrap();
+        for padding in [50., 70.] {
+            for zero in [false, true] {
+                let mut source = CanvasState::default();
+                let mut member = library
+                    .new_placement_from_asset(asset.id, egui::Pos2::ZERO, 1., 0., 0)
+                    .unwrap();
+                if zero {
+                    member.state.geometry.size = egui::Vec2::ZERO;
+                }
+                let original_size = member.state.geometry.size;
+                let id = member.id();
+                source.add_unresolved_placement(member);
+                let group_id = library.allocate_document_id();
+                source.restore_groups(vec![crate::data::Group {
+                    id: group_id,
+                    name: "Exhausted".into(),
+                    members: vec![id],
+                    container: RectGeometry::new(
+                        egui::Pos2::ZERO,
+                        egui::vec2(100., 100.),
+                        1.,
+                        0.,
+                        0,
+                    ),
+                    flow: crate::data::GroupFlow::Row,
+                    gap: 8.,
+                    padding,
+                    layout: crate::data::GroupLayoutSettings {
+                        fixed: [true, true],
+                        members: if zero {
+                            std::collections::BTreeMap::from([(
+                                id,
+                                crate::data::MemberLayout {
+                                    fill: [true, false],
+                                    absolute: false,
+                                },
+                            )])
+                        } else {
+                            Default::default()
+                        },
+                        ..Default::default()
+                    },
+                }]);
+                source.select_group(group_id);
+                for loose in [false, true] {
+                    if loose {
+                        source.ungroup_selected();
+                        source.select_placements(&[id]);
+                    }
+                    let payload = copy_selected_board_payload(&source).unwrap();
+                    validate_clipboard_payload(&payload).unwrap();
+                    let mut invalid = payload.clone();
+                    invalid.placements[0].width = -1.;
+                    assert!(validate_clipboard_payload(&invalid).is_err());
+                    let serialized = serde_json::to_string(&payload).unwrap();
+                    let mut target = CanvasState::default();
+                    let mut context = ActiveBoardCommandContext {
+                        canvas: &mut target,
+                        library: Some(&library),
+                        import_worker_available: true,
+                        placement_gap: 12.,
+                        viewport_world: egui::Rect::from_center_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(2000., 2000.),
+                        ),
+                    };
+                    paste_json_at(&mut context, &serialized, egui::pos2(200., 200.))
+                        .unwrap()
+                        .unwrap();
+                    duplicate_selection(&mut context).unwrap().unwrap();
+                    let pasted = context.canvas.committed_placements();
+                    assert_eq!(pasted.len(), 2);
+                    for placement in pasted {
+                        assert_ne!(placement.id(), id);
+                        assert_eq!(placement.state.geometry.size, original_size);
+                        assert_eq!(placement.asset_id(), Some(asset.id));
+                    }
+                    assert_eq!(context.canvas.groups().len(), if loose { 0 } else { 2 });
+                    for group in context.canvas.groups() {
+                        assert_eq!(group.padding, padding);
+                        assert_eq!(group.container.size, egui::vec2(100., 100.));
+                        assert_eq!(group.members.len(), 1);
+                        assert_ne!(group.members[0], id);
+                        assert_eq!(
+                            group
+                                .layout
+                                .members
+                                .get(&group.members[0])
+                                .copied()
+                                .unwrap_or_default()
+                                .fill[0],
+                            zero
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -604,6 +785,66 @@ mod group_tests {
             vec![ids[2], ids[3], ids[0]]
         );
         assert!(!canvas.add_members_to_group(b, &[ids[0]]).unwrap());
+    }
+
+    #[test]
+    fn duplicating_several_members_copies_each_source() {
+        let root = crate::test_support::TempRoot::new("group-duplicate-sources");
+        let library = Library::initialize(root.to_path_buf()).unwrap();
+        let path = library
+            .store_rgba_image("member", &[255; 16], 2, 2)
+            .unwrap();
+        let asset = library
+            .register_original(&path, "image/png", 2, 2, 16, None)
+            .unwrap();
+        let mut canvas = CanvasState::default();
+        let mut ids = Vec::new();
+        for i in 0..3 {
+            let p = library
+                .new_placement_from_asset(asset.id, egui::pos2(i as f32 * 100., 0.), 1., 0., i)
+                .unwrap();
+            ids.push(p.id());
+            canvas.add_unresolved_placement(p);
+        }
+        let g = library.allocate_document_id();
+        canvas.restore_groups(vec![crate::data::Group {
+            id: g,
+            name: "Row".into(),
+            members: ids.clone(),
+            container: RectGeometry::new(egui::Pos2::ZERO, egui::vec2(400., 100.), 1., 0., 0),
+            flow: crate::data::GroupFlow::Row,
+            gap: 8.,
+            padding: 8.,
+            layout: crate::data::GroupLayoutSettings {
+                members: std::collections::BTreeMap::from([(
+                    ids[0],
+                    crate::data::MemberLayout {
+                        fill: [false, false],
+                        absolute: true,
+                    },
+                )]),
+                ..Default::default()
+            },
+        }]);
+        canvas.select_content(&[ids[0], ids[2]], &[]);
+        let mut context = ActiveBoardCommandContext {
+            canvas: &mut canvas,
+            library: Some(&library),
+            import_worker_available: true,
+            placement_gap: 12.,
+            viewport_world: egui::Rect::from_center_size(
+                egui::Pos2::ZERO,
+                egui::vec2(2000., 2000.),
+            ),
+        };
+        duplicate_selection(&mut context).unwrap().unwrap();
+        let group = canvas.groups().iter().find(|group| group.id == g).unwrap();
+        let [a, a2, b, c, c2] = group.members[..] else {
+            panic!("{:?}", group.members);
+        };
+        assert_eq!([a, b, c], [ids[0], ids[1], ids[2]]);
+        assert!(group.layout.members[&a2].absolute);
+        assert!(!group.layout.members.contains_key(&c2));
     }
 }
 

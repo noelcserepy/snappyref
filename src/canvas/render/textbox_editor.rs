@@ -5,8 +5,7 @@ use eframe::egui;
 
 use super::annotations::annotation_color;
 use crate::canvas::interaction::{
-    annotation_screen_rect, hit_test_textbox_resize_handle, normalized_textbox_rect,
-    textbox_screen_rect,
+    annotation_screen_rect, hit_test_textbox_resize_handle, textbox_screen_rect, textbox_world_rect,
 };
 use crate::canvas::{
     CanvasState, MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP,
@@ -199,11 +198,15 @@ fn expand_textbox_to_height(state: &mut CanvasState, index: usize, required_heig
         return false;
     }
 
-    let world_rect = normalized_textbox_rect(
-        egui::pos2(annotation.start().x, annotation.start().y),
-        egui::pos2(annotation.end().x, annotation.end().y),
-    );
-    if required_height <= world_rect.height() + 0.5 {
+    // Fill height belongs to the Group, so growing it would fight every reflow.
+    let group_owns_height = state.groups().iter().any(|g| {
+        g.layout
+            .members
+            .get(&annotation.id)
+            .is_some_and(|m| m.fill[1])
+    });
+    let world_rect = textbox_world_rect(annotation);
+    if group_owns_height || required_height <= world_rect.height() + 0.5 {
         return false;
     }
 
@@ -261,6 +264,9 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
         state.zoom,
         text.is_empty(),
     );
+    let clip_rect = state
+        .member_clip_screen_rect(rect, annotation_id)
+        .map_or(content_rect, |clip| clip.intersect(content_rect));
     let toolbar_interacting = toolbar_rect
         .map(|toolbar_rect| show_textbox_editor_toolbar(ui, toolbar_rect, state, toolbar_entrance))
         .unwrap_or(false);
@@ -269,7 +275,7 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
         .order(egui::Order::Foreground)
         .fixed_pos(text_rect.min)
         .show(ui.ctx(), |ui| {
-            ui.set_clip_rect(content_rect);
+            ui.set_clip_rect(clip_rect);
             let zoom = state.zoom;
             let text_size = state.document.annotations[index].text_size;
             let text_color = state.document.annotations[index].color;
@@ -312,7 +318,8 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
             if output.response.changed() {
                 state.mark_annotation_dirty(annotation_id);
             }
-            if (ui.input(|i| i.key_pressed(egui::Key::Escape)) && output.response.has_focus())
+            if (output.response.has_focus()
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)))
                 || (output.response.lost_focus() && !toolbar_interacting)
             {
                 state.finish_textbox_edit();

@@ -24,8 +24,9 @@ impl RectGeometry {
         Self::new(bounds.center(), bounds.size(), 1.0, 0.0, z_index)
     }
 
+    // Fill may collapse an axis to zero; preserve that result through paint and storage.
     pub fn scaled_size(self) -> Vec2 {
-        vec2(self.size.x.max(1.0), self.size.y.max(1.0)) * self.scale.max(0.01)
+        vec2(self.size.x.max(0.0), self.size.y.max(0.0)) * self.scale.max(0.01)
     }
 
     pub fn size_preserving_area_for_aspect(size: Vec2, width: u32, height: u32) -> Vec2 {

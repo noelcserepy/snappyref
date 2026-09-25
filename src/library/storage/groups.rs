@@ -20,6 +20,8 @@ pub(crate) struct StoredGroup {
     flow: GroupFlow,
     spacing: f32,
     padding: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    layout: Option<crate::data::GroupLayoutSettings>,
 }
 
 impl From<&Group> for StoredGroup {
@@ -34,8 +36,9 @@ impl From<&Group> for StoredGroup {
             rotation: group.container.rotation,
             z_index: group.container.z_index,
             flow: group.flow,
-            spacing: group.spacing,
+            spacing: group.gap,
             padding: group.padding,
+            layout: Some(group.layout.clone()),
         }
     }
 }
@@ -54,8 +57,14 @@ impl From<StoredGroup> for Group {
                 group.z_index,
             ),
             flow: group.flow,
-            spacing: group.spacing,
+            gap: group.spacing,
             padding: group.padding,
+            layout: group
+                .layout
+                .unwrap_or_else(|| crate::data::GroupLayoutSettings {
+                    row_gap: group.spacing,
+                    ..Default::default()
+                }),
         }
     }
 }
@@ -112,6 +121,10 @@ pub(super) fn prune_archived_group_members(
         for group in &mut groups {
             let old_len = group.members.len();
             group.members.retain(|id| live_ids.contains(id));
+            group
+                .layout
+                .members
+                .retain(|id, _| group.members.contains(id));
             changed |= old_len != group.members.len();
         }
         if changed {
@@ -153,7 +166,11 @@ mod tests {
                 0,
             ),
             flow: GroupFlow::Wrap,
-            spacing: 8.0,
+            gap: 8.0,
+            layout: crate::data::GroupLayoutSettings {
+                row_gap: 8.0,
+                ..Default::default()
+            },
             padding: 12.0,
         };
         let mut history = DocumentHistory::default();
@@ -261,7 +278,11 @@ mod archive_tests {
                     0,
                 ),
                 flow: GroupFlow::Row,
-                spacing: 8.0,
+                gap: 8.0,
+                layout: crate::data::GroupLayoutSettings {
+                    row_gap: 8.0,
+                    ..Default::default()
+                },
                 padding: 12.0,
             }];
             snapshot.stack_order = snapshot
@@ -298,7 +319,7 @@ mod archive_tests {
                 "board {board} must not retain archived group members"
             );
             assert_eq!(document.groups[0].flow, GroupFlow::Row);
-            assert_eq!(document.groups[0].spacing, 8.0);
+            assert_eq!(document.groups[0].gap, 8.0);
             assert_eq!(
                 document.stack_order,
                 vec![crate::data::CanvasStackItem::Placement(

@@ -811,7 +811,7 @@ impl SnappyRefApp {
     }
 
     fn handle_selection_shortcuts(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
-        if self.search.is_open() {
+        if self.search.is_open() || self.canvas.group_picker_open() {
             return;
         }
 
@@ -831,7 +831,7 @@ impl SnappyRefApp {
             return;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.canvas.leave_group_member_editing();
+            self.canvas.escape_group_dock(ctx);
         }
 
         let select_all_requested =

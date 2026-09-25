@@ -1,4 +1,4 @@
-use crate::data::{BoardDocumentSnapshot, BoardSummary, Placement};
+use crate::data::{BoardDocumentSnapshot, BoardSummary, CanvasAnnotation, Placement};
 use std::collections::{HashMap, HashSet};
 
 /// Accepted Board metadata and lazily loaded documents. Durable refreshes only
@@ -70,6 +70,16 @@ impl AcceptedBoards {
             .placements
             .iter()
             .find(|placement| placement.state.id == placement_id)
+            .cloned()
+    }
+
+    pub(crate) fn annotation(&self, board_id: i64, annotation_id: i64) -> Option<CanvasAnnotation> {
+        self.documents
+            .borrow()
+            .get(&board_id)?
+            .annotations
+            .iter()
+            .find(|annotation| annotation.id == annotation_id)
             .cloned()
     }
 
