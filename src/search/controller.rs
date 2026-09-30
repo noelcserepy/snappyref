@@ -19,7 +19,7 @@ use crate::search::semantic::SemanticSearchInstallProgress;
 use crate::search::semantic::{
     DEFAULT_SEMANTIC_SEARCH_MODEL, IndexResult as SearchIndexResult, LocalModelStoreStatus,
     SearchQueryResult, SemanticSearchConfig, SemanticSearchInstallController,
-    SemanticSearchInstallSnapshot, SemanticSearchService, default_local_model_store_status,
+    SemanticSearchInstallSnapshot, SemanticSearchService,
 };
 #[cfg(not(test))]
 use crate::search::semantic::{
@@ -226,13 +226,14 @@ impl SearchController {
             return;
         }
 
+        // Tests never read this machine's model store; they opt in with a set status.
         #[cfg(test)]
         let model_store_status = self
             .local_model_store_status
             .clone()
-            .unwrap_or_else(default_local_model_store_status);
+            .unwrap_or(LocalModelStoreStatus::Missing);
         #[cfg(not(test))]
-        let model_store_status = default_local_model_store_status();
+        let model_store_status = crate::search::semantic::default_local_model_store_status();
         self.sync_model_store_status(model_store_status, status);
         if !self
             .local_model_store_status
