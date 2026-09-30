@@ -189,6 +189,7 @@ fn inspect_semantic_search_install_accepts_prompt() {
             "prompt_seen": harness.state().settings.semantic_search_first_launch_prompt_seen,
         }),
     );
+    harness.state_mut().flush_persistence();
     scenario.assertion("install action started", starts.get() == 1);
     scenario.assertion(
         "semantic search status is downloading",
