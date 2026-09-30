@@ -176,7 +176,7 @@ fn verify_native_drop(check_desktop_cursor: bool) {
     let dropped = POINTL { x: 193, y: 257 };
     let context = eframe::egui::Context::default();
     context.set_pixels_per_point(1.5);
-    let _ = context.run_ui(Default::default(), |_| {});
+    let _ = crate::ui::test_frame::run_ui(&context, Default::default(), |_| {});
     assert_eq!(context.pixels_per_point(), 1.5);
     let _ = super::EGUI_CONTEXT.set(context.clone());
     let _ = super::WINDOW_HWND.set(hwnd as isize);

@@ -550,15 +550,7 @@ fn raw_dropped_file_enqueues_external_import() {
     );
 
     harness.input_mut().hovered_files.clear();
-    harness.input_mut().dropped_files = vec![egui::DroppedFile {
-        path: Some(source_path.clone()),
-        name: source_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("drop-source.png")
-            .to_owned(),
-        ..Default::default()
-    }];
+    harness.input_mut().dropped_files = vec![dropped_file(source_path.clone())];
     harness.step();
 
     assert!(

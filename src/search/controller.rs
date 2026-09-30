@@ -1711,7 +1711,8 @@ mod tests {
             auto_fit_applied: false,
         });
 
-        let _ = ctx.run_ui(
+        let _ = crate::ui::test_frame::run_ui(
+            &ctx,
             egui::RawInput {
                 events: vec![egui::Event::PointerMoved(egui::pos2(420.0, 300.0))],
                 ..Default::default()
@@ -1779,7 +1780,8 @@ mod tests {
             .expect("expected active provisional placement")
             .center();
 
-        let _ = ctx.run_ui(
+        let _ = crate::ui::test_frame::run_ui(
+            &ctx,
             egui::RawInput {
                 events: vec![egui::Event::PointerMoved(egui::pos2(900.0, 500.0))],
                 ..Default::default()

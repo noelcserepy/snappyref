@@ -398,22 +398,25 @@ fn command_a_selects_all_active_board_images_and_annotations() {
         ));
     app.canvas.select_content(&[], &[]);
 
-    let _ = ctx.run_ui(
+    let _ = crate::ui::test_frame::run_ui(
+        &ctx,
         egui::RawInput {
-            modifiers: egui::Modifiers {
-                command: true,
-                ..Default::default()
-            },
-            events: vec![egui::Event::Key {
-                key: egui::Key::A,
-                physical_key: Some(egui::Key::A),
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers {
+            events: vec![
+                egui::Event::ModifiersChanged(egui::Modifiers {
                     command: true,
                     ..Default::default()
+                }),
+                egui::Event::Key {
+                    key: egui::Key::A,
+                    physical_key: Some(egui::Key::A),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
                 },
-            }],
+            ],
             ..Default::default()
         },
         |ui| {
@@ -1030,22 +1033,25 @@ fn command_n_creates_board_without_opening_sidebar() {
     let mut app = test_app(Some(library.clone()));
     app.sidebar_open = false;
 
-    let _ = ctx.run_ui(
+    let _ = crate::ui::test_frame::run_ui(
+        &ctx,
         egui::RawInput {
-            modifiers: egui::Modifiers {
-                command: true,
-                ..Default::default()
-            },
-            events: vec![egui::Event::Key {
-                key: egui::Key::N,
-                physical_key: Some(egui::Key::N),
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers {
+            events: vec![
+                egui::Event::ModifiersChanged(egui::Modifiers {
                     command: true,
                     ..Default::default()
+                }),
+                egui::Event::Key {
+                    key: egui::Key::N,
+                    physical_key: Some(egui::Key::N),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
                 },
-            }],
+            ],
             ..Default::default()
         },
         |ui| app.handle_board_shortcuts(ui.ctx()),
@@ -1071,22 +1077,25 @@ fn command_number_switches_visible_board() {
     app.refresh_board_summaries();
     library.set_active_board(second.id).unwrap();
 
-    let _ = ctx.run_ui(
+    let _ = crate::ui::test_frame::run_ui(
+        &ctx,
         egui::RawInput {
-            modifiers: egui::Modifiers {
-                command: true,
-                ..Default::default()
-            },
-            events: vec![egui::Event::Key {
-                key: egui::Key::Num3,
-                physical_key: Some(egui::Key::Num3),
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers {
+            events: vec![
+                egui::Event::ModifiersChanged(egui::Modifiers {
                     command: true,
                     ..Default::default()
+                }),
+                egui::Event::Key {
+                    key: egui::Key::Num3,
+                    physical_key: Some(egui::Key::Num3),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
                 },
-            }],
+            ],
             ..Default::default()
         },
         |ui| app.handle_board_shortcuts(ui.ctx()),
@@ -1116,22 +1125,25 @@ fn command_zero_switches_tenth_visible_board() {
     let mut app = test_app(Some(library.clone()));
 
     for (key, index) in [(egui::Key::Num9, 8), (egui::Key::Num0, 9)] {
-        let _ = ctx.run_ui(
+        let _ = crate::ui::test_frame::run_ui(
+            &ctx,
             egui::RawInput {
-                modifiers: egui::Modifiers {
-                    command: true,
-                    ..Default::default()
-                },
-                events: vec![egui::Event::Key {
-                    key,
-                    physical_key: Some(key),
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers {
+                events: vec![
+                    egui::Event::ModifiersChanged(egui::Modifiers {
                         command: true,
                         ..Default::default()
+                    }),
+                    egui::Event::Key {
+                        key,
+                        physical_key: Some(key),
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers {
+                            command: true,
+                            ..Default::default()
+                        },
                     },
-                }],
+                ],
                 ..Default::default()
             },
             |ui| app.handle_board_shortcuts(ui.ctx()),
@@ -1154,22 +1166,25 @@ fn board_shortcuts_are_suppressed_while_search_is_open() {
     let mut app = test_app(Some(library.clone()));
     app.search.overlay.open = true;
 
-    let _ = ctx.run_ui(
+    let _ = crate::ui::test_frame::run_ui(
+        &ctx,
         egui::RawInput {
-            modifiers: egui::Modifiers {
-                command: true,
-                ..Default::default()
-            },
-            events: vec![egui::Event::Key {
-                key: egui::Key::Num2,
-                physical_key: Some(egui::Key::Num2),
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers {
+            events: vec![
+                egui::Event::ModifiersChanged(egui::Modifiers {
                     command: true,
                     ..Default::default()
+                }),
+                egui::Event::Key {
+                    key: egui::Key::Num2,
+                    physical_key: Some(egui::Key::Num2),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
                 },
-            }],
+            ],
             ..Default::default()
         },
         |ui| app.handle_board_shortcuts(ui.ctx()),

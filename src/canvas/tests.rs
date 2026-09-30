@@ -90,7 +90,8 @@ fn viewport_only_input_zooms_without_preview_state() {
         eframe::egui::vec2(800.0, 600.0),
     );
 
-    let _ = ctx.run_ui(
+    let _ = crate::ui::test_frame::run_ui(
+        &ctx,
         eframe::egui::RawInput {
             events: vec![
                 eframe::egui::Event::PointerMoved(screen_rect.center()),
@@ -1139,7 +1140,8 @@ fn trackpad_translation_and_pinch_preserve_pointer_world_anchor() {
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
     let pointer = egui::pos2(300.0, 220.0);
     let pan_before = state.viewport_state();
-    let _ = ctx.run_ui(
+    let _ = crate::ui::test_frame::run_ui(
+        &ctx,
         egui::RawInput {
             events: vec![
                 egui::Event::PointerMoved(pointer),
@@ -1170,7 +1172,8 @@ fn trackpad_translation_and_pinch_preserve_pointer_world_anchor() {
     let ctx = egui::Context::default();
     let world_before = state.screen_to_world(pointer, rect);
     let zoom_before = state.zoom;
-    let _ = ctx.run_ui(
+    let _ = crate::ui::test_frame::run_ui(
+        &ctx,
         egui::RawInput {
             events: vec![egui::Event::PointerMoved(pointer), egui::Event::Zoom(1.25)],
             ..Default::default()

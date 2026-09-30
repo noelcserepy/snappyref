@@ -15,8 +15,8 @@ turbojpeg-native = ["dep:turbojpeg"]
 arboard = "3.6.1"
 bytemuck = { version = "1.24.0", features = ["derive"] }
 ed25519-dalek = { version = "2.1.1", default-features = false }
-eframe = "0.34.1"
-egui_extras = { version = "0.34.1", features = ["svg"] }
+eframe = "0.36.2"
+egui_extras = { version = "0.36.2", features = ["svg"] }
 exr = "1.74.0"
 hex = "0.4.3"
 image = { version = "0.25.10", default-features = false, features = ["default-formats"] }
@@ -37,7 +37,7 @@ url = "2.5.7"
 usvg = { version = "0.45.1", default-features = false }
 
 [dev-dependencies]
-egui_kittest = { version = "0.34.1", features = ["eframe", "wgpu"] }
+egui_kittest = { version = "0.36.2", features = ["eframe", "wgpu"] }
 pollster = "0.4.0"
 
 [profile.release-fast]

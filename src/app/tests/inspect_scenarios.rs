@@ -1968,15 +1968,7 @@ fn inspect_pending_drop_batch_undo_writes_artifact() {
     harness.input_mut().hovered_files.clear();
     harness.input_mut().dropped_files = sources
         .iter()
-        .map(|(path, _, _, _)| egui::DroppedFile {
-            path: Some(path.clone()),
-            name: path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("dropped-image.png")
-                .to_owned(),
-            ..Default::default()
-        })
+        .map(|(path, _, _, _)| dropped_file(path.clone()))
         .collect();
     harness.step();
     let placement_ids = harness.state().canvas.selected_placement_ids();

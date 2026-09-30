@@ -83,7 +83,7 @@ fn drag_with_modifiers(
     modifiers: egui::Modifiers,
     button: egui::PointerButton,
 ) {
-    harness.input_mut().modifiers = modifiers;
+    harness.event(egui::Event::ModifiersChanged(modifiers));
     harness.event(egui::Event::PointerMoved(from));
     harness.event(egui::Event::PointerButton {
         pos: from,
@@ -107,7 +107,7 @@ fn drag_with_modifiers(
         modifiers,
     });
     harness.step();
-    harness.input_mut().modifiers = egui::Modifiers::NONE;
+    harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
     harness.step();
 }
 
@@ -1150,18 +1150,9 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
     scenario.assertion("slow URL accepts without viewport movement; pending placement moves and pans; completion preserves identity, edited center and navigated viewport", true);
     scenario.capture_screen("screen-001-url-loaded", &mut harness);
     harness.input_mut().dropped_files = vec![
-        egui::DroppedFile {
-            path: Some(source),
-            ..Default::default()
-        },
-        egui::DroppedFile {
-            path: Some(corrupt),
-            ..Default::default()
-        },
-        egui::DroppedFile {
-            name: format!("http://{address}/fail.png"),
-            ..Default::default()
-        },
+        dropped_file(source),
+        dropped_file(corrupt),
+        dropped_file(format!("http://{address}/fail.png")),
     ];
     harness.step();
     let ids = harness.state().canvas.selected_placement_ids();
@@ -1466,7 +1457,7 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
         modifiers: egui::Modifiers::NONE,
     });
     harness.step();
-    harness.input_mut().modifiers = egui::Modifiers::ALT;
+    harness.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
     let target = bounds.center() + egui::vec2(80.0, -130.0);
     harness.event(egui::Event::PointerMoved(target));
     harness.step();
@@ -1477,7 +1468,7 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
         modifiers: egui::Modifiers::ALT,
     });
     harness.step();
-    harness.input_mut().modifiers = egui::Modifiers::NONE;
+    harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
     harness.key_up(egui::Key::R);
     harness.step();
     let precise = snapshot(&harness)[0].rotation / 15.0_f32.to_radians();

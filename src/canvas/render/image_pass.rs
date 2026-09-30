@@ -728,16 +728,16 @@ impl ImagePassResources {
                 entry_point: Some("vs_main"),
                 compilation_options: eframe::wgpu::PipelineCompilationOptions::default(),
                 buffers: &[
-                    eframe::wgpu::VertexBufferLayout {
+                    Some(eframe::wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<ImagePassVertex>() as u64,
                         step_mode: eframe::wgpu::VertexStepMode::Vertex,
                         attributes: &vertex_attributes,
-                    },
-                    eframe::wgpu::VertexBufferLayout {
+                    }),
+                    Some(eframe::wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<ImagePassInstance>() as u64,
                         step_mode: eframe::wgpu::VertexStepMode::Instance,
                         attributes: &instance_attributes,
-                    },
+                    }),
                 ],
             },
             primitive: eframe::wgpu::PrimitiveState {
