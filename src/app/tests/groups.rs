@@ -1259,8 +1259,14 @@ fn inspect_group_dock_writes_artifact() {
         );
     }
     scenario.capture_screen("numeric-draft-validation", &mut harness);
-    // The handle is the icon just left of the field.
+    // The handle is the icon just left of the field. Its press commits the
+    // open draft, and the scrub starts from that draft.
     let padding = harness.state().canvas.groups()[0].padding;
+    harness.get_by_label("Padding").click();
+    harness.step();
+    shortcut(&mut harness, CMD, egui::Key::A);
+    harness.event(egui::Event::Text("100".into()));
+    harness.step();
     let handle = harness.get_by_label("Padding").rect().left_center() - egui::vec2(13.0, 0.0);
     harness.event(egui::Event::PointerMoved(handle));
     harness.step();
@@ -1291,11 +1297,12 @@ fn inspect_group_dock_writes_artifact() {
     let group = harness.state().canvas.groups()[0].id;
     harness.state_mut().canvas.select_group(group);
     scenario.assertion(
-        "scrubbing padding is one undoable edit",
-        scrubbed == (padding + 30.0).round() && undone == padding,
+        "scrubbing from a committed draft is one undoable edit",
+        scrubbed == 130.0 && undone == padding,
     );
-    let width = harness.state().canvas.groups()[0].container.scaled_size().x;
-    harness.get_by_label("W size").click();
+    // H hugs in the fixture, so submitting its unchanged size would freeze it.
+    let height = harness.state().canvas.groups()[0].container.scaled_size().y;
+    harness.get_by_label("H size").click();
     harness.step();
     harness.get_by_label("Group name").click();
     for _ in 0..4 {
@@ -1303,8 +1310,8 @@ fn inspect_group_dock_writes_artifact() {
     }
     scenario.assertion(
         "unchanged size blur keeps its axis mode",
-        harness.state().canvas.groups()[0].layout.fixed[0]
-            && harness.state().canvas.groups()[0].container.scaled_size().x == width,
+        !harness.state().canvas.groups()[0].layout.fixed[1]
+            && harness.state().canvas.groups()[0].container.scaled_size().y == height,
     );
     for (field, draft, clicked) in [
         ("Group name", "Renamed", "Row"),

@@ -994,6 +994,8 @@ fn tip(response: Response, text: &str) -> Response {
 }
 /// Dragging a field's icon or letter scrubs its value one unit per pixel,
 /// never below `min`. Returns the scrubbed value while it differs from `value`.
+/// Each frame adds only movement not yet applied to the current value, so a
+/// draft that the same press commits becomes the base.
 fn scrub(
     ui: &mut egui::Ui,
     input: &mut DockInput,
@@ -1022,20 +1024,23 @@ fn scrub(
         theme::TEXT_MUTED
     };
     paint(ui.painter(), rect, color);
-    let start = response.id.with("start");
+    let applied = response.id.with("applied");
     if response.drag_started() {
-        ui.ctx().data_mut(|d| d.insert_temp(start, value));
+        ui.ctx().data_mut(|d| d.insert_temp(applied, 0.0_f32));
     }
     input.scrubbing |= response.dragged();
     let scrubbed = response.dragged().then(|| {
-        let from = ui.ctx().data(|d| d.get_temp(start)).unwrap_or(value);
         let dx = ui.input(|i| {
             i.pointer
                 .interact_pos()
                 .zip(i.pointer.press_origin())
                 .map_or(0.0, |(p, o)| p.x - o.x)
         });
-        (from + dx).round().max(min)
+        let taken = ui.ctx().data(|d| d.get_temp(applied)).unwrap_or(0.0_f32);
+        let n = (value + dx - taken).round().max(min);
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(applied, taken + n - value));
+        n
     });
     if enabled {
         tip(
