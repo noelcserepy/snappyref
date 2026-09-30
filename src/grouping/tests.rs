@@ -136,13 +136,7 @@ mod board {
         let mut s = init();
         s.create(0, &[0, 2], 1.0).unwrap();
         assert_eq!(s.board.groups[&0].order, [0, 2]);
-        assert_eq!(
-            s.dock.panel,
-            Panel::GroupDock {
-                group: 0,
-                align_open: false
-            }
-        );
+        assert_eq!(s.dock.panel, Panel::GroupDock { group: 0 });
         assert_eq!(s.add(0, &[0]), Ok(()));
         assert_eq!(s.board.groups[&0].order, [0, 2]);
         assert_eq!(s.add(0, &[1]), Err("item_missing"));
@@ -166,13 +160,7 @@ mod board {
         );
         s.delete_member(1).unwrap();
         assert_eq!(s.board.live, BTreeSet::from([0, 2]));
-        assert_eq!(
-            s.dock.panel,
-            Panel::GroupDock {
-                group: 0,
-                align_open: false
-            }
-        );
+        assert_eq!(s.dock.panel, Panel::GroupDock { group: 0 });
         s.edit_member(0).unwrap();
         s.duplicate(0, 1).unwrap();
         assert_eq!(s.board.groups[&0].order, [0, 1, 2]);
@@ -195,13 +183,13 @@ mod board {
         assert_eq!(s.board.groups[&0].order, [1, 0, 2]);
         assert_eq!(s.press_arrow(Direction::Right), Err("no_neighbor"));
         s.use_dock(Control::Absolute(0)).unwrap();
-        assert_eq!(s.use_dock(Control::Later), Err("no_neighbor"));
+        assert_eq!(s.press_arrow(Direction::Down), Err("no_neighbor"));
         assert_eq!(s.board.groups[&0].order, [1, 0, 2]);
         s.use_dock(Control::Absolute(2)).unwrap();
         assert_eq!(s.board.groups[&0].order, [1, 2, 0]);
         assert!(!s.board.members[&0].absolute);
         s.set_flow(0, GroupFlow::Free).unwrap();
-        assert_eq!(s.use_dock(Control::Earlier), Err("no_neighbor"));
+        assert_eq!(s.press_arrow(Direction::Up), Err("no_neighbor"));
     }
     #[test]
     fn vertical_target() {
@@ -243,19 +231,11 @@ mod board {
     fn escape() {
         let mut s = init();
         s.create(0, &[0, 2], 1.0).unwrap();
-        s.toggle_align().unwrap();
         s.focus_text(true);
         assert_eq!(s.press_arrow(Direction::Left), Err("text_owns_key"));
         s.escape();
-        assert!(s.dock.align_shown() && !s.dock.text_focus);
-        s.escape();
-        assert_eq!(
-            s.dock.panel,
-            Panel::GroupDock {
-                group: 0,
-                align_open: false
-            }
-        );
+        assert_eq!(s.dock.panel, Panel::GroupDock { group: 0 });
+        assert!(!s.dock.text_focus);
         s.edit_member(2).unwrap();
         s.escape();
         assert!(s.dock.group_shown());
@@ -269,10 +249,8 @@ mod board {
         s.edit_member(2).unwrap();
         s.use_dock(Control::Absolute(0)).unwrap();
         s.escape();
-        s.toggle_align().unwrap();
         s.use_dock(Control::Flow(GroupFlow::Free)).unwrap();
-        assert!(!s.dock.align_shown());
-        assert_eq!(s.toggle_align(), Err("control_inactive"));
+        assert!(!s.control_enabled(&Control::Align([1, 1])));
         s.use_dock(Control::Ungroup).unwrap();
         assert!(s.board.groups.is_empty());
         assert_eq!(s.dock.panel, Panel::Hidden);
@@ -334,10 +312,8 @@ fn stored_auto_variant_and_number() {
     let mut s = init();
     s.create(0, &[0, 2], 3.0).unwrap();
     s.use_dock(Control::Gap(-1.0)).unwrap();
-    s.toggle_align().unwrap();
     s.use_dock(Control::Align([2, 0])).unwrap();
     s.use_dock(Control::Auto(GapMode::Between)).unwrap();
-    assert!(s.dock.align_shown());
     assert!(!s.control_enabled(&Control::Gap(0.0)));
     assert!(s.control_enabled(&Control::Align([2, 1])));
     assert!(!s.control_enabled(&Control::Align([0, 1])));
@@ -350,7 +326,7 @@ fn stored_auto_variant_and_number() {
     assert_eq!(s.board.groups[&0].gap, -1.0);
     assert_eq!(s.board.groups[&0].align, [2, 1]);
     s.use_dock(Control::Flow(GroupFlow::Free)).unwrap();
-    assert!(!s.dock.align_shown());
+    assert!(!s.control_enabled(&Control::Auto(GapMode::Number)));
 }
 #[test]
 fn corner_hugs_each_legal_axis() {
@@ -679,16 +655,13 @@ mod enablement {
                 [0, 0],
                 vec![0, 1, 2],
                 2,
-                vec![Control::MemberMode(1, true), Control::Earlier],
-                vec![Control::Later],
+                vec![Control::MemberMode(1, true)],
+                vec![],
                 vec![],
             ),
             (
                 "auto align",
-                Panel::GroupDock {
-                    group: 0,
-                    align_open: true,
-                },
+                Panel::GroupDock { group: 0 },
                 GroupFlow::Row,
                 GapMode::Between,
                 1,

@@ -12,15 +12,15 @@ use controls::{paint_sidebar_section_header, paint_sidebar_subcard, paint_sideba
 use settings::paint_settings_section;
 use shortcuts::paint_supported_shortcuts_section;
 
-pub(crate) use controls::{show_sidebar_hint, show_status_message};
+pub(crate) use controls::{show_sidebar_edge, show_status_message};
 pub(crate) const SIDEBAR_WIDTH: f32 = 268.0;
 pub(crate) const SIDEBAR_TOP_MARGIN: f32 = 40.0;
 pub(crate) const SIDEBAR_BOTTOM_MARGIN: f32 = 16.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SidebarTab {
-    Boards,
     #[default]
+    Boards,
     Options,
 }
 

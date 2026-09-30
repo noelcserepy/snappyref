@@ -11,7 +11,7 @@ use crate::placement::content_resolution::PlacementCreation;
 use crate::search::SearchController;
 use crate::ui::sidebar::{
     SidebarBoardAction, SidebarTab, block_sidebar_input, close_sidebar_on_outside_click,
-    show_sidebar, show_sidebar_hint, show_status_message, sidebar_rect,
+    show_sidebar, show_sidebar_edge, show_status_message, sidebar_rect,
 };
 use crate::updater::{UpdateConfig, UpdateService};
 
@@ -1062,6 +1062,11 @@ impl SnappyRefApp {
     }
 
     fn persist_canvas_changes_debounced(&mut self, ctx: &egui::Context) {
+        // A scrub records one entry on release. Explicit flushes, like board
+        // activation, still record mid-scrub.
+        if self.canvas.group_dock_scrubbing() {
+            return;
+        }
         let document_changed = match self.board_editing.record_pending_document_changes_history(
             &mut self.canvas,
             self.library.as_ref(),
@@ -1358,11 +1363,6 @@ impl eframe::App for SnappyRefApp {
                 .request_repaint_after(wait.max(Duration::from_millis(250)));
         }
         let board_summaries = self.board_editing.documents.summaries();
-        let active_board_name = board_summaries
-            .iter()
-            .find(|summary| summary.board.id == self.active_board_id)
-            .map(|summary| summary.board.name.clone())
-            .unwrap_or_else(|| "My Board".to_owned());
         let about_updates = self.about_updates_view();
         let always_on_top_before = self.settings.always_on_top;
         let sidebar_result = show_sidebar(
@@ -1425,12 +1425,11 @@ impl eframe::App for SnappyRefApp {
         self.show_semantic_search_first_launch_prompt(ui.ctx());
         if !modal_open {
             self.show_context_menu(ui.ctx(), screen_rect, context_menu_just_opened);
-            let hint = show_sidebar_hint(ui.ctx(), screen_rect, sidebar_open, &active_board_name);
-            if hint.clicked {
+            if show_sidebar_edge(ui.ctx(), screen_rect, sidebar_open) {
                 self.sidebar_open = !self.sidebar_open;
             }
             let status = self.visible_status(ui.ctx());
-            show_status_message(ui.ctx(), screen_rect, sidebar_open, hint.rect, status);
+            show_status_message(ui.ctx(), screen_rect, sidebar_open, status);
         }
         self.show_search_overlay(ui.ctx(), screen_rect);
     }
