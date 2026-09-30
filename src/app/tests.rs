@@ -11,7 +11,7 @@ use support::{
     InspectImportSample, InspectProgressConfig, InspectScenario, add_inspect_compact_image,
     add_loaded_record, app_full_harness, app_full_harness_with_startup,
     app_full_harness_with_step_dt, app_harness, compact_selection_fact, drag_test_pos,
-    inspect_bright_red_pixels_in_rect, inspect_click_at, inspect_command_modifier,
+    dropped_file, inspect_bright_red_pixels_in_rect, inspect_click_at, inspect_command_modifier,
     inspect_placement, inspect_pos, inspect_prepared_loaded_placement, inspect_rect,
     inspect_search_result_entry, inspect_search_result_tile_center, inspect_status_slug,
     inspect_world_to_screen, item_enabled, loaded_record, persisted_loaded_item,

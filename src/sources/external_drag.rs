@@ -36,8 +36,8 @@ pub(crate) fn take_drop(ui: &egui::Ui) -> ExternalDragIntake {
     let egui_pos = ui.ctx().input(|input| input.pointer.latest_pos());
     let sources = merge_sources(
         raw_dropped_files
-            .into_iter()
-            .filter_map(source_from_dropped_file),
+            .iter()
+            .map(|file| source_from_path_or_url_name(file.path().to_path_buf())),
         native.paths.into_iter().map(ImportSource::Path),
         native.urls.into_iter().map(ImportSource::Url),
     );
@@ -47,13 +47,6 @@ pub(crate) fn take_drop(ui: &egui::Ui) -> ExternalDragIntake {
         sources,
         screen_pos,
     }
-}
-
-fn source_from_dropped_file(file: egui::DroppedFile) -> Option<ImportSource> {
-    if let Some(path) = file.path {
-        return Some(source_from_path_or_url_name(path));
-    }
-    normalize_import_url(&file.name).map(ImportSource::Url)
 }
 
 fn source_from_path_or_url_name(path: std::path::PathBuf) -> ImportSource {

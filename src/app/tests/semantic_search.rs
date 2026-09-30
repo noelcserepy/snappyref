@@ -192,7 +192,8 @@ fn search_using_image_context_action_survives_activation_click_outside_overlay()
         egui::Rect::EVERYTHING,
     );
 
-    let _ = ctx.run_ui(
+    let _ = crate::ui::test_frame::run_ui(
+        &ctx,
         egui::RawInput {
             events: vec![
                 egui::Event::PointerMoved(egui::pos2(520.0, 320.0)),
@@ -327,22 +328,25 @@ fn search_shortcut_opens_overlay_when_enabled() {
     app.search
         .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
 
-    let _ = ctx.run_ui(
+    let _ = crate::ui::test_frame::run_ui(
+        &ctx,
         egui::RawInput {
-            modifiers: egui::Modifiers {
-                command: true,
-                ..Default::default()
-            },
-            events: vec![egui::Event::Key {
-                key: egui::Key::F,
-                physical_key: Some(egui::Key::F),
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers {
+            events: vec![
+                egui::Event::ModifiersChanged(egui::Modifiers {
                     command: true,
                     ..Default::default()
+                }),
+                egui::Event::Key {
+                    key: egui::Key::F,
+                    physical_key: Some(egui::Key::F),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
                 },
-            }],
+            ],
             ..Default::default()
         },
         |ui| {
@@ -367,22 +371,25 @@ fn search_shortcut_opens_missing_palette_with_focused_install_action() {
     app.search
         .set_local_model_store_status_for_test(LocalModelStoreStatus::Missing);
 
-    let _ = ctx.run_ui(
+    let _ = crate::ui::test_frame::run_ui(
+        &ctx,
         egui::RawInput {
-            modifiers: egui::Modifiers {
-                command: true,
-                ..Default::default()
-            },
-            events: vec![egui::Event::Key {
-                key: egui::Key::F,
-                physical_key: Some(egui::Key::F),
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers {
+            events: vec![
+                egui::Event::ModifiersChanged(egui::Modifiers {
                     command: true,
                     ..Default::default()
+                }),
+                egui::Event::Key {
+                    key: egui::Key::F,
+                    physical_key: Some(egui::Key::F),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        ..Default::default()
+                    },
                 },
-            }],
+            ],
             ..Default::default()
         },
         |ui| {
@@ -412,7 +419,8 @@ fn escape_closes_search_overlay() {
     app.search.overlay.open = true;
     app.search.overlay.query = "cat".to_owned();
 
-    let _ = ctx.run_ui(
+    let _ = crate::ui::test_frame::run_ui(
+        &ctx,
         egui::RawInput {
             events: vec![egui::Event::Key {
                 key: egui::Key::Escape,
@@ -442,7 +450,7 @@ fn search_overlay_focuses_text_input_when_requested() {
     app.search.overlay.open = true;
     app.search.overlay.focus_requested = true;
 
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+    let _ = crate::ui::test_frame::run_ui(&ctx, egui::RawInput::default(), |ui| {
         app.show_search_overlay(
             ui.ctx(),
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),

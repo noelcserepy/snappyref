@@ -1,6 +1,6 @@
 # Vendored egui-winit
 
-This is a copy of [egui-winit 0.34.1](https://crates.io/crates/egui-winit/0.34.1)
+This is a copy of [egui-winit 0.36.2](https://crates.io/crates/egui-winit/0.36.2)
 from the [egui](https://github.com/emilk/egui) repository, licensed under
 MIT or Apache-2.0 (see LICENSE-MIT and LICENSE-APACHE). `Cargo.toml` at the
 repo root points `egui-winit` at this directory through `[patch.crates-io]`.

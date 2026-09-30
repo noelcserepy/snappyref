@@ -70,21 +70,39 @@ pub(super) fn render_sidebar_for_test(ctx: &egui::Context, app: &mut SnappyRefAp
     }
 }
 
+/// A file handle as the winit integration would deliver it to `RawInput::dropped_files`.
+#[derive(Debug)]
+struct TestDroppedFile(std::path::PathBuf);
+
+impl egui::DroppedFile for TestDroppedFile {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        fs::read(&self.0).map_err(|error| error.to_string())
+    }
+}
+
+pub(super) fn dropped_file(path: impl Into<std::path::PathBuf>) -> egui::DroppedFileHandle {
+    std::sync::Arc::new(TestDroppedFile(path.into()))
+}
+
 pub(super) fn app_harness<'a>(
     app: SnappyRefApp,
     mut render: impl FnMut(&egui::Context, &mut SnappyRefApp) + 'a,
 ) -> Harness<'a, SnappyRefApp> {
-    #[expect(deprecated)]
     Harness::builder()
         .with_size(egui::vec2(1200.0, 800.0))
         .with_pixels_per_point(1.0)
         .with_os(egui::os::OperatingSystem::Nix)
         .with_theme(egui::Theme::Dark)
         .with_max_steps(4)
-        .build_state(
-            move |ctx, app| {
-                crate::ui::theme::configure_theme(ctx);
-                render(ctx, app);
+        .build_ui_state(
+            move |ui, app| {
+                let ctx = ui.ctx().clone();
+                crate::ui::theme::configure_theme(&ctx);
+                render(&ctx, app);
             },
             app,
         )

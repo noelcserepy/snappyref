@@ -21,6 +21,7 @@ use egui::{Pos2, Rect, Theme, Vec2, ViewportBuilder, ViewportCommand, ViewportId
 pub use winit;
 
 pub mod clipboard;
+mod dropped_file;
 mod safe_area;
 mod window_settings;
 
@@ -28,11 +29,13 @@ pub use window_settings::WindowSettings;
 
 use raw_window_handle::HasDisplayHandle;
 
+use dropped_file::NativeFile;
+
 use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
     event::ElementState,
     event_loop::ActiveEventLoop,
-    window::{CursorGrabMode, Window, WindowButtons, WindowLevel},
+    window::{CursorGrabMode, CustomCursor, Window, WindowButtons, WindowLevel},
 };
 
 pub fn screen_size_in_pixels(window: &Window) -> egui::Vec2 {
@@ -84,9 +87,24 @@ pub struct State {
     viewport_id: ViewportId,
     start_time: web_time::Instant,
     egui_input: egui::RawInput,
+
+    /// The current modifier state.
+    ///
+    /// We keep a copy so we can stamp
+    /// it onto per-event `modifiers` fields and emit [`egui::Event::ModifiersChanged`].
+    modifiers: egui::Modifiers,
+
     pointer_pos_in_points: Option<egui::Pos2>,
     any_pointer_button_down: bool,
     current_cursor_icon: Option<egui::CursorIcon>,
+
+    /// Cached `CustomCursor` for the last RGBA bitmap pushed through
+    /// `PlatformOutput::cursor_image`. We dedupe by `Arc::as_ptr` so the
+    /// integration only re-uploads the bitmap to the OS when the app
+    /// switches sprite, not every frame the cursor moves. `usize` is the
+    /// raw pointer of the source `Arc<[u8]>` — opaque, only used as a
+    /// cache key.
+    current_custom_cursor: Option<(usize, CustomCursor)>,
 
     clipboard: clipboard::Clipboard,
 
@@ -101,14 +119,12 @@ pub struct State {
     /// Only one touch will be interpreted as pointer at any time.
     pointer_touch_id: Option<u64>,
 
-    /// track ime state
-    has_sent_ime_enabled: bool,
-
     #[cfg(feature = "accesskit")]
     pub accesskit: Option<accesskit_winit::Adapter>,
 
     allow_ime: bool,
     ime_rect_px: Option<egui::Rect>,
+    old_ime_purpose: egui::IMEPurpose,
 
     /// Used by [`State::try_on_ime_processed_keyboard_input`] to track key
     /// release events that should be filtered out. See comments in that method
@@ -135,13 +151,17 @@ impl State {
         };
 
         let mut slf = Self {
-            egui_ctx,
             viewport_id,
-            start_time: web_time::Instant::now(),
+            start_time: web_time::Instant::now()
+                .checked_sub(web_time::Duration::from_secs_f64(egui_ctx.time()))
+                .unwrap_or_else(web_time::Instant::now),
+            egui_ctx,
             egui_input,
+            modifiers: egui::Modifiers::default(),
             pointer_pos_in_points: None,
             any_pointer_button_down: false,
             current_cursor_icon: None,
+            current_custom_cursor: None,
 
             clipboard: clipboard::Clipboard::new(
                 display_target.display_handle().ok().map(|h| h.as_raw()),
@@ -150,13 +170,12 @@ impl State {
             simulate_touch_screen: false,
             pointer_touch_id: None,
 
-            has_sent_ime_enabled: false,
-
             #[cfg(feature = "accesskit")]
             accesskit: None,
 
             allow_ime: false,
             ime_rect_px: None,
+            old_ime_purpose: egui::IMEPurpose::Normal,
             #[cfg(target_os = "windows")]
             pressed_processed_physical_keys: HashSet::new(),
         };
@@ -416,6 +435,10 @@ impl State {
                 };
 
                 self.egui_input.focused = focused;
+                if !focused {
+                    // Avoid sticky modifiers when focus is lost (egui clears its own copy too).
+                    self.modifiers = egui::Modifiers::default();
+                }
                 self.egui_input
                     .events
                     .push(egui::Event::WindowFocused(focused));
@@ -450,10 +473,9 @@ impl State {
             }
             WindowEvent::DroppedFile(path) => {
                 self.egui_input.hovered_files.clear();
-                self.egui_input.dropped_files.push(egui::DroppedFile {
-                    path: Some(path.clone()),
-                    ..Default::default()
-                });
+                self.egui_input
+                    .dropped_files
+                    .push(std::sync::Arc::new(NativeFile::from(path.clone())));
                 EventResponse {
                     repaint: true,
                     consumed: false,
@@ -467,15 +489,19 @@ impl State {
                 let shift = state.shift_key();
                 let super_ = state.super_key();
 
-                self.egui_input.modifiers.alt = alt;
-                self.egui_input.modifiers.ctrl = ctrl;
-                self.egui_input.modifiers.shift = shift;
-                self.egui_input.modifiers.mac_cmd = cfg!(target_os = "macos") && super_;
-                self.egui_input.modifiers.command = if cfg!(target_os = "macos") {
+                self.modifiers.alt = alt;
+                self.modifiers.ctrl = ctrl;
+                self.modifiers.shift = shift;
+                self.modifiers.mac_cmd = cfg!(target_os = "macos") && super_;
+                self.modifiers.command = if cfg!(target_os = "macos") {
                     super_
                 } else {
                     ctrl
                 };
+
+                self.egui_input
+                    .events
+                    .push(egui::Event::ModifiersChanged(self.modifiers));
 
                 EventResponse {
                     repaint: true,
@@ -535,7 +561,7 @@ impl State {
                     unit: egui::MouseWheelUnit::Point,
                     delta: Vec2::new(delta.x, delta.y) / pixels_per_point,
                     phase: to_egui_touch_phase(*phase),
-                    modifiers: self.egui_input.modifiers,
+                    modifiers: self.modifiers,
                 });
                 EventResponse {
                     repaint: true,
@@ -689,70 +715,52 @@ impl State {
         // }
 
         match ime {
-            winit::event::Ime::Enabled => {
-                if cfg!(target_os = "linux") {
-                    // This event means different things in X11 and Wayland, but we can just
-                    // ignore it and enable IME on the preedit event.
-                    // See <https://github.com/rust-windowing/winit/issues/2498>
-                } else {
-                    self.ime_event_enable();
-                }
-            }
-            winit::event::Ime::Preedit(text, Some(_cursor)) => {
-                self.ime_event_enable();
+            // [`winit::event::Ime::Enabled`] means different things in X11 and
+            // Wayland, but it doesn't matter to us.
+            // See <https://github.com/rust-windowing/winit/issues/2498>
+            winit::event::Ime::Enabled | winit::event::Ime::Disabled => {}
+            winit::event::Ime::Preedit(text, active_range_bytes) => {
+                let active_range_chars = match *active_range_bytes {
+                    Some((start_bytes, end_bytes)) => {
+                        if let (Some(start_chars), Some(middle_chars)) = (
+                            text.get(..start_bytes).map(|s| s.chars().count()),
+                            text.get(start_bytes..end_bytes).map(|s| s.chars().count()),
+                        ) {
+                            if cfg!(target_os = "windows") && start_chars == 0 && middle_chars == 0
+                            {
+                                // Workaround for a bug on Windows where `winit`
+                                // incorrectly reports the cursor position at
+                                // the start of the preedit text during
+                                // composition with the builtin Korean IME.
+                                // See: https://github.com/emilk/egui/pull/8083#issuecomment-4206742668
+                                // TODO(umajho): Remove this workaround once the
+                                // `winit` bug is fixed and we've updated to a
+                                // version that includes the fix.
+                                None
+                            } else {
+                                Some(start_chars..start_chars + middle_chars)
+                            }
+                        } else {
+                            log::warn!("ignoring {ime:?}'s range because it is invalid");
+                            None
+                        }
+                    }
+                    None => None,
+                };
+
                 self.egui_input
                     .events
-                    .push(egui::Event::Ime(egui::ImeEvent::Preedit(text.clone())));
+                    .push(egui::Event::Ime(egui::ImeEvent::Preedit {
+                        text: text.clone(),
+                        active_range_chars,
+                    }));
             }
             winit::event::Ime::Commit(text) => {
                 self.egui_input
                     .events
                     .push(egui::Event::Ime(egui::ImeEvent::Commit(text.clone())));
-                self.ime_event_disable();
-            }
-            winit::event::Ime::Disabled => {
-                self.ime_event_disable();
-            }
-            winit::event::Ime::Preedit(_, None) => {
-                if cfg!(target_os = "macos") {
-                    // On macOS, when the user presses backspace to delete the
-                    // last character in an IME composition, `winit` only emits
-                    // `winit::event::Ime::Preedit("", None)` without a
-                    // preceding `winit::event::Ime::Preedit("", Some(0, 0))`.
-                    //
-                    // The current implementation of `egui::TextEdit` relies on
-                    // receiving an `egui::ImeEvent::Preedit("")` to remove the
-                    // last character in the composition in this case, so we
-                    // emit it here.
-                    //
-                    // This is guarded to macOS-only, as applying it on other
-                    // platforms is unnecessary and can cause undesired
-                    // behavior.
-                    // See: https://github.com/emilk/egui/pull/7973
-                    self.egui_input
-                        .events
-                        .push(egui::Event::Ime(egui::ImeEvent::Preedit(String::new())));
-                }
-
-                self.ime_event_disable();
             }
         }
-    }
-
-    pub fn ime_event_enable(&mut self) {
-        if !self.has_sent_ime_enabled {
-            self.egui_input
-                .events
-                .push(egui::Event::Ime(egui::ImeEvent::Enabled));
-            self.has_sent_ime_enabled = true;
-        }
-    }
-
-    pub fn ime_event_disable(&mut self) {
-        self.egui_input
-            .events
-            .push(egui::Event::Ime(egui::ImeEvent::Disabled));
-        self.has_sent_ime_enabled = false;
     }
 
     /// Returns `true` if the event was sent to egui.
@@ -802,7 +810,7 @@ impl State {
                 pos,
                 button,
                 pressed,
-                modifiers: self.egui_input.modifiers,
+                modifiers: self.modifiers,
             });
 
             if self.simulate_touch_screen {
@@ -949,7 +957,7 @@ impl State {
                 ),
             };
             let phase = to_egui_touch_phase(phase);
-            let modifiers = self.egui_input.modifiers;
+            let modifiers = self.modifiers;
             self.egui_input.events.push(egui::Event::MouseWheel {
                 unit,
                 delta,
@@ -1010,13 +1018,13 @@ impl State {
         // See also: https://github.com/emilk/egui/issues/3653
         if let Some(active_key) = logical_key.or(physical_key) {
             if pressed {
-                if is_cut_command(self.egui_input.modifiers, active_key) {
+                if is_cut_command(self.modifiers, active_key) {
                     self.egui_input.events.push(egui::Event::Cut);
                     return;
-                } else if is_copy_command(self.egui_input.modifiers, active_key) {
+                } else if is_copy_command(self.modifiers, active_key) {
                     self.egui_input.events.push(egui::Event::Copy);
                     return;
-                } else if is_paste_command(self.egui_input.modifiers, active_key) {
+                } else if is_paste_command(self.modifiers, active_key) {
                     // SnappyRef local change: upstream skips the event when the clipboard
                     // text is empty. Always push Paste so an image-only clipboard still
                     // triggers SnappyRef's paste handling. See vendor/egui-winit/README.md.
@@ -1035,7 +1043,7 @@ impl State {
                 physical_key,
                 pressed,
                 repeat: false, // egui will fill this in for us!
-                modifiers: self.egui_input.modifiers,
+                modifiers: self.modifiers,
             });
         }
 
@@ -1051,9 +1059,8 @@ impl State {
                 // We need to ignore these characters that are side-effects of commands.
                 // Also make sure the key is pressed (not released). On Linux, text might
                 // contain some data even when the key is released.
-                let is_cmd = self.egui_input.modifiers.ctrl
-                    || self.egui_input.modifiers.command
-                    || self.egui_input.modifiers.mac_cmd;
+                let is_cmd =
+                    self.modifiers.ctrl || self.modifiers.command || self.modifiers.mac_cmd;
                 if pressed && !is_cmd {
                     self.egui_input
                         .events
@@ -1076,11 +1083,37 @@ impl State {
         window: &Window,
         platform_output: egui::PlatformOutput,
     ) {
+        self.handle_platform_output_inner(window, None, platform_output);
+    }
+
+    /// Same as [`Self::handle_platform_output`] but threads the
+    /// `ActiveEventLoop` so we can register a `winit::CustomCursor` from
+    /// `PlatformOutput::cursor_image`. Integration paths that don't have
+    /// access to the event loop (e.g. immediate viewports) should call
+    /// [`Self::handle_platform_output`] instead — any custom cursor
+    /// request is silently dropped there and the standard `cursor_icon`
+    /// path still runs.
+    pub fn handle_platform_output_with_event_loop(
+        &mut self,
+        window: &Window,
+        event_loop: &ActiveEventLoop,
+        platform_output: egui::PlatformOutput,
+    ) {
+        self.handle_platform_output_inner(window, Some(event_loop), platform_output);
+    }
+
+    fn handle_platform_output_inner(
+        &mut self,
+        window: &Window,
+        event_loop: Option<&ActiveEventLoop>,
+        platform_output: egui::PlatformOutput,
+    ) {
         profiling::function_scope!();
 
         let egui::PlatformOutput {
             commands,
             cursor_icon,
+            cursor_image,
             events: _,                    // handled elsewhere
             mutable_text_under_cursor: _, // only used in eframe web
             ime,
@@ -1103,10 +1136,11 @@ impl State {
             }
         }
 
-        self.set_cursor_icon(window, cursor_icon);
+        self.apply_cursor(window, event_loop, cursor_icon, cursor_image.as_ref());
 
         let allow_ime = ime.is_some();
-        if self.allow_ime != allow_ime {
+        let is_toggling_ime = self.allow_ime != allow_ime;
+        if is_toggling_ime {
             self.allow_ime = allow_ime;
             #[cfg(target_os = "windows")]
             if !self.allow_ime {
@@ -1123,6 +1157,19 @@ impl State {
         }
 
         if let Some(ime) = ime {
+            if !is_toggling_ime && ime.should_interrupt_composition {
+                // TODO(umajho): use a more proper way to interrupt composition
+                // if `winit` provides one in the future.
+
+                window.set_ime_allowed(false);
+                window.set_ime_allowed(true);
+            }
+
+            if ime.purpose != self.old_ime_purpose {
+                self.old_ime_purpose = ime.purpose;
+                window.set_ime_purpose(to_winit_ime_purpose(ime.purpose));
+            }
+
             let pixels_per_point = pixels_per_point(&self.egui_ctx, window);
             let ime_rect_px = pixels_per_point * ime.rect;
             if self.ime_rect_px != Some(ime_rect_px)
@@ -1157,26 +1204,92 @@ impl State {
         let _ = accesskit_update;
     }
 
-    fn set_cursor_icon(&mut self, window: &Window, cursor_icon: egui::CursorIcon) {
+    /// Apply either a bitmap cursor (preferred when both `cursor_image`
+    /// and `event_loop` are `Some`) or the standard `cursor_icon` to the
+    /// window. Mirrors the no-flicker dedupe the old `set_cursor_icon`
+    /// did, on the appropriate cache key for whichever path is active.
+    fn apply_cursor(
+        &mut self,
+        window: &Window,
+        event_loop: Option<&ActiveEventLoop>,
+        cursor_icon: egui::CursorIcon,
+        cursor_image: Option<&egui::CustomCursorImage>,
+    ) {
+        let is_pointer_in_window = self.pointer_pos_in_points.is_some();
+        if !is_pointer_in_window {
+            // Drop both caches so the cursor gets re-applied (and the
+            // bitmap re-checked for staleness) once the pointer comes
+            // back. Same contract the old `set_cursor_icon` followed.
+            self.current_cursor_icon = None;
+            self.current_custom_cursor = None;
+            return;
+        }
+
+        // Bitmap cursor wins over CursorIcon when both are present and we
+        // have an event loop to register it with. Otherwise the bitmap is
+        // dropped and we fall through to the icon path — this is the
+        // documented fallback for integrations that didn't opt in.
+        if let (Some(image), Some(event_loop)) = (cursor_image, event_loop) {
+            let key = std::sync::Arc::as_ptr(&image.rgba).cast::<u8>() as usize;
+            let cached = self
+                .current_custom_cursor
+                .as_ref()
+                .filter(|(k, _)| *k == key)
+                .map(|(_, c)| c.clone());
+
+            let custom = match cached {
+                Some(c) => c,
+                None => match winit::window::CustomCursor::from_rgba(
+                    image.rgba.to_vec(),
+                    image.size[0],
+                    image.size[1],
+                    image.hotspot[0],
+                    image.hotspot[1],
+                ) {
+                    Ok(source) => {
+                        let c = event_loop.create_custom_cursor(source);
+                        self.current_custom_cursor = Some((key, c.clone()));
+                        c
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "egui-winit: invalid cursor bitmap, falling back to cursor_icon: {err:?}"
+                        );
+                        self.current_custom_cursor = None;
+                        self.set_cursor_icon_inner(window, cursor_icon);
+                        return;
+                    }
+                },
+            };
+
+            window.set_cursor_visible(true);
+            window.set_cursor(custom);
+            // Resync `current_cursor_icon` so the next icon-only path
+            // notices a real change rather than dedupe-skipping it.
+            self.current_cursor_icon = None;
+            return;
+        }
+
+        self.current_custom_cursor = None;
+        self.set_cursor_icon_inner(window, cursor_icon);
+    }
+
+    /// Icon-only path, factored out so `apply_cursor` can fall back to it
+    /// when the bitmap path bails. Preserves the original dedupe.
+    fn set_cursor_icon_inner(&mut self, window: &Window, cursor_icon: egui::CursorIcon) {
         if self.current_cursor_icon == Some(cursor_icon) {
             // Prevent flickering near frame boundary when Windows OS tries to control cursor icon for window resizing.
             // On other platforms: just early-out to save CPU.
             return;
         }
 
-        let is_pointer_in_window = self.pointer_pos_in_points.is_some();
-        if is_pointer_in_window {
-            self.current_cursor_icon = Some(cursor_icon);
+        self.current_cursor_icon = Some(cursor_icon);
 
-            if let Some(winit_cursor_icon) = translate_cursor(cursor_icon) {
-                window.set_cursor_visible(true);
-                window.set_cursor(winit_cursor_icon);
-            } else {
-                window.set_cursor_visible(false);
-            }
+        if let Some(winit_cursor_icon) = translate_cursor(cursor_icon) {
+            window.set_cursor_visible(true);
+            window.set_cursor(winit_cursor_icon);
         } else {
-            // Remember to set the cursor again once the cursor returns to the screen:
-            self.current_cursor_icon = None;
+            window.set_cursor_visible(false);
         }
     }
 }
@@ -1527,6 +1640,22 @@ fn key_from_key_code(key: winit::keyboard::KeyCode) -> Option<egui::Key> {
         KeyCode::F34 => Key::F34,
         KeyCode::F35 => Key::F35,
 
+        // Modifier keys — egui now surfaces them as distinct physical
+        // variants so games / capture UIs can bind them independently.
+        // The collapsed `Modifiers.shift/ctrl/alt/command` booleans still
+        // track just the "any side is pressed" state for shortcut matching.
+        KeyCode::ShiftLeft => Key::ShiftLeft,
+        KeyCode::ShiftRight => Key::ShiftRight,
+        KeyCode::ControlLeft => Key::ControlLeft,
+        KeyCode::ControlRight => Key::ControlRight,
+        KeyCode::AltLeft => Key::AltLeft,
+        KeyCode::AltRight => Key::AltRight,
+        KeyCode::SuperLeft => Key::SuperLeft,
+        KeyCode::SuperRight => Key::SuperRight,
+
+        // ISO 102nd key — `<>|` on French AZERTY, `\|` on UK QWERTY.
+        KeyCode::IntlBackslash => Key::IntlBackslash,
+
         _ => {
             return None;
         }
@@ -1726,7 +1855,26 @@ fn process_viewport_command(
         ViewportCommand::Fullscreen(v) => {
             window.set_fullscreen(v.then_some(winit::window::Fullscreen::Borderless(None)));
         }
-        ViewportCommand::Decorations(v) => window.set_decorations(v),
+        ViewportCommand::SetMonitor(idx) => {
+            if let Some(monitor) = window.available_monitors().nth(idx) {
+                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(Some(monitor))));
+            } else {
+                log::warn!(
+                    "ViewportCommand::SetMonitor({idx}): index out of range ({} monitors available)",
+                    window.available_monitors().count()
+                );
+            }
+        }
+        ViewportCommand::Decorations(v) => {
+            window.set_decorations(v);
+            #[cfg(target_os = "windows")]
+            {
+                use winit::platform::windows::WindowExtWindows as _;
+
+                // don't request the undecorated-window drop shadow in fullscreen (#8399)
+                window.set_undecorated_shadow(!v && window.fullscreen().is_none());
+            }
+        }
         ViewportCommand::WindowLevel(l) => window.set_window_level(match l {
             egui::viewport::WindowLevel::AlwaysOnBottom => WindowLevel::AlwaysOnBottom,
             egui::viewport::WindowLevel::AlwaysOnTop => WindowLevel::AlwaysOnTop,
@@ -1746,11 +1894,7 @@ fn process_viewport_command(
             );
         }
         ViewportCommand::IMEAllowed(v) => window.set_ime_allowed(v),
-        ViewportCommand::IMEPurpose(p) => window.set_ime_purpose(match p {
-            egui::viewport::IMEPurpose::Password => winit::window::ImePurpose::Password,
-            egui::viewport::IMEPurpose::Terminal => winit::window::ImePurpose::Terminal,
-            egui::viewport::IMEPurpose::Normal => winit::window::ImePurpose::Normal,
-        }),
+        ViewportCommand::IMEPurpose(p) => window.set_ime_purpose(to_winit_ime_purpose(p)),
         ViewportCommand::Focus => {
             if !window.has_focus() {
                 window.focus_window();
@@ -1811,6 +1955,14 @@ fn process_viewport_command(
     }
 }
 
+fn to_winit_ime_purpose(purpose: egui::IMEPurpose) -> winit::window::ImePurpose {
+    match purpose {
+        egui::IMEPurpose::Password => winit::window::ImePurpose::Password,
+        egui::IMEPurpose::Terminal => winit::window::ImePurpose::Terminal,
+        egui::IMEPurpose::Normal => winit::window::ImePurpose::Normal,
+    }
+}
+
 /// Build and intitlaize a window.
 ///
 /// Wrapper around `create_winit_window_builder` and `apply_viewport_builder_to_window`.
@@ -1824,10 +1976,45 @@ pub fn create_window(
 ) -> Result<Window, winit::error::OsError> {
     profiling::function_scope!();
 
-    let window_attributes = create_winit_window_attributes(egui_ctx, viewport_builder.clone());
+    let window_attributes = apply_monitor_to_window_attributes(
+        create_winit_window_attributes(egui_ctx, viewport_builder.clone()),
+        viewport_builder,
+        event_loop,
+    );
+
     let window = event_loop.create_window(window_attributes)?;
     apply_viewport_builder_to_window(egui_ctx, &window, viewport_builder);
     Ok(window)
+}
+
+/// Apply [`ViewportBuilder::with_monitor`] to freshly-built [`winit::window::WindowAttributes`].
+///
+/// Resolve the target monitor index → `MonitorHandle` and request borderless
+/// fullscreen on that output, so the window is created directly on the right
+/// monitor. This is the only reliable way to target a specific monitor under
+/// Wayland, and also avoids the Mutter race where `OuterPosition` is ignored
+/// pre-mapping.
+///
+/// Must be called by every backend that builds its own window from
+/// [`create_winit_window_attributes`] (the glow backend and per-viewport window
+/// creation do this) — otherwise `with_monitor` silently does nothing there.
+pub fn apply_monitor_to_window_attributes(
+    mut window_attributes: winit::window::WindowAttributes,
+    viewport_builder: &ViewportBuilder,
+    event_loop: &ActiveEventLoop,
+) -> winit::window::WindowAttributes {
+    if let Some(idx) = viewport_builder.monitor {
+        if let Some(monitor) = event_loop.available_monitors().nth(idx) {
+            window_attributes = window_attributes
+                .with_fullscreen(Some(winit::window::Fullscreen::Borderless(Some(monitor))));
+        } else {
+            log::warn!(
+                "ViewportBuilder::with_monitor({idx}): index out of range ({} monitors available)",
+                event_loop.available_monitors().count()
+            );
+        }
+    }
+    window_attributes
 }
 
 pub fn create_winit_window_attributes(
@@ -1876,6 +2063,7 @@ pub fn create_winit_window_attributes(
 
         mouse_passthrough: _, // handled in `apply_viewport_builder_to_window`
         clamp_size_to_monitor_size: _, // Handled in `viewport_builder` in `epi_integration.rs`
+        monitor: _, // Handled in `create_window` (needs ActiveEventLoop for monitor handle)
     } = viewport_builder;
 
     let mut window_attributes = winit::window::WindowAttributes::default()
@@ -2006,6 +2194,10 @@ pub fn create_winit_window_attributes(
         if let Some(show) = _taskbar {
             window_attributes = window_attributes.with_skip_taskbar(!show);
         }
+
+        // don't request the undecorated-window drop shadow in fullscreen (#8399)
+        let want_undecorated_shadow = !decorations.unwrap_or(true) && !fullscreen.unwrap_or(false);
+        window_attributes = window_attributes.with_undecorated_shadow(want_undecorated_shadow);
     }
 
     #[cfg(target_os = "macos")]

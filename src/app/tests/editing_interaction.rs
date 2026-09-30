@@ -602,7 +602,8 @@ fn qwe_arrange_shortcuts_apply_selected_image_layouts() {
         }
         app.canvas.select_placements(&[1, 2]);
 
-        let _ = ctx.run_ui(
+        let _ = crate::ui::test_frame::run_ui(
+            &ctx,
             egui::RawInput {
                 events: vec![egui::Event::Key {
                     key,
@@ -642,7 +643,8 @@ fn arrow_keys_apply_directional_settle_arrange() {
     }
     app.canvas.select_placements(&[1, 2, 3]);
 
-    let _ = ctx.run_ui(
+    let _ = crate::ui::test_frame::run_ui(
+        &ctx,
         egui::RawInput {
             events: vec![egui::Event::Key {
                 key: egui::Key::ArrowRight,
@@ -685,24 +687,27 @@ fn always_on_top_shortcut_toggles_workspace_setting() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
 
-    let output = ctx.run_ui(
+    let output = crate::ui::test_frame::run_ui(
+        &ctx,
         egui::RawInput {
-            modifiers: egui::Modifiers {
-                command: true,
-                shift: true,
-                ..Default::default()
-            },
-            events: vec![egui::Event::Key {
-                key: egui::Key::T,
-                physical_key: Some(egui::Key::T),
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers {
+            events: vec![
+                egui::Event::ModifiersChanged(egui::Modifiers {
                     command: true,
                     shift: true,
                     ..Default::default()
+                }),
+                egui::Event::Key {
+                    key: egui::Key::T,
+                    physical_key: Some(egui::Key::T),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers {
+                        command: true,
+                        shift: true,
+                        ..Default::default()
+                    },
                 },
-            }],
+            ],
             ..Default::default()
         },
         |ui| {

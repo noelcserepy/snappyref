@@ -433,7 +433,8 @@ mod tests {
         let ctx = egui::Context::default();
         let mut cursor_after_row = 0.0;
 
-        let _ = ctx.run_ui(
+        let _ = crate::ui::test_frame::run_ui(
+            &ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
