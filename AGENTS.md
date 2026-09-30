@@ -34,6 +34,11 @@ docs/skills/inspect/scripts/run-scenario.sh <scenario>
 The first three commands are the [pre-push gate](.githooks/pre-push). Hook
 setup and CI are in the [README](README.md#development-checks).
 
+When the user wants to test a build by hand, stop the previous instance and run
+`SNAPPYREF_DATA_ROOT="$HOME/dev/snappyref-dev-data" cargo run --locked --release --bin snappyref`
+in the background with a timeout of at least two hours. The shared root keeps
+their imported images and the downloaded model.
+
 ## Module map
 
 - [Board editing](src/active_board/editing.rs) owns accepted edits, history,
