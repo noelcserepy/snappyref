@@ -1,4 +1,8 @@
 //! Helpers shared by unit tests across modules.
+//!
+//! `tests/updater_helper.rs` also includes this file via `#[path]`, so every
+//! item here must be used there too or clippy fails on dead code. Put
+//! unit-test-only helpers next to the module that needs them.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
