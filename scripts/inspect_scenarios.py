@@ -85,6 +85,9 @@ def main():
         return 0
     except (RuntimeError, OSError, ValueError, KeyError) as error:
         print(f'status=fail\nscenario={scenario}\nerror={error}')
+        latest = inspect_root() / scenario / 'latest.txt'
+        if latest.is_file() and latest.stat().st_mtime >= started:
+            print(f'artifact={latest.read_text().strip()}')
         return 1
 
 

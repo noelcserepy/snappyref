@@ -531,6 +531,10 @@ impl InspectScenario {
             .find(|assertion| assertion["passed"] == false)
             .and_then(|assertion| assertion["name"].as_str())
             .map(str::to_owned);
+        // Cargo shows this on failure, so the failed names appear without opening the report.
+        for assertion in self.assertions.iter().filter(|a| a["passed"] == false) {
+            eprintln!("inspect assertion failed: {}", assertion["name"]);
+        }
         let report = serde_json::json!({
             "scenario": self.name,
             "status": if self.passed { "pass" } else { "fail" },

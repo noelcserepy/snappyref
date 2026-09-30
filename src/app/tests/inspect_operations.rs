@@ -1247,7 +1247,9 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
 fn overlay_scroll_routing_releases_canvas_for_next_drag() {
     let root = TempRoot::new("snappyref-overlay-routing");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let mut harness = app_full_harness(test_app(Some(library.clone())));
+    let mut app = test_app(Some(library.clone()));
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+    let mut harness = app_full_harness(app);
     let placement = seed_loaded_placement(
         &library,
         &mut harness,
