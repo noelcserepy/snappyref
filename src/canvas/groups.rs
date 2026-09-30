@@ -63,10 +63,7 @@ impl CanvasState {
             .collect();
         self.interaction.editing_group_id = None;
         self.interaction.group_dock = crate::grouping::Dock {
-            panel: crate::grouping::Panel::GroupDock {
-                group: id,
-                align_open: false,
-            },
+            panel: crate::grouping::Panel::GroupDock { group: id },
             text_focus: false,
         };
     }
@@ -723,19 +720,6 @@ impl CanvasState {
                 0,
                 egui::Stroke::new(2.0_f32, theme::ACCENT),
                 egui::StrokeKind::Inside,
-            );
-            let group = self
-                .groups()
-                .iter()
-                .find(|g| Some(g.id) == dock.group())
-                .unwrap();
-            let ordinal = group.members.iter().position(|&m| m == member).unwrap() + 1;
-            painter.text(
-                rect.left_bottom() + egui::vec2(0.0, 8.0),
-                egui::Align2::LEFT_TOP,
-                format!("MEMBER {ordinal} OF {}", group.members.len()),
-                egui::FontId::proportional(11.0),
-                theme::TEXT_MUTED,
             );
         }
     }

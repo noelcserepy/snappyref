@@ -7,7 +7,6 @@ pub enum Panel {
     Hidden,
     GroupDock {
         group: Id,
-        align_open: bool,
     },
     MemberDock {
         group: Id,
@@ -22,10 +21,7 @@ pub struct Dock {
 impl Dock {
     pub fn for_group(group: Id) -> Self {
         Self {
-            panel: Panel::GroupDock {
-                group,
-                align_open: false,
-            },
+            panel: Panel::GroupDock { group },
             text_focus: false,
         }
     }
@@ -50,34 +46,16 @@ impl Dock {
     pub fn group_shown(&self) -> bool {
         matches!(self.panel, Panel::GroupDock { .. })
     }
-    pub fn align_shown(&self) -> bool {
-        matches!(
-            self.panel,
-            Panel::GroupDock {
-                align_open: true,
-                ..
-            }
-        )
-    }
     pub fn normalized(mut self, b: &Board) -> Self {
         self.panel = match self.panel {
             Panel::Hidden => return self,
-            Panel::GroupDock { group, align_open } if b.groups.contains_key(&group) => {
-                self.panel = Panel::GroupDock {
-                    group,
-                    align_open: align_open && b.groups[&group].flow != GroupFlow::Free,
-                };
-                return self;
-            }
+            Panel::GroupDock { group } if b.groups.contains_key(&group) => return self,
             Panel::MemberDock { group, member } if b.owner(member) == Some(group) => return self,
             Panel::MemberDock { group, member } => {
                 if let Some(group) = b.owner(member) {
                     Panel::MemberDock { group, member }
                 } else if !b.live.contains(&member) && b.groups.contains_key(&group) {
-                    Panel::GroupDock {
-                        group,
-                        align_open: false,
-                    }
+                    Panel::GroupDock { group }
                 } else {
                     Panel::Hidden
                 }
@@ -103,15 +81,13 @@ pub enum Control {
     Ungroup,
     MemberMode(usize, bool),
     Absolute(i64),
-    Earlier,
-    Later,
     Detach,
 }
 impl Control {
     fn member_control(&self) -> bool {
         matches!(
             self,
-            Self::MemberMode(..) | Self::Absolute(_) | Self::Earlier | Self::Later | Self::Detach
+            Self::MemberMode(..) | Self::Absolute(_) | Self::Detach
         )
     }
 }
@@ -132,16 +108,11 @@ impl<G: Geometry> State<G> {
                 + 1
         })
     }
-    pub fn align_enabled(&self) -> bool {
-        self.dock.group_shown()
-            && self.board.groups[&self.dock.group().unwrap()].flow != GroupFlow::Free
-    }
     pub fn control_shown(&self, c: &Control) -> bool {
         if c.member_control() {
             return self.dock.member().is_some();
         }
         match c {
-            Control::Align(_) | Control::Auto(_) => self.dock.align_shown(),
             Control::RowGap(_) => {
                 self.dock.group_shown()
                     && self.board.groups[&self.dock.group().unwrap()].flow == GroupFlow::Wrap
@@ -161,17 +132,6 @@ impl<G: Geometry> State<G> {
             AxisMode::Fixed(g.size.get(a).copied().unwrap_or(0.0))
         }
     }
-    fn order_direction(&self, later: bool) -> Direction {
-        match (
-            self.board.groups[&self.dock.group().unwrap()].flow == GroupFlow::Column,
-            later,
-        ) {
-            (true, true) => Direction::Down,
-            (true, false) => Direction::Up,
-            (false, true) => Direction::Right,
-            (false, false) => Direction::Left,
-        }
-    }
     fn control_admission(&self, c: &Control) -> Outcome {
         if (c.member_control() && self.dock.member().is_none())
             || (!c.member_control() && !self.dock.group_shown())
@@ -187,9 +147,6 @@ impl<G: Geometry> State<G> {
             Control::Gap(n) | Control::RowGap(n) if !n.is_finite() => Err("invalid_value"),
             Control::Gap(_) if free || g.auto != GapMode::Number => Err("control_inactive"),
             Control::RowGap(_) if g.flow != GroupFlow::Wrap => Err("control_inactive"),
-            Control::Align(_) | Control::Auto(_) if !self.dock.align_shown() => {
-                Err("popover_closed")
-            }
             Control::Align(_) | Control::Auto(_) if free => Err("control_inactive"),
             Control::Align(xy)
                 if g.auto != GapMode::Number && xy[g.primary()] != g.align[g.primary()] =>
@@ -201,14 +158,6 @@ impl<G: Geometry> State<G> {
             Control::MemberMode(a, fill) => {
                 self.member_mode_admission(id, self.dock.member().unwrap(), *a, *fill)
             }
-            Control::Earlier | Control::Later => self
-                .arrow_target(
-                    id,
-                    self.dock.member().unwrap(),
-                    self.order_direction(matches!(c, Control::Later)),
-                )
-                .map(|_| ())
-                .ok_or("no_neighbor"),
             _ => Ok(()),
         }
     }
@@ -229,37 +178,17 @@ impl<G: Geometry> State<G> {
     pub fn clear_selection(&mut self) {
         self.set_dock(Dock::default());
     }
-    pub fn toggle_align(&mut self) -> Outcome {
-        if !self.align_enabled() {
-            return Err("control_inactive");
-        }
-        self.set_dock(Dock {
-            panel: Panel::GroupDock {
-                group: self.dock.group().unwrap(),
-                align_open: !self.dock.align_shown(),
-            },
-            text_focus: false,
-        });
-        Ok(())
-    }
-    pub fn dismiss_align(&mut self) {
-        let mut d = self.dock.clone();
-        if let Panel::GroupDock { align_open, .. } = &mut d.panel {
-            *align_open = false;
-        }
-        self.set_dock(d);
-    }
     pub fn focus_text(&mut self, active: bool) {
         let mut d = self.dock.clone();
         d.text_focus = active;
         self.set_dock(d);
     }
-    /// Dismisses one level: text focus, then alignment or member editing, then the group.
+    /// Dismisses one level: text focus, then member editing, then the group.
     pub fn escape(&mut self) {
         let mut d = self.dock.clone();
         if d.text_focus {
             d.text_focus = false;
-        } else if d.align_shown() || d.member().is_some() {
+        } else if d.member().is_some() {
             d = Dock::for_group(d.group().unwrap());
         } else {
             d = Dock::default();
@@ -298,11 +227,6 @@ impl<G: Geometry> State<G> {
                 self.set_member_mode(g, self.dock.member().unwrap(), a, fill)
             }
             Control::Absolute(slot) => self.toggle_absolute(g, self.dock.member().unwrap(), slot),
-            Control::Earlier | Control::Later => self.arrow(
-                g,
-                self.dock.member().unwrap(),
-                self.order_direction(matches!(c, Control::Later)),
-            ),
             Control::Detach => self.detach(g, self.dock.member().unwrap()),
         }
     }

@@ -21,6 +21,9 @@ impl BoardEditing {
         self.documents
             .set_viewport(board_id, canvas.viewport_state());
         canvas.reflow_dirty_group_members();
+        if canvas.group_dock_scrubbing() {
+            return Ok(false);
+        }
         let Some(library) = library else {
             return Ok(false);
         };

@@ -3,7 +3,7 @@ purpose:
   outcome: Keep flat group membership, order, and editing context coherent through board operations.
   owns:
     - Group membership, transfer, order, and Absolute membership.
-    - Selection-derived group and member editing modes, alignment dismissal, and text focus routing.
+    - Selection-derived group and member editing modes and text focus routing.
     - Admission and enablement for membership and order controls.
   excludes:
     - Geometry, sizing modes, gaps, alignment values, clipping, and rendered dimensions.
@@ -178,7 +178,7 @@ interface:
       behavior:
         effect:
           statement: Detach must keep the placement and rendered geometry, clear Absolute, leave the empty group
-            intact, select the loose placement, and hide its member dock.
+            intact, select the loose placement, and hide its member card.
           checks:
             - src/grouping/tests.rs::board::transfer_and_detach
         admission: An absent group must produce group-missing; an existing group that does not contain the placement
@@ -223,8 +223,7 @@ interface:
         group-missing: {}
       behavior:
         effect:
-          statement: The group must retain its order and apply spatial-layout flow conversion; choosing Free must
-            close its alignment popover.
+          statement: The group must retain its order and apply spatial-layout flow conversion.
           checks:
             - src/grouping/tests.rs::board::free_and_ungroup
         admission: An absent group must produce group-missing.
@@ -273,8 +272,7 @@ interface:
         accepted: {}
         group-missing: {}
       behavior:
-        effect: An ordinary member click must select its group; selecting a group must close alignment and release
-          text focus.
+        effect: An ordinary member click must select its group; selecting a group must release text focus.
         admission: An absent group must produce group-missing.
       caller_obligations: {}
     edit:
@@ -287,7 +285,7 @@ interface:
         accepted: {}
         member-missing: {}
       behavior:
-        effect: Double-click or primary-modifier click on a member must show the member dock and release text focus.
+        effect: Double-click or primary-modifier click on a member must show the member card and release text focus.
         admission: A placement without a group must produce member-missing.
       caller_obligations: {}
     clear:
@@ -298,24 +296,6 @@ interface:
       behavior:
         effect: Empty canvas, loose placement, mixed selection, or multiple selection must hide the dock and release
           its text focus.
-      caller_obligations: {}
-    alignment:
-      description: Toggles the selected group alignment popover.
-      input: {}
-      outcomes:
-        accepted: {}
-        control-inactive: {}
-      behavior:
-        effect: Only a selected non-Free group may toggle its alignment popover, and toggling must release text
-          focus.
-      caller_obligations: {}
-    dismiss:
-      description: Dismisses alignment on an outside press.
-      input: {}
-      outcomes:
-        accepted: {}
-      behavior:
-        effect: A press outside the popover and trigger must close the popover and still reach the clicked target.
       caller_obligations: {}
     focus:
       description: Transfers keyboard ownership to or from a text editor.
@@ -336,8 +316,8 @@ interface:
         accepted: {}
       behavior:
         effect:
-          statement: Escape must discard and release an unsubmitted text draft first, then close alignment, then
-            leave member editing for the group, then clear group selection.
+          statement: Escape must discard and release an unsubmitted text draft first, then leave member editing for
+            the group, then clear group selection.
           checks:
             - src/grouping/tests.rs::board::escape
       caller_obligations: {}
@@ -346,21 +326,19 @@ interface:
       input:
         c:
           type: GroupingControl
-          description: Flow, Ungroup, Absolute with a resolved slot, Earlier, Later, or Detach.
+          description: Flow, Ungroup, Absolute with a resolved slot, or Detach.
       outcomes:
         accepted: {}
         dock-unavailable: {}
-        no-neighbor: {}
       behavior:
         effect:
-          statement: Group controls must target the selected group and member controls the edited member; Earlier
-            and Later must reject at an endpoint or for Free or Absolute, and accepted controls must dispatch the
-            corresponding operation.
+          statement: Group controls must target the selected group and member controls the edited member, and
+            accepted controls must dispatch the corresponding operation.
           checks:
             - src/grouping/tests.rs::board::arrow
             - src/grouping/tests.rs::board::free_and_ungroup
         admission: A control outside its group or member editing mode must produce dock-unavailable before checking
-          its operation; Earlier and Later without a flowing neighbor must produce no-neighbor.
+          its operation.
       caller_obligations: {}
     key:
       description: Routes a direction key to the edited member.
@@ -435,8 +413,7 @@ interface:
       checks:
         - src/grouping/tests.rs::board::transfer_and_detach
     selection:
-      statement: The dock must refer to an existing group or member, follow an edited member on transfer, and never
-        retain an open alignment popover for a Free group.
+      statement: The dock must refer to an existing group or member and follow an edited member on transfer.
       checks:
         - src/grouping/tests.rs::board::transfer_and_detach
         - src/grouping/tests.rs::board::free_and_ungroup

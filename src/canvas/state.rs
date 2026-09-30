@@ -54,6 +54,7 @@ pub(crate) struct CanvasInteractionState {
     pub(super) selected_annotation_ids: Vec<i64>,
 
     pub(super) group_dock: crate::grouping::Dock,
+    pub(super) group_dock_scrubbing: bool,
     pub(super) group_gesture: Option<super::groups::GroupGesture>,
     pub(super) group_transform_changed: bool,
     pub(super) group_picker: Option<super::groups::GroupPicker>,

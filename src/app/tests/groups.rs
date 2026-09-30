@@ -1148,36 +1148,74 @@ fn inspect_group_dock_writes_artifact() {
     let mut scenario = InspectScenario::new("group-dock");
     let (_root, mut harness, ids) = dock_fixture();
     scenario.event("seed",serde_json::json!({"members":5,"viewport":[1280,800],"flow":"Wrap","width":530,"padding":16,"gap":24}));
+    let card = harness
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new("group-card")))
+        .unwrap();
+    scenario.assertion(
+        "card sits center-right, 16 pixels from the canvas edge",
+        card.right() == 1264.0 && (card.center().y - 400.0).abs() < 0.5,
+    );
+    // The card reads top to bottom: identity, flow, alignment beside spacing
+    // and spread, then the frame.
     let inventory = [
         "Group name",
         "Row",
         "Column",
         "Wrap",
         "Free",
+        "Align left, top",
         "Gap",
         "Row gap",
-        "Padding",
-        "Alignment",
+        "Off",
+        "Between",
+        "Evenly",
+        "Around",
         "W size",
         "W hug contents",
         "H size",
         "H hug contents",
+        "Padding",
         "Clip",
-        "Ungroup",
     ];
-    let mut previous = f32::NEG_INFINITY;
+    let mut previous = egui::pos2(f32::NEG_INFINITY, f32::NEG_INFINITY);
     for label in inventory {
-        let widget = harness.get_by_label(label);
+        let rect = harness.get_by_label(label).rect();
         scenario.event(
             "control",
-            serde_json::json!({"label":label,"rect":format!("{:?}",widget.rect())}),
+            serde_json::json!({"label":label,"rect":format!("{rect:?}")}),
         );
-        assert!(widget.rect().width() > 10.0, "Visible control: {label}");
-        let x = widget.rect().center().x;
-        assert!(x > previous, "Control order: {label}");
-        previous = x;
+        assert!(rect.width() > 10.0, "Visible control: {label}");
+        assert!(card.contains_rect(rect), "Inside card: {label}");
+        assert!(
+            rect.top() > previous.y || rect.left() > previous.x,
+            "Control order: {label}"
+        );
+        previous = rect.left_top();
     }
-    scenario.assertion("group inventory follows artboard order", true);
+    scenario.assertion("group inventory follows card order", true);
+    // Every pad cell keeps one grid rect, so the larger selected glyph never
+    // shifts its neighbours.
+    let cells: Vec<_> = (0..9)
+        .map(|i| {
+            harness
+                .get_by_label(&format!(
+                    "Align {}, {}",
+                    ["left", "center", "right"][i % 3],
+                    ["top", "center", "bottom"][i / 3]
+                ))
+                .rect()
+        })
+        .collect();
+    let step = cells[1].left() - cells[0].left();
+    scenario.assertion(
+        "packed pad cells sit on a fixed grid",
+        cells.iter().enumerate().all(|(i, r)| {
+            (r.size() - cells[0].size()).length() < 0.01
+                && (r.left() - cells[0].left() - (i % 3) as f32 * step).abs() < 0.01
+                && (r.top() - cells[0].top() - (i / 3) as f32 * step).abs() < 0.01
+        }),
+    );
     for (label, draft, blur, expected) in [
         ("Gap", "1.5", false, 24.0),
         ("Row gap", "1.5", true, 24.0),
@@ -1221,6 +1259,53 @@ fn inspect_group_dock_writes_artifact() {
         );
     }
     scenario.capture_screen("numeric-draft-validation", &mut harness);
+    // The handle is the icon just left of the field.
+    let padding = harness.state().canvas.groups()[0].padding;
+    let handle = harness.get_by_label("Padding").rect().left_center() - egui::vec2(13.0, 0.0);
+    harness.event(egui::Event::PointerMoved(handle));
+    harness.step();
+    for (dx, pressed) in [
+        (0.0, Some(true)),
+        (15.0, None),
+        (30.0, None),
+        (30.0, Some(false)),
+    ] {
+        harness.event(egui::Event::PointerMoved(handle + egui::vec2(dx, 0.0)));
+        if let Some(pressed) = pressed {
+            harness.event(egui::Event::PointerButton {
+                pos: handle + egui::vec2(dx, 0.0),
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.step();
+    }
+    harness.step();
+    let scrubbed = harness.state().canvas.groups()[0].padding;
+    let ctx = harness.ctx.clone();
+    harness.state_mut().undo_document_history(&ctx);
+    harness.step();
+    let undone = harness.state().canvas.groups()[0].padding;
+    // Undo drops the Group selection.
+    let group = harness.state().canvas.groups()[0].id;
+    harness.state_mut().canvas.select_group(group);
+    scenario.assertion(
+        "scrubbing padding is one undoable edit",
+        scrubbed == (padding + 30.0).round() && undone == padding,
+    );
+    let width = harness.state().canvas.groups()[0].container.scaled_size().x;
+    harness.get_by_label("W size").click();
+    harness.step();
+    harness.get_by_label("Group name").click();
+    for _ in 0..4 {
+        harness.step();
+    }
+    scenario.assertion(
+        "unchanged size blur keeps its axis mode",
+        harness.state().canvas.groups()[0].layout.fixed[0]
+            && harness.state().canvas.groups()[0].container.scaled_size().x == width,
+    );
     for (field, draft, clicked) in [
         ("Group name", "Renamed", "Row"),
         ("Group name", "Faces", "Wrap"),
@@ -1230,9 +1315,10 @@ fn inspect_group_dock_writes_artifact() {
     ] {
         if field == "W size" {
             harness.get_by_label("Wrap").click();
-            for _ in 0..4 {
-                harness.step();
-            }
+        }
+        // The card relayouts a frame after a flow change.
+        for _ in 0..4 {
+            harness.step();
         }
         harness.get_by_label(field).click();
         harness.step();
@@ -1275,44 +1361,47 @@ fn inspect_group_dock_writes_artifact() {
         );
     }
     scenario.capture_screen("same-frame-submissions", &mut harness);
-
-    harness.get_by_label("Alignment").click();
-    for _ in 0..4 {
-        for _ in 0..4 {
-            harness.step();
-        }
-    }
-    harness.event(egui::Event::PointerGone);
-    for _ in 0..16 {
-        harness.step();
-    }
-    scenario.capture_screen("group-dock-alignment", &mut harness);
     harness.get_by_label("Between").click();
     for _ in 0..4 {
         harness.step();
     }
+    let main = harness.state().canvas.groups()[0].layout.align[0];
+    harness.get_by_label("Align bottom").click();
+    for _ in 0..4 {
+        harness.step();
+    }
     scenario.assertion(
-        "Auto disables saved primary alternatives",
-        harness
-            .get_by_label("Align right, top")
-            .accesskit_node()
-            .is_disabled(),
+        "spread pad picks a cross-axis band and keeps the main axis",
+        harness.state().canvas.groups()[0].layout.align == [main, 2]
+            && harness.query_by_label("Align left, top").is_none(),
     );
-    scenario.capture_screen("auto-alignment", &mut harness);
-    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Escape);
+    harness.event(egui::Event::PointerGone);
+    for _ in 0..16 {
+        harness.step();
+    }
+    scenario.capture_screen("spread-bands", &mut harness);
+    harness.get_by_label("Column").click();
+    for _ in 0..4 {
+        harness.step();
+    }
     scenario.assertion(
-        "Esc closes popover before selection",
-        !harness.state().canvas.selected_group_ids().is_empty(),
+        "Column bands pick the horizontal cross axis",
+        harness.query_by_label("Align right").is_some(),
     );
+    scenario.capture_screen("column-bands", &mut harness);
     harness.get_by_label("Free").click();
     for _ in 0..4 {
         harness.step();
     }
     scenario.assertion(
-        "Free dims gap and alignment",
+        "Free dims gap, alignment and spread",
         harness.get_by_label("Gap").accesskit_node().is_disabled()
             && harness
-                .get_by_label("Alignment")
+                .get_by_label("Align top")
+                .accesskit_node()
+                .is_disabled()
+            && harness
+                .get_by_label("Evenly")
                 .accesskit_node()
                 .is_disabled(),
     );
@@ -1343,27 +1432,7 @@ fn inspect_group_dock_writes_artifact() {
         harness.state().canvas.groups()[0].name == "Faces"
             && !harness.state().canvas.selected_group_ids().is_empty(),
     );
-    harness.get_by_label("Alignment").click();
-    for _ in 0..4 {
-        harness.step();
-    }
-    inspect_click_at(&harness, egui::pos2(80.0, 650.0), egui::Modifiers::NONE);
-    for _ in 0..4 {
-        harness.step();
-    }
-    scenario.assertion(
-        "outside press beside popover reaches empty canvas",
-        harness.state().canvas.selected_group_ids().is_empty(),
-    );
     let group = harness.state().canvas.groups()[0].id;
-    harness.state_mut().canvas.select_group(group);
-    for _ in 0..4 {
-        harness.step();
-    }
-    scenario.assertion(
-        "selection change closes alignment",
-        harness.query_by_label("Between").is_none(),
-    );
     harness.state_mut().canvas.select_placements(&ids);
     let selected = harness.state().canvas.selected_placement_ids();
     harness.state_mut().canvas.delete_placements(&selected);
@@ -1372,16 +1441,11 @@ fn inspect_group_dock_writes_artifact() {
         harness.step();
     }
     scenario.assertion(
-        "empty group retains dock",
+        "empty group retains card",
         harness.state().canvas.groups()[0].members.is_empty()
             && harness.query_by_label("Ungroup").is_some(),
     );
     scenario.capture_screen("empty-group", &mut harness);
-    harness.set_size(egui::vec2(480.0, 420.0));
-    for _ in 0..16 {
-        harness.step();
-    }
-    scenario.capture_screen("narrow-natural-row", &mut harness);
     let report = scenario.finish();
     assert!(report.passed, "{}", report.artifact_dir.display());
 }
@@ -1390,82 +1454,22 @@ fn inspect_group_dock_writes_artifact() {
 fn inspect_group_dock_narrow_writes_artifact() {
     let mut scenario = InspectScenario::new("group-dock-narrow");
     let (_root, mut harness, _) = dock_fixture();
-    harness.set_size(egui::vec2(1600.0, 800.0));
+    harness.set_size(egui::vec2(640.0, 480.0));
     for _ in 0..16 {
         harness.step();
     }
-    let left = harness.get_by_label("Group name").rect().left() - 6.0;
-    let right = harness.get_by_label("Ungroup").rect().right() + 10.0;
-    scenario.assertion(
-        "wide dock stays centered at natural width",
-        (left + right - 1600.0).abs() < 2.0 && right - left < 1552.0,
-    );
-    scenario.event("wide-dock", serde_json::json!({"left":left,"right":right}));
-    scenario.capture_screen("wide-natural-width", &mut harness);
-    harness.set_size(egui::vec2(640.0, 800.0));
-    for _ in 0..16 {
-        harness.step();
-    }
-    scenario.capture_screen("leading-controls", &mut harness);
-    let leading = harness.get_by_label("Group name").rect();
-    scenario.assertion(
-        "leading controls inside side margin",
-        leading.left() >= 24.0,
-    );
-    harness.hover_at(egui::pos2(320.0, 750.0));
-    harness.event(egui::Event::MouseWheel {
-        unit: egui::MouseWheelUnit::Point,
-        delta: egui::vec2(-2000.0, 0.0),
-        phase: egui::TouchPhase::Move,
-        modifiers: egui::Modifiers::NONE,
-    });
-    for _ in 0..32 {
-        harness.step();
-    }
-    let trailing = harness.get_by_label("Ungroup").rect();
-    scenario.event(
-        "horizontal-scroll",
-        serde_json::json!({"leading":format!("{leading:?}"),"trailing":format!("{trailing:?}")}),
-    );
-    scenario.assertion(
-        "trailing action inside side margins",
-        trailing.left() >= 24.0 && trailing.right() <= 616.0,
-    );
-    harness.event(egui::Event::PointerGone);
-    for _ in 0..16 {
-        harness.step();
-    }
-    scenario.capture_screen("trailing-controls", &mut harness);
-    for label in [
-        "Group name",
-        "Row",
-        "Column",
-        "Wrap",
-        "Free",
-        "Gap",
-        "Row gap",
-        "Padding",
-        "Alignment",
-        "W size",
-        "W hug contents",
-        "H size",
-        "H hug contents",
-        "Clip",
-        "Ungroup",
-    ] {
-        harness.get_by_label(label).scroll_to_me();
-        for _ in 0..32 {
-            harness.step();
-        }
+    scenario.capture_screen("clamped-card", &mut harness);
+    let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 480.0)).shrink(16.0);
+    for label in ["Group name", "Ungroup", "Align left, top", "Around", "Clip"] {
         let rect = harness.get_by_label(label).rect();
-        scenario.assertion(label, rect.left() >= 24.0 && rect.right() <= 616.0);
+        scenario.assertion(label, canvas.contains_rect(rect));
     }
     harness.get_by_label("Ungroup").click();
     for _ in 0..8 {
         harness.step();
     }
     scenario.assertion(
-        "scrolled trailing action accepts click",
+        "clamped card accepts clicks",
         harness.state().canvas.groups().is_empty(),
     );
     let report = scenario.finish();
@@ -1500,23 +1504,27 @@ fn inspect_member_dock_writes_artifact() {
             harness.step();
         }
     }
-    let inventory = [
-        "W Fixed",
-        "W Fill",
-        "H Fixed",
-        "H Fill",
-        "Absolute",
-        "Move earlier",
-        "Move later",
-        "Detach",
-    ];
-    let mut previous = f32::NEG_INFINITY;
+    let card = harness
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new("group-card")))
+        .unwrap();
+    // The member card reads top to bottom from the group card's spot.
+    let inventory = ["Faces", "Detach", "Fill width", "Fill height", "Absolute"];
+    let mut previous = egui::pos2(f32::NEG_INFINITY, f32::NEG_INFINITY);
     for label in inventory {
-        let x = harness.get_by_label(label).rect().center().x;
-        assert!(x > previous, "Control order: {label}");
-        previous = x;
+        let rect = harness.get_by_label(label).rect();
+        assert!(card.contains_rect(rect), "Inside card: {label}");
+        assert!(
+            rect.top() > previous.y || rect.left() > previous.x,
+            "Control order: {label}"
+        );
+        previous = rect.left_top();
     }
-    harness.get_by_label("H Fill").click();
+    scenario.assertion(
+        "member card replaces the group card in place",
+        card.right() == 1264.0,
+    );
+    harness.get_by_label("Fill height").click();
     for _ in 0..4 {
         harness.step();
     }
@@ -1534,22 +1542,25 @@ fn inspect_member_dock_writes_artifact() {
         harness.step();
     }
     scenario.assertion(
-        "Absolute retains and dims Fill and ordering",
+        "Absolute retains and dims Fill",
         harness
-            .get_by_label("H Fill")
+            .get_by_label("Fill height")
             .accesskit_node()
-            .is_disabled()
-            && harness
-                .get_by_label("Move later")
-                .accesskit_node()
-                .is_disabled(),
+            .is_disabled(),
     );
     scenario.capture_screen("absolute-dimmed", &mut harness);
     harness.get_by_label("Absolute").click();
     for _ in 0..4 {
         harness.step();
     }
-    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Escape);
+    harness.get_by_label("Faces").click();
+    for _ in 0..4 {
+        harness.step();
+    }
+    scenario.assertion(
+        "Group name returns to the group card",
+        harness.query_by_label("Ungroup").is_some(),
+    );
     harness.get_by_label("H hug contents").click();
     for _ in 0..4 {
         harness.step();
@@ -1576,7 +1587,7 @@ fn inspect_member_dock_writes_artifact() {
     scenario.assertion(
         "Hug parent refuses member Fill",
         harness
-            .get_by_label("H Fill")
+            .get_by_label("Fill height")
             .accesskit_node()
             .is_disabled(),
     );
