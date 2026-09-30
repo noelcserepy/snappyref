@@ -1117,17 +1117,6 @@ fn field(
     // Keyed by name alone so focus and drafts survive a segment moving rows.
     let id = egui::Id::new(("group-dock-field", name));
     let font = FontId::proportional(size);
-    // TextEdit top-aligns its single row and ignores extra height, so the
-    // frame's vertical margin is what centers the text. A custom frame
-    // replaces TextEdit::margin, so the margin lives on the frame.
-    let row = ui.fonts_mut(|f| f.row_height(&font));
-    let top = ((height - row) * 0.5).round().max(0.0);
-    let margin = egui::Margin {
-        left: 0,
-        right: 0,
-        top: top as i8,
-        bottom: (height - row - top).round().max(0.0) as i8,
-    };
     let key = id.with("draft");
     let mut draft = ui
         .ctx()
@@ -1142,7 +1131,9 @@ fn field(
                     .id(id)
                     .desired_width(width)
                     .font(font)
-                    .frame(egui::Frame::NONE.inner_margin(margin)),
+                    .frame(egui::Frame::NONE)
+                    .min_size(egui::vec2(width, height))
+                    .vertical_align(egui::Align::Center),
             )
         })
         .inner;
