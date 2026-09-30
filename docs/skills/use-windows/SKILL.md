@@ -1,7 +1,7 @@
 ---
 name: use-windows
 description: |
-  Build, check, or test SnappyRef on a real Windows machine from the Mac development checkout. Use when asked to run Windows cargo checks/builds/tests, verify Windows-only behavior, or sync local Mac edits to the Windows checkout.
+  Windows clippy, check, build, or test for SnappyRef on a real Windows machine from the Mac checkout. Use for any Windows cargo command (cross-compiling from the Mac fails on ring's C build), Windows-only behavior, or syncing Mac edits to the Windows checkout.
 user-invocable: true
 argument-hint: "[windows-check-or-build]"
 ---

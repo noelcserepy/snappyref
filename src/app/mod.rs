@@ -204,7 +204,8 @@ pub struct SnappyRefApp {
     /// bottom-left for [`crate::ui::theme::STATUS_MESSAGE_SECONDS`] and then clears.
     status: String,
     status_shown: String,
-    status_shown_since: Instant,
+    /// egui input time, so tests that step the harness see deterministic expiry.
+    status_shown_since: f64,
     perf_log: Option<PerfLogState>,
     frame_perf: FramePerfState,
     perf_scenario: Option<PerfScenarioState>,
@@ -314,7 +315,7 @@ impl SnappyRefApp {
             context_menu_pos: None,
             status: String::new(),
             status_shown: String::new(),
-            status_shown_since: Instant::now(),
+            status_shown_since: 0.0,
             perf_log: None,
             frame_perf: FramePerfState::default(),
             perf_scenario: None,
@@ -1232,17 +1233,19 @@ impl SnappyRefApp {
             self.status_shown.clear();
             return None;
         }
+        let now = ctx.input(|input| input.time);
         if self.status != self.status_shown {
             self.status_shown.clone_from(&self.status);
-            self.status_shown_since = Instant::now();
+            self.status_shown_since = now;
         }
-        let visible_for = Duration::from_secs_f32(crate::ui::theme::STATUS_MESSAGE_SECONDS);
-        let Some(remaining) = visible_for.checked_sub(self.status_shown_since.elapsed()) else {
+        let remaining =
+            f64::from(crate::ui::theme::STATUS_MESSAGE_SECONDS) - (now - self.status_shown_since);
+        if remaining <= 0.0 {
             self.status.clear();
             self.status_shown.clear();
             return None;
-        };
-        ctx.request_repaint_after(remaining);
+        }
+        ctx.request_repaint_after_secs(remaining as f32);
         Some(&self.status)
     }
 }

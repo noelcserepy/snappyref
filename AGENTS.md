@@ -29,9 +29,11 @@ cargo test --locked
 cargo build --locked --release
 docs/skills/inspect/scripts/run-scenario.sh --list
 docs/skills/inspect/scripts/run-scenario.sh <scenario>
+python3 scripts/check-refactor-behavior.py
 ```
 
-The first three commands are the [pre-push gate](.githooks/pre-push). Hook
+The first three commands are the [pre-push gate](.githooks/pre-push). The last
+runs the library suite and every refactor-covered scenario in one pass. Hook
 setup and CI are in the [README](README.md#development-checks).
 
 When the user wants to test a build by hand, stop the previous instance and run
