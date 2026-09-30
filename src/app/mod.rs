@@ -1062,6 +1062,11 @@ impl SnappyRefApp {
     }
 
     fn persist_canvas_changes_debounced(&mut self, ctx: &egui::Context) {
+        // A scrub records one entry on release. Explicit flushes, like board
+        // activation, still record mid-scrub.
+        if self.canvas.group_dock_scrubbing() {
+            return;
+        }
         let document_changed = match self.board_editing.record_pending_document_changes_history(
             &mut self.canvas,
             self.library.as_ref(),

@@ -52,7 +52,7 @@ interface:
             - inspect::group-dock
         draft-focus: Enter or blur must submit valid drafts and release text focus; Escape must discard an unsubmitted draft and release focus before dispatching further dismissal.
         placement:
-          statement: The card must sit vertically centered 16 pixels inside the canvas's right edge, wherever the Group is. Member mode uses the same card and spot.
+          statement: The card must sit vertically centered 16 pixels inside the canvas's right edge, wherever the Group is, and scroll vertically when the canvas is shorter than the card plus 16 pixel margins. Member mode uses the same card and spot.
           checks:
             - inspect::group-dock
             - inspect::group-dock-narrow

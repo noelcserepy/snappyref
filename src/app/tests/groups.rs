@@ -1606,3 +1606,53 @@ fn inspect_member_dock_writes_artifact() {
     let report = scenario.finish();
     assert!(report.passed, "{}", report.artifact_dir.display());
 }
+
+#[test]
+/// Board activation flushes a scrub in progress instead of dropping it.
+fn scrub_survives_board_switch() {
+    let (_root, mut harness, _ids) = dock_fixture();
+    let other = harness
+        .state()
+        .library
+        .as_ref()
+        .unwrap()
+        .fixture_board("Second")
+        .unwrap()
+        .id;
+    harness.step();
+    let padding = harness.state().canvas.groups()[0].padding;
+    let handle = harness.get_by_label("Padding").rect().left_center() - egui::vec2(13.0, 0.0);
+    harness.event(egui::Event::PointerMoved(handle));
+    harness.step();
+    for (dx, pressed) in [(0.0, Some(true)), (15.0, None), (30.0, None)] {
+        harness.event(egui::Event::PointerMoved(handle + egui::vec2(dx, 0.0)));
+        if let Some(pressed) = pressed {
+            harness.event(egui::Event::PointerButton {
+                pos: handle + egui::vec2(dx, 0.0),
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.step();
+    }
+    let edited = harness.state().canvas.groups()[0].padding;
+    let first = harness.state().active_board_id;
+    harness.state_mut().switch_to_board(other);
+    harness.step();
+    let second = harness.state().active_board_id;
+    harness.event(egui::Event::PointerButton {
+        pos: handle + egui::vec2(30.0, 0.0),
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    harness.state_mut().switch_to_board(first);
+    harness.step();
+    harness.step();
+    let back = harness.state().canvas.groups()[0].padding;
+    assert_ne!(first, second);
+    assert_eq!(edited, padding + 30.0);
+    assert_eq!(back, edited);
+}

@@ -184,14 +184,23 @@ impl CanvasState {
             viewport.right() - 16.0 + (1.0 - progress) * CARD_SLIDE,
             viewport.center().y,
         );
+        // Short windows scroll the card instead of pushing controls offscreen.
+        let max_height = viewport.height() - 32.0 - 2.0 * CARD_PADDING;
         let bounds = overlay(ui.ctx(), pos, progress, active, |ui| {
             panel(14).inner_margin(CARD_PADDING as i8).show(ui, |ui| {
                 ui.set_width(CARD_INNER);
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
-                match &absolute {
-                    Some(absolute) => member_card(ui, &model, &group, absolute, &mut input),
-                    None => group_card(ui, &model, &group, &mut input),
-                }
+                // An Area offers last frame's size, which would never let the card grow back.
+                ui.set_max_height(max_height);
+                egui::ScrollArea::vertical()
+                    .id_salt("group-card-scroll")
+                    .show(ui, |ui| {
+                        ui.set_width(CARD_INNER);
+                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+                        match &absolute {
+                            Some(absolute) => member_card(ui, &model, &group, absolute, &mut input),
+                            None => group_card(ui, &model, &group, &mut input),
+                        }
+                    });
             });
         });
         let DockInput {
@@ -346,7 +355,12 @@ fn group_card(
             CARD_HALF,
         );
         let enabled = model.control_enabled(&Control::Clip);
-        if switch(ui, "Clip", CARD_HALF, group.layout.clip, enabled).clicked() {
+        if tip(
+            switch(ui, "Clip", CARD_HALF, group.layout.clip, enabled),
+            "hide overflow",
+        )
+        .clicked()
+        {
             input.clicked_controls.push(Control::Clip);
         }
     });
@@ -483,7 +497,12 @@ fn member_card(
         }
     });
     let enabled = model.control_enabled(absolute);
-    if switch(ui, "Absolute", CARD_INNER, member.absolute, enabled).clicked() {
+    if tip(
+        switch(ui, "Absolute", CARD_INNER, member.absolute, enabled),
+        "place freely, outside the flow",
+    )
+    .clicked()
+    {
         input.clicked_controls.push(absolute.clone());
     }
 }

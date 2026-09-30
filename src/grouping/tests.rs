@@ -235,6 +235,7 @@ mod board {
         assert_eq!(s.press_arrow(Direction::Left), Err("text_owns_key"));
         s.escape();
         assert_eq!(s.dock.panel, Panel::GroupDock { group: 0 });
+        assert!(!s.dock.text_focus);
         s.edit_member(2).unwrap();
         s.escape();
         assert!(s.dock.group_shown());
