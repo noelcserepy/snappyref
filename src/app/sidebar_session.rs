@@ -9,7 +9,7 @@ pub(super) fn sidebar_tab_session_value(tab: SidebarTab) -> &'static str {
 
 pub(super) fn sidebar_tab_from_session(value: &str) -> SidebarTab {
     match value {
-        "boards" => SidebarTab::Boards,
-        _ => SidebarTab::Options,
+        "settings" => SidebarTab::Options,
+        _ => SidebarTab::Boards,
     }
 }

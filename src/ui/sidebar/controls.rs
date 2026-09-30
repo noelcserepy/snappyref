@@ -132,102 +132,66 @@ pub(super) fn paint_sidebar_subcard(ui: &mut egui::Ui, add_contents: impl FnOnce
     });
 }
 
-pub(crate) struct SidebarHintResponse {
-    pub clicked: bool,
-    /// Painted pill rect; `None` while the sidebar is open and the hint hidden.
-    pub rect: Option<egui::Rect>,
-}
-
-pub(crate) fn show_sidebar_hint(
+/// Collapsed sidebar tab: a short pull tab on the left screen edge, level
+/// with the sidebar top and sized to its shortcut label.
+pub(crate) fn show_sidebar_edge(
     ctx: &egui::Context,
     screen_rect: egui::Rect,
     sidebar_open: bool,
-    active_board_name: &str,
-) -> SidebarHintResponse {
+) -> bool {
+    use crate::ui::{motion, theme};
     if sidebar_open {
-        return SidebarHintResponse {
-            clicked: false,
-            rect: None,
-        };
+        return false;
     }
-
-    let mut clicked = false;
-    let area = egui::Area::new(egui::Id::new("sidebar_hint"))
+    egui::Area::new(egui::Id::new("sidebar_edge"))
         .order(egui::Order::Foreground)
-        .fixed_pos(egui::pos2(
-            screen_rect.left() + crate::ui::theme::SPACE_4,
-            screen_rect.bottom() - crate::ui::theme::SPACE_4,
-        ))
-        .anchor(
-            egui::Align2::LEFT_BOTTOM,
-            egui::vec2(crate::ui::theme::SPACE_4, -crate::ui::theme::SPACE_4),
-        )
+        .fixed_pos(super::sidebar_rect(screen_rect).min)
         .show(ctx, |ui| {
-            egui::Frame::new()
-                .fill(crate::ui::theme::SURFACE_ELEVATED)
-                .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT))
-                .inner_margin(egui::Margin {
-                    left: 8,
-                    right: 8,
-                    top: 6,
-                    bottom: 6,
-                })
-                .show(ui, |ui| {
-                    let label = format!(
-                        "{}  {}",
-                        truncate_board_name(active_board_name, 28),
-                        shortcuts::display_shortcut_label(shortcuts::sidebar_shortcut_label())
-                    );
-                    let base_galley = ui.painter().layout_no_wrap(
-                        label.clone(),
-                        egui::TextStyle::Small.resolve(ui.style()),
-                        crate::ui::theme::TEXT_MUTED,
-                    );
-                    let (rect, _) =
-                        ui.allocate_exact_size(base_galley.size(), egui::Sense::hover());
-                    let hovered = ui.ctx().input(|input| {
-                        input
-                            .pointer
-                            .latest_pos()
-                            .is_some_and(|pos| rect.contains(pos))
-                    });
-                    let hover = crate::ui::motion::hover_amount(
-                        ui.ctx(),
-                        egui::Id::new("sidebar_hint_hover"),
-                        hovered,
-                    );
-                    let label_color = crate::ui::motion::mix(
-                        crate::ui::theme::TEXT_MUTED,
-                        crate::ui::theme::TEXT,
-                        hover,
-                    );
-                    let galley = ui.painter().layout_no_wrap(
-                        label,
-                        egui::TextStyle::Small.resolve(ui.style()),
-                        label_color,
-                    );
-                    ui.painter().galley(rect.min, galley, label_color);
-                    if hovered {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
-                    clicked = hovered && ui.input(|input| input.pointer.primary_clicked());
-                });
-        });
-    SidebarHintResponse {
-        clicked,
-        rect: Some(area.response.rect),
-    }
+            let galley = ui.painter().layout_no_wrap(
+                shortcuts::sidebar_shortcut_label().to_owned(),
+                egui::FontId::proportional(13.0),
+                egui::Color32::PLACEHOLDER,
+            );
+            let size = galley.size() + egui::vec2(2.0 * theme::SPACE_3, theme::SPACE_3);
+            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Toggle sidebar")
+            });
+            let hover = motion::hover_amount(
+                ui.ctx(),
+                egui::Id::new("sidebar_edge_hover"),
+                response.hovered(),
+            );
+            let radius = theme::RADIUS_CONTROL;
+            ui.painter().rect_filled(
+                rect,
+                egui::CornerRadius {
+                    nw: 0,
+                    ne: radius,
+                    sw: 0,
+                    se: radius,
+                },
+                motion::mix(theme::SURFACE_ELEVATED, theme::TEXT_SUBTLE, hover * 0.25),
+            );
+            let color = motion::mix(theme::TEXT_MUTED, theme::TEXT, hover);
+            ui.painter()
+                .galley(rect.center() - galley.size() * 0.5, galley, color);
+            if response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            response.clicked()
+        })
+        .inner
 }
 
 /// Transient status pill: the result of the last action or a storage error.
-/// Sits above the sidebar hint, or right of the open sidebar, in the same
+/// Sits bottom-left, beside the sidebar when it is open, in the same
 /// quiet muted-on-elevated style so it reads as chrome, not canvas. Call
 /// every frame so the entrance restarts cleanly for the next message.
 pub(crate) fn show_status_message(
     ctx: &egui::Context,
     screen_rect: egui::Rect,
     sidebar_open: bool,
-    sidebar_hint_rect: Option<egui::Rect>,
     status: Option<&str>,
 ) {
     let entrance =
@@ -235,19 +199,16 @@ pub(crate) fn show_status_message(
     let Some(status) = status else {
         return;
     };
-    let anchor = match sidebar_hint_rect {
-        Some(hint) => egui::pos2(hint.left(), hint.top() - crate::ui::theme::SPACE_2),
-        None => egui::pos2(
-            screen_rect.left()
-                + crate::ui::theme::SPACE_4
-                + if sidebar_open {
-                    super::SIDEBAR_WIDTH
-                } else {
-                    0.0
-                },
-            screen_rect.bottom() - crate::ui::theme::SPACE_4,
-        ),
-    };
+    let anchor = egui::pos2(
+        screen_rect.left()
+            + crate::ui::theme::SPACE_4
+            + if sidebar_open {
+                super::SIDEBAR_WIDTH
+            } else {
+                0.0
+            },
+        screen_rect.bottom() - crate::ui::theme::SPACE_4,
+    );
     let settle = crate::ui::motion::settle_offset(entrance);
     egui::Area::new(egui::Id::new("status_message"))
         .order(egui::Order::Foreground)
@@ -282,15 +243,3 @@ pub(crate) fn show_status_message(
 }
 
 const STATUS_MESSAGE_MAX_WIDTH: f32 = 360.0;
-
-fn truncate_board_name(name: &str, max_chars: usize) -> String {
-    if name.chars().count() <= max_chars {
-        return name.to_owned();
-    }
-    let mut truncated = name
-        .chars()
-        .take(max_chars.saturating_sub(3))
-        .collect::<String>();
-    truncated.push_str("...");
-    truncated
-}
