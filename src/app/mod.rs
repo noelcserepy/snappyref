@@ -1248,17 +1248,32 @@ impl SnappyRefApp {
 }
 
 impl eframe::App for SnappyRefApp {
+    /// Drains work that arrives from helpers and services. eframe also calls
+    /// this while the window is hidden, so imports, search, and update checks
+    /// keep moving without an egui pass.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.frame_perf.import_results_drained = 0;
+        self.frame_perf.import_result_drain_ms = 0.0;
+        self.handle_import_results(ctx);
+        self.search.handle_results();
+        self.drive_semantic_search_install(ctx);
+        self.drive_embedding_backfill(ctx);
+        let settled_idle = self.app_settled_idle();
+        self.update_service.tick(settled_idle);
+        self.drive_update_smoke(ctx, settled_idle);
+        self.drive_user_update_flow(ctx);
+        if let Some(wait) = self.update_service.time_until_next_check() {
+            // Make sure we wake up at the next scheduled check; clamp to
+            // a reasonable lower bound so we never hot-loop.
+            ctx.request_repaint_after(wait.max(Duration::from_millis(250)));
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let screen_rect = ui.ctx().viewport_rect();
         self.update_window_state(ui.ctx());
         ui.set_clip_rect(screen_rect);
         ui.expand_to_include_rect(screen_rect);
-        self.frame_perf.import_results_drained = 0;
-        self.frame_perf.import_result_drain_ms = 0.0;
-
-        self.handle_import_results(ui.ctx());
-        self.search.handle_results();
-        self.drive_semantic_search_install(ui.ctx());
         self.handle_history_shortcuts(ui.ctx());
         if self.drive_perf_scenario(ui.ctx(), screen_rect) {
             return;
@@ -1334,7 +1349,6 @@ impl eframe::App for SnappyRefApp {
             self.status = error;
         }
         self.handle_pending_crop_requests(ui.ctx());
-        self.drive_embedding_backfill(ui.ctx());
         self.handle_pending_annotation_requests();
         if let Some((name, members)) = self.canvas.take_group_creation()
             && let Some(library) = &self.library
@@ -1351,16 +1365,6 @@ impl eframe::App for SnappyRefApp {
         self.persist_canvas_changes_debounced(ui.ctx());
         if let Some(error) = self.board_editing.persistence.take_error() {
             self.status = error;
-        }
-        let settled_idle = self.app_settled_idle();
-        self.update_service.tick(settled_idle);
-        self.drive_update_smoke(ui.ctx(), settled_idle);
-        self.drive_user_update_flow(ui.ctx());
-        if let Some(wait) = self.update_service.time_until_next_check() {
-            // Make sure we wake up at the next scheduled check; clamp to
-            // a reasonable lower bound so we never hot-loop.
-            ui.ctx()
-                .request_repaint_after(wait.max(Duration::from_millis(250)));
         }
         let board_summaries = self.board_editing.documents.summaries();
         let about_updates = self.about_updates_view();

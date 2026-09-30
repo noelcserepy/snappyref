@@ -292,6 +292,36 @@ pub(crate) fn placement_resize_cursor_icon(handle: PlacementResizeHandle) -> egu
     }
 }
 
+/// egui has no rotate cursor icon, so the rotation handle shows this bitmap.
+/// It is rasterized once on first hover and reused, which lets the platform
+/// layer skip re-uploading it each frame.
+pub(crate) fn placement_rotation_cursor_image() -> egui::CustomCursorImage {
+    const SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+<g fill="none" stroke-linecap="round" stroke-linejoin="round">
+<path d="M12 5A7 7 0 1 1 5 12" stroke="#fff" stroke-width="4.5"/>
+<path d="M1.5 12.5L5 7L8.5 12.5Z" fill="#fff" stroke="#fff" stroke-width="2.5"/>
+<path d="M12 5A7 7 0 1 1 5 12" stroke="#000" stroke-width="2"/>
+<path d="M1.5 12.5L5 7L8.5 12.5Z" fill="#000" stroke="#000" stroke-width="0.5"/>
+</g></svg>"##;
+    static IMAGE: std::sync::OnceLock<egui::CustomCursorImage> = std::sync::OnceLock::new();
+    IMAGE
+        .get_or_init(|| {
+            let image = egui_extras::image::load_svg_bytes(SVG.as_bytes(), &Default::default())
+                .expect("rotation cursor SVG is valid");
+            let [width, height] = image.size.map(|side| side as u16);
+            egui::CustomCursorImage {
+                rgba: image
+                    .pixels
+                    .iter()
+                    .flat_map(|pixel| pixel.to_srgba_unmultiplied())
+                    .collect(),
+                size: [width, height],
+                hotspot: [width / 2, height / 2],
+            }
+        })
+        .clone()
+}
+
 pub(crate) fn hit_test_placement_resize_handle(
     state: &CanvasState,
     rect: egui::Rect,

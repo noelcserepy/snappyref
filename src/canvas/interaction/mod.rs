@@ -18,9 +18,9 @@ pub(super) use placement_transform::{
     begin_placement_drag_scale, begin_placement_resize, begin_placement_rotation,
     compute_resize_snap_preview, compute_uniform_scale_snap_preview,
     hit_test_placement_resize_handle, hit_test_selected_placement_rotation_handle,
-    placement_drag_scale_factor, placement_resize_cursor_icon, placement_screen_rect,
-    resized_placement_transform, rotated_placement_delta, scaled_placement_transforms,
-    selected_placement_rotation_handle_screen_pos,
+    placement_drag_scale_factor, placement_resize_cursor_icon, placement_rotation_cursor_image,
+    placement_screen_rect, resized_placement_transform, rotated_placement_delta,
+    scaled_placement_transforms, selected_placement_rotation_handle_screen_pos,
 };
 pub(super) use selection::{
     begin_marquee_selection, grouped_item_reachable, hit_test_canvas_item, hit_test_member,
@@ -144,7 +144,15 @@ pub(super) fn handle_input(
     if matches!(
         state.interaction.gesture,
         Some(ActiveGesture::PlacementTransform(
-            PlacementTransformState::Rotating { .. } | PlacementTransformState::Scaling { .. }
+            PlacementTransformState::Rotating { .. }
+        ))
+    ) {
+        ui.ctx()
+            .set_cursor_image(Some(placement_rotation_cursor_image()));
+    } else if matches!(
+        state.interaction.gesture,
+        Some(ActiveGesture::PlacementTransform(
+            PlacementTransformState::Scaling { .. }
         ))
     ) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -193,7 +201,8 @@ pub(super) fn handle_input(
         && rotation_handle_key_held
         && hit_test_selected_placement_rotation_handle(state, rect, pointer_pos)
     {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        ui.ctx()
+            .set_cursor_image(Some(placement_rotation_cursor_image()));
     }
 
     if pointer_in_canvas_rect

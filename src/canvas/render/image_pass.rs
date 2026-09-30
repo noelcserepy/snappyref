@@ -842,7 +842,7 @@ impl eframe::egui_wgpu::CallbackTrait for ImagePassCallback {
 
     fn paint(
         &self,
-        info: egui::PaintCallbackInfo,
+        _info: egui::PaintCallbackInfo,
         render_pass: &mut eframe::wgpu::RenderPass<'static>,
         callback_resources: &eframe::egui_wgpu::CallbackResources,
     ) {
@@ -860,13 +860,6 @@ impl eframe::egui_wgpu::CallbackTrait for ImagePassCallback {
         if prepared.bind_groups.len() != self.batches.len() {
             return;
         }
-        let clip = info.clip_rect_in_pixels();
-        render_pass.set_scissor_rect(
-            clip.left_px.max(0) as u32,
-            clip.top_px.max(0) as u32,
-            clip.width_px.max(0) as u32,
-            clip.height_px.max(0) as u32,
-        );
         render_pass.set_pipeline(&resources.pipeline);
         render_pass.set_vertex_buffer(0, resources.vertex_buffer.slice(..));
         render_pass.set_vertex_buffer(1, prepared.instance_buffer.slice(..));
