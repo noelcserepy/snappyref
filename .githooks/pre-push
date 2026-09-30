@@ -6,6 +6,13 @@
 
 set -euo pipefail
 
+# A push that only deletes remote refs (local sha all zeros) carries no code.
+pushes_code=0
+while read -r _ local_sha _ _; do
+  [[ "$local_sha" =~ ^0+$ ]] || pushes_code=1
+done
+(( pushes_code )) || exit 0
+
 echo "[pre-push] cargo fmt --check"
 cargo fmt --check
 
