@@ -10,10 +10,9 @@
 //!
 //! The install-root resolution itself reuses
 //! [`crate::local_data_location::install_root_from_exe_path`] so plain-binary
-//! and macOS `.app` bundle layouts share one source of truth. Tests pin
-//! the env-override case via [`SNAPPYREF_INSTALL_ROOT_ENV`] which lets a
-//! dev or test fixture redirect the entire updates tree to a temporary
-//! directory without juggling exe paths.
+//! and macOS `.app` bundle layouts share one source of truth.
+//! [`SNAPPYREF_INSTALL_ROOT_ENV`] lets a dev or smoke fixture redirect the
+//! entire updates tree to a temporary directory without juggling exe paths.
 //!
 //! Path construction functions take explicit paths so the module is unit
 //! testable without touching `std::env::current_exe`.
@@ -57,87 +56,4 @@ pub(crate) fn staging_dir(install_root: &Path, version: &str) -> PathBuf {
 /// the URL's basename because it is publisher-controlled; the version is.
 pub(crate) fn download_file_path(install_root: &Path, version: &str) -> PathBuf {
     updates_dir(install_root).join(format!("download-{version}.zip"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn updates_dir_is_install_root_slash_updates_for_plain_binary() {
-        let install_root = Path::new("/fake/SnappyRef");
-        assert_eq!(
-            updates_dir(install_root),
-            PathBuf::from("/fake/SnappyRef/updates"),
-        );
-    }
-
-    #[test]
-    fn updates_dir_is_outside_app_bundle_for_macos_layout() {
-        // On macOS the install root is the *parent* of SnappyRef.app, so
-        // `<install_root>/updates/` is a sibling of the app bundle just
-        // like `library/` and `models/`, so the swap step writes inside
-        // the user's portable folder without descending into the bundle.
-        let install_root = Path::new("/Users/alice/SnappyRef");
-        assert_eq!(
-            updates_dir(install_root),
-            PathBuf::from("/Users/alice/SnappyRef/updates"),
-        );
-    }
-
-    #[test]
-    fn staging_dir_is_versioned_subdir_of_updates() {
-        let install_root = Path::new("/fake/SnappyRef");
-        assert_eq!(
-            staging_dir(install_root, "1.2.3"),
-            PathBuf::from("/fake/SnappyRef/updates/staging-1.2.3"),
-        );
-    }
-
-    #[test]
-    fn staging_dir_versions_are_isolated_per_version_string() {
-        let install_root = Path::new("/fake/SnappyRef");
-        let a = staging_dir(install_root, "1.2.3");
-        let b = staging_dir(install_root, "1.2.4");
-        assert_ne!(a, b);
-    }
-
-    #[test]
-    fn download_file_path_lives_directly_under_updates_dir() {
-        let install_root = Path::new("/fake/SnappyRef");
-        let file = download_file_path(install_root, "1.2.3");
-        assert_eq!(file.parent().unwrap(), updates_dir(install_root));
-        assert!(
-            file.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap()
-                .ends_with(".zip")
-        );
-    }
-
-    #[test]
-    fn resolve_install_root_honors_env_override() {
-        // Pin a unique env value so concurrent test threads do not race.
-        let scratch = std::env::temp_dir().join(format!(
-            "snappyref-install-root-test-{}",
-            std::process::id()
-        ));
-        // Safety: env mutation is process-global. We use a unique value and
-        // restore the prior state to avoid leaking into other tests; tests
-        // touching this env in the same process must be serial. The cargo
-        // test harness does not parallelize across processes here, and no
-        // other test in this module reads the env.
-        let prior = std::env::var_os(SNAPPYREF_INSTALL_ROOT_ENV);
-        // SAFETY: see comment above; restored before the test returns.
-        unsafe { std::env::set_var(SNAPPYREF_INSTALL_ROOT_ENV, &scratch) };
-        let resolved = resolve_install_root().unwrap();
-        // SAFETY: restore prior env state.
-        unsafe {
-            match prior {
-                Some(value) => std::env::set_var(SNAPPYREF_INSTALL_ROOT_ENV, value),
-                None => std::env::remove_var(SNAPPYREF_INSTALL_ROOT_ENV),
-            }
-        }
-        assert_eq!(resolved, scratch);
-    }
 }

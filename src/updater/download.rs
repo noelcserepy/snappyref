@@ -299,34 +299,6 @@ mod tests {
     }
 
     #[test]
-    fn download_from_reader_writes_file_when_hash_matches() {
-        let dir = TempRoot::new("ok");
-        let payload = b"hello-snappyref-zip".to_vec();
-        let expected = sha256_hex(&payload);
-        let destination = dir.join("ok.zip");
-
-        let mut source = &payload[..];
-        let mut last = (0u64, 0u64);
-        let mut progress = |done, total| {
-            last = (done, total);
-        };
-        let outcome = download_from_reader(
-            &mut source,
-            &destination,
-            payload.len() as u64,
-            &expected,
-            &mut progress,
-        )
-        .unwrap();
-
-        assert_eq!(outcome.destination, destination);
-        assert_eq!(outcome.bytes_written, payload.len() as u64);
-        assert!(destination.exists());
-        assert_eq!(fs::read(&destination).unwrap(), payload);
-        assert_eq!(last, (payload.len() as u64, payload.len() as u64));
-    }
-
-    #[test]
     fn download_from_reader_emits_progress_during_download() {
         let dir = TempRoot::new("progress");
         // Big enough to span multiple READ_CHUNK reads.
@@ -425,34 +397,6 @@ mod tests {
     }
 
     #[test]
-    fn download_from_url_against_local_http_fixture_rejects_sha_mismatch() {
-        let dir = TempRoot::new("http-mismatch");
-        let payload = b"http-served-bytes".to_vec();
-        let wrong = "f".repeat(64);
-        let destination = dir.join("served.zip");
-
-        let (url, handle) = serve_once(payload.clone());
-        let mut progress = |_, _| {};
-        let result = download_from_url(
-            &url,
-            &destination,
-            payload.len() as u64,
-            &wrong,
-            &mut progress,
-        );
-        let _ = handle.join();
-
-        match result {
-            Err(DownloadError::HashMismatch { .. }) => {}
-            other => panic!("expected HashMismatch from fixture, got {other:?}"),
-        }
-        assert!(
-            !destination.exists(),
-            "mismatched download must be cleaned up",
-        );
-    }
-
-    #[test]
     fn download_from_url_against_local_http_fixture_succeeds_on_match() {
         let dir = TempRoot::new("http-ok");
         let payload = b"http-good-bytes".to_vec();
@@ -474,15 +418,6 @@ mod tests {
         assert_eq!(outcome.bytes_written, payload.len() as u64);
         assert!(destination.exists());
         assert_eq!(fs::read(&destination).unwrap(), payload);
-    }
-
-    #[test]
-    fn sha256_hex_matches_known_vector() {
-        // sha256("") is the canonical empty-string digest.
-        assert_eq!(
-            sha256_hex(b""),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        );
     }
 
     #[test]

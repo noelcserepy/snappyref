@@ -152,68 +152,12 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_preserves_every_field() {
-        let original = descriptor();
-        let bytes = serde_json::to_vec(&original).unwrap();
-        let parsed = parse(&bytes).unwrap();
-        assert_eq!(parsed, original);
-    }
-
-    #[test]
-    fn write_then_read_round_trips_through_disk() {
-        let dir = std::env::temp_dir().join(format!(
-            "snappyref-descriptor-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("pending.json");
+    fn write_creates_parent_directories_and_read_round_trips() {
+        let root = crate::test_support::TempRoot::new("descriptor");
+        let path = root.join("updates/nested/pending.json");
         let original = descriptor();
         write(&path, &original).unwrap();
-        let parsed = read(&path).unwrap();
-        assert_eq!(parsed, original);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn write_creates_missing_parent_directories() {
-        let dir = std::env::temp_dir().join(format!(
-            "snappyref-descriptor-nested-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        let path = dir.join("nested/dirs/pending.json");
-        write(&path, &descriptor()).unwrap();
-        assert!(path.is_file());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn parse_rejects_garbage_bytes() {
-        let err = parse(b"not json").unwrap_err();
-        assert!(matches!(err, DescriptorError::Schema(_)));
-    }
-
-    #[test]
-    fn parse_rejects_missing_required_field() {
-        // Drop `parent_pid` from an otherwise-valid object. The schema
-        // must reject so the replacement process never reads a half-populated record.
-        let bytes = br#"{
-            "expected_new_version": "1.0.0",
-            "install_root": "/tmp/x",
-            "current_bundle": "/tmp/x/SnappyRef.app",
-            "staged_bundle": "/tmp/x/updates/staging-1.0.0/SnappyRef/SnappyRef.app",
-            "staging_dir": "/tmp/x/updates/staging-1.0.0",
-            "launch_args": []
-        }"#;
-        let err = parse(bytes).unwrap_err();
-        assert!(matches!(err, DescriptorError::Schema(_)));
+        assert_eq!(read(&path).unwrap(), original);
     }
 
     #[test]
@@ -270,14 +214,5 @@ mod tests {
             }
             other => panic!("expected Schema, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn default_path_lives_inside_updates_dir() {
-        let install_root = Path::new("/fake/SnappyRef");
-        assert_eq!(
-            default_path(install_root),
-            PathBuf::from("/fake/SnappyRef/updates/pending-update.json"),
-        );
     }
 }

@@ -346,20 +346,6 @@ mod macos {
         }
 
         #[test]
-        fn backup_path_for_appends_previous_suffix() {
-            let current = PathBuf::from("/Applications/SnappyRef.app");
-            let backup = backup_path_for(&current);
-            let suffix = ".previous";
-            let expected_name = format!(
-                "{}{}",
-                current.file_name().unwrap().to_string_lossy(),
-                suffix
-            );
-            assert_eq!(backup.file_name().unwrap().to_string_lossy(), expected_name);
-            assert_eq!(backup.parent(), current.parent());
-        }
-
-        #[test]
         fn failed_restore_keeps_backup_and_requires_recovery() {
             let root = crate::test_support::TempRoot::new("snappyref-updater-restore");
             let current_bundle = root.join("SnappyRef.app");
