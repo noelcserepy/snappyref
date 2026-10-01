@@ -162,7 +162,7 @@ pub enum ImagePrepRequest {
 
 #[derive(Debug)]
 pub enum ImagePrepResult {
-    Loaded(PreparedPlacementImage),
+    Loaded(Box<PreparedPlacementImage>),
     Cropped(PreparedCropPreview),
     CacheLodBackfilled {
         asset_id: i64,

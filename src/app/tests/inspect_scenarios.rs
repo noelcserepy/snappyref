@@ -2069,9 +2069,9 @@ fn inspect_pending_drop_batch_undo_writes_artifact() {
     scenario.capture_screen("screen-003-undone-while-pending", &mut harness);
 
     result_tx
-        .send(crate::image_preparation::ImagePrepResult::Loaded(
+        .send(crate::image_preparation::ImagePrepResult::Loaded(Box::new(
             late_loaded,
-        ))
+        )))
         .unwrap();
     result_tx
         .send(crate::image_preparation::ImagePrepResult::Failed {

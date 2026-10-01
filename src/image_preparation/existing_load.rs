@@ -48,7 +48,7 @@ pub(crate) fn load_existing(
                     trace.timings.decode_or_load = decode_started_at.elapsed();
                     trace.timings.worker_total = worker_started_at.elapsed();
                 }
-                return ImagePrepResult::Loaded(PreparedPlacementImage {
+                return ImagePrepResult::Loaded(Box::new(PreparedPlacementImage {
                     target_board_id,
                     queue_id,
                     preview_rgba: Vec::new(),
@@ -71,7 +71,7 @@ pub(crate) fn load_existing(
                     existing_load_diagnostics: None,
                     origin: ImportOrigin::Existing,
                     trace,
-                });
+                }));
             }
             Err(error) => {
                 return ImagePrepResult::Failed {
@@ -125,7 +125,7 @@ pub(crate) fn load_existing(
                 trace.timings.preview_prepare = preview_started_at.elapsed();
                 trace.timings.worker_total = worker_started_at.elapsed();
             }
-            ImagePrepResult::Loaded(PreparedPlacementImage {
+            ImagePrepResult::Loaded(Box::new(PreparedPlacementImage {
                 target_board_id,
                 queue_id,
                 placement,
@@ -138,7 +138,7 @@ pub(crate) fn load_existing(
                 existing_load_diagnostics: Some(diagnostics),
                 origin: ImportOrigin::Existing,
                 trace,
-            })
+            }))
         }
         Err(error) => ImagePrepResult::Failed {
             target_board_id: Some(target_board_id),

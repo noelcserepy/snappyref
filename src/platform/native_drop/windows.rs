@@ -263,10 +263,10 @@ unsafe fn drop_text_values(data_object: &IDataObject) -> Vec<String> {
             })
         }
         .flatten();
-        if let Some(value) = value {
-            if !value.is_empty() {
-                values.push(value);
-            }
+        if let Some(value) = value
+            && !value.is_empty()
+        {
+            values.push(value);
         }
     }
     values
@@ -308,8 +308,10 @@ unsafe fn with_hglobal_data<T>(
 fn utf16_hglobal_text(pointer: *const u8, size: usize) -> Option<String> {
     let bytes = unsafe { std::slice::from_raw_parts(pointer, size) };
     let units = bytes
-        .chunks_exact(2)
-        .map(|chunk| u16::from_ne_bytes([chunk[0], chunk[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| u16::from_ne_bytes(*chunk))
         .take_while(|unit| *unit != 0)
         .collect::<Vec<_>>();
     (!units.is_empty())

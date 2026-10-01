@@ -66,7 +66,7 @@ pub(crate) fn import(
     let placement_id = request.placement_id;
     let context = request.source.label();
     match import_sync(library, request, wgpu_render_state) {
-        Ok(loaded) => ImagePrepResult::Loaded(loaded),
+        Ok(loaded) => ImagePrepResult::Loaded(Box::new(loaded)),
         Err(error) => ImagePrepResult::Failed {
             target_board_id: Some(target_board_id),
             queue_id: Some(queue_id),

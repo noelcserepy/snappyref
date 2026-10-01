@@ -165,7 +165,7 @@ fn late_history_content_result_does_not_restore_redone_deletion() {
 
     app.accept_preparation_result(
         &egui::Context::default(),
-        crate::image_preparation::ImagePrepResult::Loaded(loaded),
+        crate::image_preparation::ImagePrepResult::Loaded(Box::new(loaded)),
     );
     assert!(app.canvas.placement_for_id(7).is_none());
     assert_eq!(app.placement_creation.pending_len(), 0);
@@ -247,7 +247,7 @@ fn completed_history_content_replay_preserves_history_command_status() {
         loaded.queue_id = Some(reservation.queue_id);
         app.status = command_status.to_owned();
 
-        let result = crate::image_preparation::ImagePrepResult::Loaded(loaded);
+        let result = crate::image_preparation::ImagePrepResult::Loaded(Box::new(loaded));
         app.accept_preparation_result(&ctx, result);
 
         assert_eq!(app.status, command_status);
@@ -267,7 +267,7 @@ fn completed_history_content_replay_preserves_history_command_status() {
         detail.queue_id = None;
         app.accept_preparation_result(
             &ctx,
-            crate::image_preparation::ImagePrepResult::Loaded(detail),
+            crate::image_preparation::ImagePrepResult::Loaded(Box::new(detail)),
         );
 
         assert_eq!(app.status, command_status);
@@ -1516,7 +1516,7 @@ fn accepted_loading_batch_is_one_history_action_despite_out_of_order_results() {
     let mut loaded = persisted_loaded_item(&library, placement_ids[2], app.active_board_id);
     loaded.queue_id = Some(3);
     loaded.origin = crate::image_preparation::ImportOrigin::Path;
-    let loaded_result = crate::image_preparation::ImagePrepResult::Loaded(loaded);
+    let loaded_result = crate::image_preparation::ImagePrepResult::Loaded(Box::new(loaded));
     app.accept_preparation_result(&ctx, loaded_result);
 
     let failed_result = crate::image_preparation::ImagePrepResult::Failed {
@@ -1542,7 +1542,7 @@ fn accepted_loading_batch_is_one_history_action_despite_out_of_order_results() {
     let mut late_loaded = test_loaded_item(placement_ids[1], app.active_board_id);
     late_loaded.queue_id = Some(2);
     late_loaded.origin = crate::image_preparation::ImportOrigin::Path;
-    let late_result = crate::image_preparation::ImagePrepResult::Loaded(late_loaded);
+    let late_result = crate::image_preparation::ImagePrepResult::Loaded(Box::new(late_loaded));
     app.accept_preparation_result(&ctx, late_result);
     assert!(
         placement_ids

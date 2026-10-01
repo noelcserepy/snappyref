@@ -12,9 +12,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# A ruleset on main requires these job names once the repo is public. Rename them
+# only together with the ruleset.
 jobs:
-  check:
-    name: Check
+  macos:
+    name: macOS
     runs-on: macos-latest
 
     steps:
@@ -45,5 +47,30 @@ jobs:
       - name: cargo check
         run: cargo check --locked
 
-      - name: cargo test update_preservation_smoke
-        run: cargo test --locked update_preservation_smoke
+      - name: cargo test
+        run: cargo test --locked
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install libjpeg-turbo
+        uses: ./.github/actions/install-turbojpeg-windows
+
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: cargo check
+        run: cargo check --locked
+
+      - name: cargo test
+        run: cargo test --locked

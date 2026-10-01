@@ -1043,7 +1043,7 @@ impl SnappyRefApp {
     ) {
         self.accept_preparation_result(
             ctx,
-            crate::image_preparation::ImagePrepResult::Loaded(loaded),
+            crate::image_preparation::ImagePrepResult::Loaded(Box::new(loaded)),
         );
     }
 }
