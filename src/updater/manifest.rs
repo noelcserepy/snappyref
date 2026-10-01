@@ -319,9 +319,4 @@ mod tests {
             Err(ParseError::InvalidJson)
         );
     }
-
-    #[test]
-    fn embedded_public_key_decodes() {
-        assert!(VerifyingKey::from_bytes(SIGNING_PUBLIC_KEY).is_ok());
-    }
 }

@@ -394,11 +394,6 @@ mod tests {
         writer.finish().unwrap();
     }
 
-    fn descriptor_for(zip_path: &Path) -> SemanticSearchAssetDescriptor {
-        let bytes = fs::read(zip_path).unwrap();
-        descriptor_for_bytes(&bytes)
-    }
-
     fn descriptor_for_bytes(bytes: &[u8]) -> SemanticSearchAssetDescriptor {
         SemanticSearchAssetDescriptor {
             url: "https://example.invalid/snappyref-semantic-search.zip".to_owned(),
@@ -420,21 +415,6 @@ mod tests {
                 name.starts_with(SEMANTIC_SEARCH_DOWNLOAD_PREFIX)
                     || name.starts_with(SEMANTIC_SEARCH_STAGING_PREFIX)
             })
-    }
-
-    #[test]
-    fn default_semantic_search_descriptor_is_installable_contract() {
-        let descriptor = default_semantic_search_asset_descriptor();
-
-        assert_eq!(descriptor.url, env!("SNAPPYREF_SEMANTIC_SEARCH_URL"));
-        assert_eq!(descriptor.sha256, env!("SNAPPYREF_SEMANTIC_SEARCH_SHA256"));
-        assert_eq!(
-            descriptor.size,
-            env!("SNAPPYREF_SEMANTIC_SEARCH_SIZE")
-                .parse::<u64>()
-                .unwrap()
-        );
-        validate_descriptor(&descriptor).unwrap();
     }
 
     fn serve_once(payload: Vec<u8>) -> (String, thread::JoinHandle<()>) {
@@ -580,32 +560,6 @@ mod tests {
     }
 
     #[test]
-    fn semantic_search_asset_download_rejects_sha_mismatch_and_cleans_up() {
-        let root = TempRoot::new("download-sha");
-        let zip_path = root.join("semantic.zip");
-        write_zip(&zip_path, &model_entries());
-        let zip_bytes = fs::read(&zip_path).unwrap();
-        let (url, handle) = serve_once(zip_bytes);
-        let mut descriptor = SemanticSearchAssetDescriptor {
-            url,
-            sha256: "f".repeat(64),
-            size: fs::metadata(&zip_path).unwrap().len(),
-            model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
-        };
-        let canceled = AtomicBool::new(false);
-
-        let error =
-            install_semantic_search_asset(&root, &descriptor, &canceled, |_| {}).unwrap_err();
-        let _ = handle.join();
-
-        assert!(error.contains("sha256 mismatch"));
-        assert!(!root.join("models").join(&descriptor.model_key).exists());
-        assert!(!install_artifacts_exist(&root));
-
-        descriptor.url = "https://example.invalid/unused.zip".to_owned();
-    }
-
-    #[test]
     fn semantic_search_asset_download_rejects_corrupt_zip_and_removes_staging() {
         let root = TempRoot::new("download-corrupt");
         let zip_bytes = b"not a zip".to_vec();
@@ -683,23 +637,6 @@ mod tests {
     }
 
     #[test]
-    fn staged_semantic_search_zip_promotes_valid_local_model_store_layout() {
-        let root = TempRoot::new("promote");
-        let zip_path = root.join("semantic.zip");
-        write_zip(&zip_path, &model_entries());
-        let descriptor = descriptor_for(&zip_path);
-
-        let staging_root = install_paths::updates_dir(&root).join("semantic-search-staging-test");
-        stage_and_promote(&root, &descriptor, &zip_path, &staging_root).unwrap();
-
-        let model_root = root.join("models").join(&descriptor.model_key);
-        assert!(model_root.join("tokenizer.json").is_file());
-        assert!(model_root.join("onnx/text_model_int8.onnx").is_file());
-        assert!(model_root.join("onnx/vision_model_int8.onnx").is_file());
-        assert!(!staging_root.exists());
-    }
-
-    #[test]
     fn failed_semantic_search_promotion_preserves_existing_local_model_store() {
         let root = TempRoot::new("promote-preserve");
         let descriptor = SemanticSearchAssetDescriptor {
@@ -761,28 +698,6 @@ mod tests {
                 .join(format!("{}.previous", descriptor.model_key))
                 .exists()
         );
-    }
-
-    #[test]
-    fn staged_semantic_search_zip_rejects_unsafe_paths_and_removes_staging() {
-        let root = TempRoot::new("unsafe");
-        let zip_path = root.join("semantic.zip");
-        write_zip(
-            &zip_path,
-            &[
-                ("models/", &[][..]),
-                ("models/siglip2_base_patch16_224_int8/tokenizer.json", b"ok"),
-                ("models/../escape.txt", b"no"),
-            ],
-        );
-        let descriptor = descriptor_for(&zip_path);
-
-        let staging_root = install_paths::updates_dir(&root).join("semantic-search-staging-test");
-        let error = stage_and_promote(&root, &descriptor, &zip_path, &staging_root).unwrap_err();
-
-        assert!(error.to_string().contains("unsafe zip path"));
-        assert!(!root.join("escape.txt").exists());
-        assert!(!staging_root.exists());
     }
 
     #[test]

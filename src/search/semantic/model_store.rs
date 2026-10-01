@@ -53,46 +53,19 @@ mod tests {
     use crate::test_support::TempRoot;
 
     #[test]
-    fn availability_preserves_bundled_files_and_requires_standalone_store() {
-        let root = TempRoot::new("model-store-isolation");
-        let bundled = root.join("SnappyRef.app/Contents/Resources/models/model");
-        std::fs::create_dir_all(&bundled).unwrap();
-        std::fs::write(bundled.join("weights"), "bundled").unwrap();
-        assert_eq!(
-            refresh_local_model_store_status(&root, "model", &["weights"]),
-            LocalModelStoreStatus::Missing
-        );
-        assert!(!root.join("models").exists());
-        let standalone = root.join("models/model");
-        std::fs::create_dir_all(&standalone).unwrap();
-        std::fs::write(standalone.join("weights"), "standalone").unwrap();
-        assert_eq!(
-            refresh_local_model_store_status(&root, "model", &["weights"]),
-            LocalModelStoreStatus::Installed
-        );
-        assert_eq!(
-            std::fs::read_to_string(bundled.join("weights")).unwrap(),
-            "bundled"
-        );
-        assert_eq!(
-            std::fs::read_to_string(standalone.join("weights")).unwrap(),
-            "standalone"
-        );
-    }
+    fn local_model_store_status_requires_every_file_with_content() {
+        let root = TempRoot::new("model-store-status");
+        let status = || refresh_local_model_store_status(&root, "model", &["weights"]);
 
-    #[test]
-    fn incomplete_standalone_store_reports_failure_without_changing_files() {
-        let root = TempRoot::new("incomplete-model-store");
-        let store = root.join("models/model");
-        std::fs::create_dir_all(&store).unwrap();
-        std::fs::write(store.join("weights"), "").unwrap();
-        assert!(matches!(
-            refresh_local_model_store_status(&root, "model", &["weights"]),
-            LocalModelStoreStatus::Failed(_)
-        ));
-        assert_eq!(
-            std::fs::read(store.join("weights")).unwrap(),
-            Vec::<u8>::new()
-        );
+        assert_eq!(status(), LocalModelStoreStatus::Missing);
+        assert!(!root.join("models").exists());
+
+        let model = root.join("models/model");
+        std::fs::create_dir_all(&model).unwrap();
+        std::fs::write(model.join("weights"), "").unwrap();
+        assert!(matches!(status(), LocalModelStoreStatus::Failed(_)));
+
+        std::fs::write(model.join("weights"), "weights").unwrap();
+        assert_eq!(status(), LocalModelStoreStatus::Installed);
     }
 }

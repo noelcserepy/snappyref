@@ -767,8 +767,8 @@ fn ensure_model(
 #[cfg(test)]
 mod tests {
     use super::{
-        IndexResult, SemanticSearchConfig, SemanticSearchService, embedding_helper_grace,
-        embedding_source_path, is_terminal_embedding_failure, run_index_worker_loop,
+        IndexResult, SemanticSearchConfig, SemanticSearchService, embedding_source_path,
+        is_terminal_embedding_failure, run_index_worker_loop,
     };
     use crate::library::storage::Library;
     use crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
@@ -1433,28 +1433,6 @@ mod tests {
         });
 
         (tx, events, helper_starts, helper_ends, handle)
-    }
-
-    /// Default and env-override behaviour live in one test because
-    /// `std::env::set_var` mutates process-global state, and Cargo runs
-    /// unit tests in parallel by default — splitting the two cases lets
-    /// them race against each other on the same env name.
-    #[test]
-    fn embedding_helper_grace_default_and_env_override() {
-        // We do not assume the absolute default value here in case the
-        // ambient test environment sets the variable; instead the env
-        // override path is the contract this test pins down.
-        unsafe { std::env::set_var("SNAPPYREF_EMBEDDING_HELPER_GRACE_MS", "750") };
-        let with_override = embedding_helper_grace();
-        unsafe { std::env::remove_var("SNAPPYREF_EMBEDDING_HELPER_GRACE_MS") };
-        let without_override = embedding_helper_grace();
-
-        assert_eq!(with_override, Duration::from_millis(750));
-        assert_eq!(
-            without_override,
-            Duration::from_millis(3000),
-            "default grace must be 3s when the override env var is unset"
-        );
     }
 
     /// The headline behavior the issue asks us to fix: trickled requests

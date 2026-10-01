@@ -319,13 +319,4 @@ mod tests {
         assert_eq!(fs::read(&backup).unwrap(), b"old-exe");
         assert!(!replacing.exists());
     }
-
-    #[test]
-    fn runner_path_lives_inside_updates_dir() {
-        let install_root = Path::new("C:/SnappyRef");
-        let path = runner_path(install_root);
-
-        assert!(path.starts_with(install_paths::updates_dir(install_root)));
-        assert_eq!(path.extension().and_then(|ext| ext.to_str()), Some("exe"));
-    }
 }

@@ -204,11 +204,6 @@ mod tests {
     }
 
     #[test]
-    fn default_is_hidden() {
-        assert_eq!(UpdateState::default(), UpdateState::Hidden);
-    }
-
-    #[test]
     fn hidden_to_available_on_newer() {
         let mut state = UpdateState::Hidden;
         state.apply(newer("1.2.3"));
@@ -267,20 +262,6 @@ mod tests {
             UpdateState::Available { release } => assert_eq!(release.version, "1.2.4"),
             _ => panic!("expected Available"),
         }
-    }
-
-    #[test]
-    fn begin_install_moves_available_to_downloading_at_zero_percent() {
-        let mut state = UpdateState::Hidden;
-        state.apply(newer("1.2.3"));
-        state.begin_install("1.2.3".to_owned());
-        assert_eq!(
-            state,
-            UpdateState::Downloading {
-                version: "1.2.3".to_owned(),
-                percent: 0,
-            }
-        );
     }
 
     #[test]

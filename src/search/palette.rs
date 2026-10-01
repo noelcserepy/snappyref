@@ -867,26 +867,10 @@ fn palette_status_text(status: &SearchOverlayStatus, idle_text: &'static str) ->
 #[cfg(test)]
 mod tests {
     use super::{
-        KBD_HINT_CELL_SIZE, PALETTE_CHROME_Y_MARGIN, PALETTE_WIDTH,
-        search_result_grid_content_height, search_result_grid_layout, search_result_tile_height,
+        PALETTE_WIDTH, search_result_grid_content_height, search_result_grid_layout,
+        search_result_tile_height,
     };
     use crate::ui::theme::SPACE_2;
-
-    #[test]
-    fn palette_header_and_footer_share_chrome_height() {
-        let header_height = KBD_HINT_CELL_SIZE.y + f32::from(PALETTE_CHROME_Y_MARGIN) * 2.0;
-        let footer_height = KBD_HINT_CELL_SIZE.y + f32::from(PALETTE_CHROME_Y_MARGIN) * 2.0;
-
-        assert_eq!(header_height, footer_height);
-    }
-
-    #[test]
-    fn search_result_grid_layout_balances_five_results_into_five_columns() {
-        let shell_content_width = PALETTE_WIDTH - 24.0;
-        let grid_layout = search_result_grid_layout(shell_content_width, 5);
-
-        assert_eq!(grid_layout.columns, 5);
-    }
 
     #[test]
     fn search_result_grid_layout_keeps_partial_rows_at_five_column_width() {

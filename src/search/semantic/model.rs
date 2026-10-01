@@ -432,17 +432,11 @@ fn normalize(mut values: Vec<f32>) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::{DEFAULT_SEMANTIC_SEARCH_MODEL, resolve_assets_in_store};
+    use crate::test_support::TempRoot;
 
     #[test]
     fn resolves_assets_when_all_files_exist_in_local_model_store() {
-        let store_root = std::env::temp_dir().join(format!(
-            "snappyref-model-store-resolve-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let store_root = TempRoot::new("snappyref-model-store-resolve");
         let model_root = store_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.model_key);
         std::fs::create_dir_all(model_root.join("onnx")).unwrap();
         std::fs::write(
@@ -475,20 +469,11 @@ mod tests {
             assets.vision_model_path,
             model_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.vision_model_file)
         );
-
-        let _ = std::fs::remove_dir_all(store_root);
     }
 
     #[test]
     fn errors_when_local_model_store_is_incomplete() {
-        let store_root = std::env::temp_dir().join(format!(
-            "snappyref-model-store-missing-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let store_root = TempRoot::new("snappyref-model-store-missing");
         let model_root = store_root.join(DEFAULT_SEMANTIC_SEARCH_MODEL.model_key);
         std::fs::create_dir_all(model_root.join("onnx")).unwrap();
         std::fs::write(
@@ -500,7 +485,5 @@ mod tests {
         let result = resolve_assets_in_store(&DEFAULT_SEMANTIC_SEARCH_MODEL, &store_root);
 
         assert!(result.is_err());
-
-        let _ = std::fs::remove_dir_all(store_root);
     }
 }

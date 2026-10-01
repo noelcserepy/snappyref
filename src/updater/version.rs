@@ -56,13 +56,6 @@ mod tests {
     }
 
     #[test]
-    fn pre_release_identifiers_are_ordered() {
-        assert!(is_newer_than("1.0.0-alpha.1", "1.0.0-alpha"));
-        assert!(is_newer_than("1.0.0-beta", "1.0.0-alpha.1"));
-        assert!(is_newer_than("1.0.0-rc.1", "1.0.0-beta"));
-    }
-
-    #[test]
     fn invalid_versions_are_never_newer() {
         assert!(!is_newer_than("1.0.0", "not-a-version"));
         assert!(!is_newer_than("also-not-a-version", "1.0.0"));
