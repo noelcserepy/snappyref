@@ -482,12 +482,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn display_size_respects_placement_target_area() {
-        let size = display_size_for_dimensions(4000, 3000, 10_000.0);
-        assert!(size.x * size.y <= 10_000.0 + 1.0);
-    }
-
-    #[test]
     fn oversized_placement_creation_selection_zooms_out_to_fit_visible_canvas() {
         let mut canvas = crate::canvas::CanvasState::default();
         let canvas_rect = eframe::egui::Rect::from_min_size(

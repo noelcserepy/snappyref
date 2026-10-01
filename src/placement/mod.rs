@@ -29,34 +29,21 @@ pub(crate) mod completion;
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn scales_down_large_portrait_images_to_target_area() {
-        let scale =
-            display_scale_for_placement_target_area(1000, 1500, DEFAULT_PLACEMENT_TARGET_AREA);
-        assert!(
-            (scale - (DEFAULT_PLACEMENT_TARGET_AREA / 1_500_000.0).sqrt()).abs() < f32::EPSILON
-        );
-    }
 
     #[test]
-    fn scales_down_large_landscape_images_by_area_cap() {
-        let scale =
-            display_scale_for_placement_target_area(1920, 1080, DEFAULT_PLACEMENT_TARGET_AREA);
-        assert!(
-            (scale - (DEFAULT_PLACEMENT_TARGET_AREA / 2_073_600.0).sqrt()).abs() < f32::EPSILON
-        );
-    }
-
-    #[test]
-    fn scales_down_large_images_to_configured_target_area() {
-        let target_area = 40_000.0;
-        let scale = display_scale_for_placement_target_area(1000, 1500, target_area);
-
-        assert!((scale - (target_area / 1_500_000.0).sqrt()).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn keeps_smaller_images_at_full_scale() {
+    fn large_images_display_at_target_area_and_small_images_keep_full_size() {
+        for (width, height, target_area) in [
+            (1000, 1500, DEFAULT_PLACEMENT_TARGET_AREA),
+            (1920, 1080, DEFAULT_PLACEMENT_TARGET_AREA),
+            (1000, 1500, 40_000.0),
+        ] {
+            let scale = display_scale_for_placement_target_area(width, height, target_area);
+            let area = width as f32 * height as f32 * scale * scale;
+            assert!(
+                (area - target_area).abs() < 1.0,
+                "{width}x{height} displays at {area}, expected {target_area}"
+            );
+        }
         assert_eq!(
             display_scale_for_placement_target_area(180, 240, DEFAULT_PLACEMENT_TARGET_AREA),
             1.0
