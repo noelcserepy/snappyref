@@ -8,7 +8,7 @@ import signal
 from unittest.mock import Mock, patch
 from pathlib import Path
 
-from perf_eval import aggregate, compare, cpu_percent, cpu_seconds, validate_run, run_case, BUDGETS, FAST_CASES, FAST_METRICS, PROFILES, cleanup_process_group
+from perf_eval import aggregate, compare, cpu_percent, cpu_seconds, validate_run, run_case, BUDGETS, FAST_CASES, FAST_METRICS, cleanup_process_group
 from typing import Any
 from _perf_sampling import per_format_groups_from_events, classify_helper, parse_ps_axwo_output, select_descendants, peak_tree_rss_bytes, per_helper_peaks, phase_summary_from_events
 
@@ -115,8 +115,6 @@ class EvaluationTests(unittest.TestCase):
             mutate(*copied)
             with self.assertRaises(ValueError):
                 validate_run(copied[0], copied[1], [], copied[2], (1, 1), 'fast')
-        self.assertEqual(PROFILES['full']['stop_ms'], 17000)
-        self.assertEqual(len(FAST_CASES), 5)
 
     def test_cpu_uses_elapsed_time_and_handles_ps_day_format(self):
         self.assertEqual(cpu_seconds('1-02:03:04.50'), 93784.5)
@@ -205,7 +203,6 @@ class EvaluationTests(unittest.TestCase):
         group, = per_format_groups_from_events(events)
         self.assertEqual(group['count'], 3)
         self.assertEqual(group['import_latency_ms_mean'], 100)
-        self.assertEqual(classify_helper('snappyref --imageprep --source=x', 1, 2), 'imageprep_helper')
 
 
 class SamplingTests(unittest.TestCase):

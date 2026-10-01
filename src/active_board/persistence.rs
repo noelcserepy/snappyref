@@ -391,10 +391,8 @@ mod tests {
 
     #[test]
     fn queued_session_persistence_is_durable_after_flush() {
-        let root =
-            std::env::temp_dir().join(format!("snappyref-queued-session-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
+        let root = crate::test_support::TempRoot::new("snappyref-queued-session");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
         let mut persistence = DocumentPersistence::queued(library.clone());
         let session = crate::data::UserSession {
             viewport: crate::data::ViewportState {
@@ -413,16 +411,12 @@ mod tests {
         assert_eq!(stored.viewport.camera_pan_x, 12.0);
         assert_eq!(stored.viewport.camera_pan_y, 34.0);
         assert_eq!(stored.viewport.camera_zoom, 2.0);
-
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn queued_document_unit_is_durable_after_flush() {
-        let root =
-            std::env::temp_dir().join(format!("snappyref-queued-document-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let library = crate::library::storage::Library::initialize(root.clone()).unwrap();
+        let root = crate::test_support::TempRoot::new("snappyref-queued-document");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
         let board_id = library.list_boards().unwrap()[0].id;
         let source = root.join("source.png");
         std::fs::write(&source, [255, 255, 255, 255]).unwrap();
@@ -482,8 +476,6 @@ mod tests {
             .unwrap();
         assert_eq!(stored.state.geometry.center.x, 42.0);
         assert_eq!(stored.state.geometry.center.y, 64.0);
-
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

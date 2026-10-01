@@ -647,20 +647,18 @@ fn delete_board_archives_board_preserves_assets_and_archives_board_content() {
         )
         .unwrap();
 
-    let remaining_active = first.id;
     library
         .persist_board_unit(
             &crate::library::storage::BoardDurabilityOperation::Lifecycle(
                 crate::active_board::persistence::BoardLifecyclePersistence::Archive {
                     board_id: second.id,
-                    active_board_id: remaining_active,
+                    active_board_id: first.id,
                 },
             ),
             &Default::default(),
         )
         .unwrap();
 
-    assert_eq!(remaining_active, first.id);
     assert_eq!(
         library.load_user_session().unwrap().active_board_id,
         first.id
@@ -732,19 +730,6 @@ fn restoring_board_snapshot_restores_loading_placement_content_exactly() {
         .unwrap();
     let snapshot = library.load_board_document(second.id).unwrap();
 
-    crate::data::Placement::loaded(
-        crate::data::PlacementState::new(
-            loading.state.id,
-            loading.state.geometry.center,
-            loading.state.geometry.scale,
-            0.0,
-            0,
-            false,
-        ),
-        library
-            .register_original(&source, "image/png", 1, 1, 4, None)
-            .unwrap(),
-    );
     library
         .persist_board_unit(
             &crate::library::storage::BoardDurabilityOperation::Lifecycle(

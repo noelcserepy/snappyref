@@ -151,7 +151,7 @@ fn candidate_overlaps_any(
         .any(|existing| rects_overlap_with_gap(candidate_rect, existing.rect, gap))
 }
 
-pub(crate) fn rects_overlap_with_gap(left: egui::Rect, right: egui::Rect, gap: f32) -> bool {
+fn rects_overlap_with_gap(left: egui::Rect, right: egui::Rect, gap: f32) -> bool {
     left.left() < right.right() + gap
         && left.right() > right.left() - gap
         && left.top() < right.bottom() + gap
@@ -254,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn square_scoring_beats_anchor_distance_for_adjacent_imports() {
+    fn squarer_occupied_bounds_break_anchor_distance_ties() {
         let existing = vec![
             crate::placement::arrangement::PlacementArrangementInput::new(
                 0,
@@ -263,20 +263,21 @@ mod tests {
             ),
         ];
 
+        // Equidistant from the right slot (172, 0) and the lower slot (-80, 92).
         let arranged = arrange_rect_with_existing_layout(
             &existing,
-            eframe::egui::pos2(172.0, 0.0),
+            eframe::egui::pos2(46.0, 46.0),
             test_viewport_world(),
             80.0,
             80.0,
             12.0,
         );
 
-        assert_eq!(arranged, eframe::egui::pos2(172.0, 0.0));
+        assert_eq!(arranged, eframe::egui::pos2(-80.0, 92.0));
     }
 
     #[test]
-    fn viewport_bounding_prefers_on_screen_candidate() {
+    fn viewport_bounding_beats_anchor_distance() {
         let existing = vec![
             crate::placement::arrangement::PlacementArrangementInput::new(
                 0,
@@ -289,9 +290,10 @@ mod tests {
             eframe::egui::pos2(260.0, 60.0),
         );
 
+        // The anchor sits on the lower slot, which is off screen.
         let arranged = arrange_rect_with_existing_layout(
             &existing,
-            eframe::egui::pos2(172.0, 0.0),
+            eframe::egui::pos2(-80.0, 92.0),
             viewport,
             80.0,
             80.0,

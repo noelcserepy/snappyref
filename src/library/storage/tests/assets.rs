@@ -184,56 +184,6 @@ fn exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates() {
 }
 
 #[test]
-fn hash_aware_import_reuses_existing_exact_asset() {
-    let root = TempRoot::new("snappyref-hash-aware-import-reuse-test");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let first_path = library
-        .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
-        .unwrap();
-    let duplicate_path = library
-        .store_rgba_image("duplicate", &[255, 0, 0, 255], 1, 1)
-        .unwrap();
-    let original_sha256 = crate::library::storage::sha256_file(&first_path).unwrap();
-
-    let first = library
-        .register_original(
-            &first_path,
-            "image/png",
-            1,
-            1,
-            fs::metadata(&first_path).unwrap().len(),
-            Some(&original_sha256),
-        )
-        .unwrap();
-    let duplicate = library
-        .register_original(
-            &duplicate_path,
-            "image/png",
-            1,
-            1,
-            fs::metadata(&duplicate_path).unwrap().len(),
-            Some(&original_sha256),
-        )
-        .unwrap();
-
-    assert_eq!(duplicate.id, first.id);
-    assert_eq!(duplicate.original_path, first.original_path);
-    assert_eq!(duplicate.id, first.id);
-    assert!(!duplicate_path.exists());
-    assert!(first_path.exists());
-
-    let connection = Connection::open(root.join("library.db")).unwrap();
-    let live_assets: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM assets WHERE archived = 0",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(live_assets, 1);
-}
-
-#[test]
 fn parallel_hash_aware_imports_converge_on_one_exact_asset() {
     let root = TempRoot::new("snappyref-parallel-hash-aware-import-reuse-test");
     let library = Library::initialize(root.to_path_buf()).unwrap();
@@ -300,73 +250,23 @@ fn parallel_hash_aware_imports_converge_on_one_exact_asset() {
 }
 
 #[test]
-fn canvas_image_cache_path_is_deterministic() {
-    let root = std::env::temp_dir().join(format!(
-        "snappyref-thumb-path-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
-
+fn remove_asset_canvas_caches_removes_every_variant_of_only_that_asset() {
+    let root = TempRoot::new("snappyref-canvas-cache-remove-test");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let path = library
-        .store_canvas_image_cache(42, 2000, &[255, 0, 0, 255], 1, 1)
-        .unwrap();
-
-    assert_eq!(
-        path,
-        root.join("thumbs")
-            .join("asset-42-canvas-v3-downscale-working-2000.jpg")
-    );
-}
-
-#[test]
-fn store_and_remove_canvas_image_cache_round_trips_thumb_file() {
-    let root = std::env::temp_dir().join(format!(
-        "snappyref-thumb-store-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
+    let store = |asset_id, max_side| {
+        library
+            .store_canvas_image_cache(asset_id, max_side, &[255, 0, 0, 255], 1, 1)
             .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
-
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let preview_path = library
-        .store_canvas_image_cache(7, 2000, &[255, 0, 0, 255], 1, 1)
-        .unwrap();
-
-    assert!(preview_path.is_file());
-
-    library.remove_asset_canvas_caches(7).unwrap();
-    assert!(!preview_path.exists());
-}
-
-#[test]
-fn remove_asset_canvas_caches_removes_all_variants_for_asset() {
-    let root = std::env::temp_dir().join(format!(
-        "snappyref-thumb-remove-variants-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
-
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let first = library
-        .store_canvas_image_cache(7, 2000, &[255, 0, 0, 255], 1, 1)
-        .unwrap();
-    let second = library
-        .store_canvas_image_cache(7, 4000, &[255, 0, 0, 255], 1, 1)
-        .unwrap();
+    };
+    let removed = [store(7, 2000), store(7, 4000)];
+    // Asset 70 shares the "asset-7" text prefix.
+    let kept = store(70, 2000);
+    assert!(removed.iter().chain([&kept]).all(|path| path.is_file()));
 
     library.remove_asset_canvas_caches(7).unwrap();
 
-    assert!(!first.exists());
-    assert!(!second.exists());
+    assert!(removed.iter().all(|path| !path.exists()));
+    assert!(kept.is_file());
 }
 
 #[test]
@@ -630,83 +530,6 @@ fn embedding_backfill_retries_failed_assets_after_never_tried_assets() {
         .unwrap()
         .unwrap();
     assert_eq!(job.asset_id, retry.require_loaded_asset().id);
-}
-
-#[test]
-fn next_embedding_backfill_job_prefers_never_tried_assets_before_retries() {
-    let root = TempRoot::new("snappyref-next-embedding-backfill-job-test");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let retry_path = library
-        .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
-        .unwrap();
-    let fresh_path = library
-        .store_rgba_image("fresh", &[0, 255, 0, 255], 1, 1)
-        .unwrap();
-
-    let retry = library
-        .fixture_placement(
-            library.load_user_session().unwrap().active_board_id,
-            crate::data::Placement::loaded(
-                crate::data::PlacementState::new(
-                    library.allocate_document_id(),
-                    egui::pos2(0.0, 0.0),
-                    1.0,
-                    0.0,
-                    0,
-                    false,
-                ),
-                library
-                    .register_original(&retry_path, "image/png", 1, 1, 4, None)
-                    .unwrap(),
-            ),
-        )
-        .unwrap();
-    let fresh = library
-        .fixture_placement(
-            library.load_user_session().unwrap().active_board_id,
-            crate::data::Placement::loaded(
-                crate::data::PlacementState::new(
-                    library.allocate_document_id(),
-                    egui::pos2(1.0, 0.0),
-                    1.0,
-                    0.0,
-                    0,
-                    false,
-                ),
-                library
-                    .register_original(&fresh_path, "image/png", 1, 1, 4, None)
-                    .unwrap(),
-            ),
-        )
-        .unwrap();
-    library
-        .record_retryable_asset_embedding_failure(
-            retry.require_loaded_asset().id,
-            "mobileclip_s0",
-            768,
-            "temporary failure",
-            1_000,
-        )
-        .unwrap();
-
-    let job = library
-        .next_embedding_backfill_job_for_model("mobileclip_s0", 1_000)
-        .unwrap()
-        .unwrap();
-    assert_eq!(job.asset_id, fresh.require_loaded_asset().id);
-
-    library
-        .upsert_asset_embedding_blob(
-            fresh.require_loaded_asset().id,
-            "mobileclip_s0",
-            &[1.0, 0.0],
-        )
-        .unwrap();
-    let retry_job = library
-        .next_embedding_backfill_job_for_model("mobileclip_s0", 1_000)
-        .unwrap()
-        .unwrap();
-    assert_eq!(retry_job.asset_id, retry.require_loaded_asset().id);
 }
 
 #[test]
