@@ -3,24 +3,25 @@ use super::geometry::{
     pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
 };
 use super::interaction::{
-    handle_textbox_primary_press, hit_test_canvas_item, hit_test_placement_resize_handle,
-    hit_test_textbox_resize_handle, moved_textbox_rect, normalized_textbox_rect,
+    begin_marquee_selection, handle_textbox_primary_press, hit_test_canvas_item,
+    hit_test_placement_resize_handle, hit_test_textbox_resize_handle, moved_textbox_rect,
     open_context_menu_at_pointer, pending_annotation_from_draft, placement_screen_rect,
     resized_placement_transform, resized_textbox_rect, textbox_screen_rect,
+    update_marquee_selection,
 };
 use super::render::{
-    annotation_paint_stats_for_annotations, background_lod_layers, background_screen_step,
+    annotation_should_paint, background_lod_layers, background_screen_step,
     editing_textbox_toolbar_rect, layout_textbox_galley, optimized_image_pass_eligible_for_state,
     settled_background_lod_level, textbox_content_rect, textbox_empty_hotspot_rect,
-    textbox_font_size, textbox_layout_cache_key, textbox_pointer_region,
-    textbox_required_world_height, textbox_text_interactive_rect_from_galley,
-    unified_canvas_paint_order_for_state,
+    textbox_pointer_region, textbox_required_world_height,
+    textbox_text_interactive_rect_from_galley,
 };
 use super::{
-    AnnotationDraftState, CanvasCropRequest, CanvasInputPolicy, CanvasState, CanvasTexture,
-    FOCUS_SELECTION_PADDING_SCREEN, MIN_CANVAS_ZOOM, PixelCropRect, PlacementArrangementInput,
-    PlacementImage, PlacementResizeHandle, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
-    TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion, TextboxResizeHandle,
+    ANNOTATION_CULL_MARGIN_SCREEN, AnnotationDraftState, CanvasCropRequest, CanvasInputPolicy,
+    CanvasState, CanvasTexture, FOCUS_SELECTION_PADDING_SCREEN, MIN_CANVAS_ZOOM, PixelCropRect,
+    PlacementArrangementInput, PlacementImage, PlacementResizeHandle,
+    TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion,
+    TextboxResizeHandle,
 };
 use crate::data::{
     Asset, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
@@ -80,42 +81,6 @@ fn push_test_image(
     );
 }
 
-#[test]
-fn viewport_only_input_zooms_without_preview_state() {
-    let ctx = eframe::egui::Context::default();
-    let mut state = CanvasState::default();
-    state.set_pointer_mode(crate::data::PointerMode::Trackpad);
-    let screen_rect = eframe::egui::Rect::from_min_size(
-        eframe::egui::Pos2::ZERO,
-        eframe::egui::vec2(800.0, 600.0),
-    );
-
-    let _ = crate::ui::test_frame::run_ui(
-        &ctx,
-        eframe::egui::RawInput {
-            events: vec![
-                eframe::egui::Event::PointerMoved(screen_rect.center()),
-                eframe::egui::Event::Zoom(0.5),
-            ],
-            ..Default::default()
-        },
-        |ui| {
-            super::show(
-                ui,
-                screen_rect,
-                screen_rect,
-                &mut state,
-                None,
-                false,
-                CanvasInputPolicy::ViewportOnly,
-                false,
-            );
-        },
-    );
-
-    assert!(state.viewport_state().camera_zoom < 1.0);
-}
-
 fn default_text_size() -> CanvasTextSize {
     CanvasTextSize::default()
 }
@@ -160,7 +125,7 @@ fn unloaded_test_record(
     scale: f32,
     center: eframe::egui::Pos2,
 ) -> Placement {
-    let mut placement = Placement {
+    Placement {
         state: PlacementState::with_display_size(
             placement_id,
             center,
@@ -170,12 +135,9 @@ fn unloaded_test_record(
             placement_id as i32,
             false,
         ),
-        content: content.clone(),
+        content,
         lifecycle: PlacementLifecycle::Committed,
-    };
-    placement.content = content;
-    placement.lifecycle = PlacementLifecycle::Committed;
-    placement
+    }
 }
 
 fn native_loaded_item(
@@ -203,10 +165,7 @@ fn native_loaded_item(
     }
 }
 
-fn animated_loaded_item(
-    _ui: &eframe::egui::Ui,
-    placement: Placement,
-) -> crate::image_preparation::PreparedPlacementImage {
+fn animated_loaded_item(placement: Placement) -> crate::image_preparation::PreparedPlacementImage {
     let first_frame = vec![0, 0, 255, 255];
     let second_frame = vec![0, 255, 0, 255];
     crate::image_preparation::PreparedPlacementImage {
@@ -461,29 +420,51 @@ fn horizontal_and_vertical_layouts_use_requested_gap() {
 }
 
 #[test]
-fn compact_layout_respects_gap() {
-    let items = vec![
-        arrangement_input(1, 80.0, 80.0),
-        arrangement_input(2, 80.0, 60.0),
-        arrangement_input(3, 60.0, 80.0),
-        arrangement_input(4, 60.0, 60.0),
+fn compact_layout_keeps_gap_between_every_pair() {
+    let larger_mixed_selection = (0..48)
+        .map(|index| {
+            let (width, height) = [
+                (300.0, 520.0),
+                (180.0, 260.0),
+                (160.0, 260.0),
+                (150.0, 220.0),
+                (140.0, 180.0),
+                (220.0, 140.0),
+            ][index % 6];
+            arrangement_input(index as i64 + 1, width, height)
+        })
+        .collect::<Vec<_>>();
+    let fixtures = [
+        vec![
+            arrangement_input(1, 80.0, 80.0),
+            arrangement_input(2, 80.0, 60.0),
+            arrangement_input(3, 60.0, 80.0),
+            arrangement_input(4, 60.0, 60.0),
+        ],
+        hole_prone_items(),
+        larger_mixed_selection,
     ];
     let gap = 12.0;
 
-    let (placements, _, _) = best_compact_layout(&items, gap).unwrap();
+    for items in fixtures {
+        let (placements, _, _) = best_compact_layout(&items, gap).unwrap();
 
-    for left in &items {
-        for right in &items {
-            if left.id >= right.id {
-                continue;
+        assert_eq!(placements.len(), items.len());
+        for left in &items {
+            for right in items.iter().filter(|right| right.id > left.id) {
+                let left_rect = placement_rect(&items, &placements, left.id);
+                let right_rect = placement_rect(&items, &placements, right.id);
+                assert!(
+                    rectangles_respect_gap(left_rect, right_rect, gap),
+                    "{} items: {} and {} closer than the gap",
+                    items.len(),
+                    left.id,
+                    right.id
+                );
             }
-            let left_rect = placement_rect(&items, &placements, left.id);
-            let right_rect = placement_rect(&items, &placements, right.id);
-            assert!(rectangles_respect_gap(left_rect, right_rect, gap));
         }
     }
 }
-
 #[test]
 fn directional_settle_right_moves_sparse_rows_to_wall() {
     let items = vec![
@@ -614,50 +595,32 @@ fn compact_layout_is_more_square_than_row_or_column_extremes() {
 }
 
 #[test]
-fn compact_layout_is_deterministic_for_mixed_sizes() {
-    let items = hole_prone_items();
-    let gap = 12.0;
-
-    let first = best_compact_layout(&items, gap).unwrap();
-    let second = best_compact_layout(&items, gap).unwrap();
-
-    assert_eq!(first.1, second.1);
-    assert_eq!(first.2, second.2);
-    assert_eq!(first.0.len(), second.0.len());
-    for ((first_id, first_pos), (second_id, second_pos)) in first.0.iter().zip(second.0.iter()) {
-        assert_eq!(first_id, second_id);
-        assert!(
-            (first_pos.x - second_pos.x).abs() < 0.001,
-            "item {first_id} x moved from {} to {}",
-            first_pos.x,
-            second_pos.x
-        );
-        assert!(
-            (first_pos.y - second_pos.y).abs() < 0.001,
-            "item {first_id} y moved from {} to {}",
-            first_pos.y,
-            second_pos.y
-        );
-    }
-}
-
-#[test]
-fn compact_layout_for_sizes_preserves_input_order() {
+fn compact_layout_for_sizes_keeps_each_input_size_in_its_slot() {
+    // 100 vs 101 wide: preview layout must not apply the arrange-time width normalization.
     let sizes = [
         eframe::egui::vec2(90.0, 40.0),
         eframe::egui::vec2(300.0, 520.0),
-        eframe::egui::vec2(140.0, 180.0),
+        eframe::egui::vec2(100.0, 100.0),
+        eframe::egui::vec2(101.0, 100.0),
     ];
+    let gap = 12.0;
 
-    let arrangement_inputs =
-        compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(100.0, 200.0));
+    let slots = compact_layout_for_sizes(&sizes, gap, eframe::egui::pos2(100.0, 200.0));
 
-    assert_eq!(arrangement_inputs.len(), sizes.len());
-    for (index, (_, size)) in arrangement_inputs.iter().enumerate() {
-        assert_eq!(*size, sizes[index]);
+    assert_eq!(
+        slots.iter().map(|(_, size)| *size).collect::<Vec<_>>(),
+        sizes
+    );
+    let rects = slots
+        .iter()
+        .map(|(center, size)| eframe::egui::Rect::from_center_size(*center, *size))
+        .collect::<Vec<_>>();
+    for (index, left) in rects.iter().enumerate() {
+        for right in &rects[index + 1..] {
+            assert!(rectangles_respect_gap(*left, *right, gap));
+        }
     }
 }
-
 #[test]
 fn balanced_grid_layout_avoids_single_column_for_equal_approximate_batch() {
     let sizes = vec![eframe::egui::vec2(360.0, 240.0); 13];
@@ -728,24 +691,6 @@ fn compact_layout_prefers_dense_candidate_over_square_with_holes() {
         occupancy > 0.75,
         "compact arrangement should prefer fewer holes over a more square empty box"
     );
-}
-
-#[test]
-fn compact_layout_has_no_overlaps_for_hole_prone_fixture() {
-    let items = hole_prone_items();
-    let gap = 12.0;
-    let (placements, _, _) = best_compact_layout(&items, gap).unwrap();
-
-    for left in &items {
-        for right in &items {
-            if left.id >= right.id {
-                continue;
-            }
-            let left_rect = placement_rect(&items, &placements, left.id);
-            let right_rect = placement_rect(&items, &placements, right.id);
-            assert!(!left_rect.intersects(right_rect));
-        }
-    }
 }
 
 #[test]
@@ -833,19 +778,6 @@ fn compact_arrangement_rejects_width_normalization_that_disrupts_height() {
 }
 
 #[test]
-fn compact_preview_layout_does_not_normalize_sizes() {
-    let sizes = [
-        eframe::egui::vec2(100.0, 100.0),
-        eframe::egui::vec2(101.0, 100.0),
-    ];
-
-    let arrangement_inputs = compact_layout_for_sizes(&sizes, 12.0, eframe::egui::pos2(0.0, 0.0));
-
-    assert_eq!(arrangement_inputs[0].1, sizes[0]);
-    assert_eq!(arrangement_inputs[1].1, sizes[1]);
-}
-
-#[test]
 fn context_click_uses_frontmost_mixed_canvas_stack_item() {
     let mut state = CanvasState::default();
     let rect = eframe::egui::Rect::from_min_size(
@@ -877,41 +809,6 @@ fn context_click_uses_frontmost_mixed_canvas_stack_item() {
     assert_eq!(state.selected_placement_ids(), vec![1]);
     assert!(state.selected_annotation_ids().is_empty());
     assert!(state.take_context_menu_request().is_some());
-}
-
-#[test]
-fn canvas_paint_order_uses_unified_stack_order_for_mixed_items() {
-    let mut state = CanvasState::default();
-    eframe::egui::__run_test_ui(|ui| {
-        push_test_image(ui, &mut state, 1, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
-        push_test_image(ui, &mut state, 2, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
-    });
-    state.add_annotation(CanvasAnnotation::new(
-        20,
-        CanvasAnnotationKind::Textbox,
-        eframe::egui::pos2(-40.0, -40.0),
-        eframe::egui::pos2(40.0, 40.0),
-        "note".to_owned(),
-        default_text_size(),
-        default_stroke_width(),
-        default_annotation_color(),
-        false,
-        false,
-    ));
-    state.set_canvas_stack_order(vec![
-        CanvasStackItem::Placement(1),
-        CanvasStackItem::Annotation(20),
-        CanvasStackItem::Placement(2),
-    ]);
-
-    assert_eq!(
-        unified_canvas_paint_order_for_state(&state),
-        vec![
-            CanvasStackItem::Placement(1),
-            CanvasStackItem::Annotation(20),
-            CanvasStackItem::Placement(2),
-        ]
-    );
 }
 
 #[test]

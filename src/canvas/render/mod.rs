@@ -6,18 +6,16 @@ mod overlays;
 mod textbox_editor;
 
 #[cfg(test)]
-pub(super) use annotations::annotation_paint_stats_for_annotations;
+pub(super) use annotations::annotation_should_paint;
 pub(super) use annotations::paint_annotation_draft;
 pub(super) use background::paint_background;
 #[cfg(test)]
 pub(super) use background::{
     background_lod_layers, background_screen_step, settled_background_lod_level,
 };
-pub(super) use image_pass::{canvas_texture_from_preview, paint_canvas_items};
 #[cfg(test)]
-pub(super) use image_pass::{
-    optimized_image_pass_eligible_for_state, unified_canvas_paint_order_for_state,
-};
+pub(super) use image_pass::optimized_image_pass_eligible_for_state;
+pub(super) use image_pass::{canvas_texture_from_preview, paint_canvas_items};
 pub(super) use overlays::{
     paint_crop_marquee, paint_guide_snap_indicators, paint_hover_hairline, paint_marquee,
     paint_provisional_placement_previews, paint_selected_placement_borders, paint_selection_bounds,
@@ -29,8 +27,7 @@ pub(super) use textbox_editor::{
 };
 #[cfg(test)]
 pub(super) use textbox_editor::{
-    textbox_content_rect, textbox_empty_hotspot_rect, textbox_font_size,
-    textbox_text_interactive_rect_from_galley,
+    textbox_content_rect, textbox_empty_hotspot_rect, textbox_text_interactive_rect_from_galley,
 };
 
 #[cfg(test)]
@@ -42,37 +39,28 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn visible_overview_image_promotes_to_working_lod() {
-        let mut state = CanvasState::default();
-        let (placement, image) = test_image(7, CanvasImageLod::Overview, [256, 256]);
-        state.install_placement_image(placement, image);
+    fn visible_image_promotes_one_lod_step_for_its_screen_size() {
+        // (zoom, loaded LOD, desired LOD) for a 256px texture in an 800x600 canvas.
+        let cases = [
+            (1.0, CanvasImageLod::Overview, CanvasImageLod::Working),
+            (2.0, CanvasImageLod::Working, CanvasImageLod::Detail),
+        ];
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
 
-        state.request_image_lod_load(
-            7,
-            image_pass::desired_image_lod(&state, rect, 7).expect("overview should promote"),
-        );
+        for (zoom, loaded_lod, desired_lod) in cases {
+            let mut state = CanvasState {
+                zoom,
+                ..Default::default()
+            };
+            let (placement, image) = test_image_at(7, loaded_lod, [256, 256], egui::Pos2::ZERO);
+            state.install_placement_image(placement, image);
 
-        assert_eq!(
-            state.render.image_lod_loads.get(&7).map(|load| load.lod),
-            Some(CanvasImageLod::Working)
-        );
-    }
-
-    #[test]
-    fn working_image_promotes_to_detail_only_when_screen_size_exceeds_texture_threshold() {
-        let mut state = CanvasState {
-            zoom: 2.0,
-            ..Default::default()
-        };
-        let (placement, image) = test_image(9, CanvasImageLod::Working, [256, 256]);
-        state.install_placement_image(placement, image);
-        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
-
-        assert_eq!(
-            image_pass::desired_image_lod(&state, rect, 9),
-            Some(CanvasImageLod::Detail)
-        );
+            assert_eq!(
+                image_pass::desired_image_lod(&state, rect, 7),
+                Some(desired_lod),
+                "zoom {zoom}, loaded {loaded_lod:?}"
+            );
+        }
     }
 
     #[test]
@@ -117,7 +105,7 @@ mod tests {
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
 
         assert_eq!(
-            unified_canvas_paint_order_for_state(&state),
+            state.ordered_canvas_items_back_to_front(),
             vec![
                 crate::data::CanvasStackItem::Placement(1),
                 crate::data::CanvasStackItem::Placement(2),
@@ -133,14 +121,6 @@ mod tests {
             overlays::selected_placement_border_paint_ids(&state, rect, 0.0),
             vec![2]
         );
-    }
-
-    fn test_image(
-        placement_id: i64,
-        loaded_lod: CanvasImageLod,
-        texture_size: [usize; 2],
-    ) -> (Placement, PlacementImage) {
-        test_image_at(placement_id, loaded_lod, texture_size, egui::Pos2::ZERO)
     }
 
     fn test_image_at(

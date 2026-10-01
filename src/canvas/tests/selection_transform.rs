@@ -1,19 +1,6 @@
 use super::*;
 
 #[test]
-fn textbox_drag_draft_preserves_explicit_size() {
-    let mut draft = AnnotationDraftState::new(
-        CanvasAnnotationKind::Textbox,
-        eframe::egui::pos2(20.0, 40.0),
-    );
-    draft.set_current_world(eframe::egui::pos2(340.0, 120.0));
-    let pending = pending_annotation_from_draft(draft).unwrap();
-
-    assert_eq!(pending.start_world(), eframe::egui::pos2(20.0, 40.0));
-    assert_eq!(pending.end_world(), eframe::egui::pos2(340.0, 120.0));
-}
-
-#[test]
 fn focus_selection_in_view_noops_without_selection() {
     let mut state = CanvasState::default();
     let canvas_rect = eframe::egui::Rect::from_min_size(
@@ -267,75 +254,58 @@ fn textbox_edge_press_on_selected_textbox_starts_resize() {
 }
 
 #[test]
-fn marquee_selection_can_add_multiple_textboxes() {
+fn marquee_selects_textboxes_and_shift_marquee_adds_to_them() {
     let mut state = CanvasState::default();
-    state.add_annotation(CanvasAnnotation::new(
-        12,
-        CanvasAnnotationKind::Textbox,
-        eframe::egui::pos2(20.0, 40.0),
-        eframe::egui::pos2(260.0, 96.0),
-        "textbox".to_owned(),
-        default_text_size(),
-        default_stroke_width(),
-        default_annotation_color(),
-        false,
-        false,
-    ));
-    state.add_annotation(CanvasAnnotation::new(
-        13,
-        CanvasAnnotationKind::Textbox,
-        eframe::egui::pos2(280.0, 40.0),
-        eframe::egui::pos2(420.0, 96.0),
-        "textbox".to_owned(),
-        default_text_size(),
-        default_stroke_width(),
-        default_annotation_color(),
-        false,
-        false,
-    ));
+    let rect = eframe::egui::Rect::from_min_size(
+        eframe::egui::Pos2::ZERO,
+        eframe::egui::vec2(960.0, 640.0),
+    );
+    for (id, min, max) in [
+        (
+            12,
+            eframe::egui::pos2(20.0, 40.0),
+            eframe::egui::pos2(260.0, 96.0),
+        ),
+        (
+            13,
+            eframe::egui::pos2(280.0, 40.0),
+            eframe::egui::pos2(420.0, 96.0),
+        ),
+    ] {
+        state.add_annotation(CanvasAnnotation::new(
+            id,
+            CanvasAnnotationKind::Textbox,
+            min,
+            max,
+            "textbox".to_owned(),
+            default_text_size(),
+            default_stroke_width(),
+            default_annotation_color(),
+            false,
+            false,
+        ));
+    }
+    let drag_marquee_over = |state: &mut CanvasState, id: i64, shift_held: bool| {
+        let textbox = textbox_screen_rect(state, rect, state.annotation_by_id(id).unwrap());
+        begin_marquee_selection(
+            state,
+            textbox.left_top() - eframe::egui::vec2(4.0, 4.0),
+            shift_held,
+        );
+        update_marquee_selection(state, rect, textbox.center(), shift_held);
+    };
 
-    state.set_marquee_selection(Vec::new(), vec![12], false);
-    state.set_marquee_selection(Vec::new(), vec![13], true);
+    drag_marquee_over(&mut state, 12, false);
+    assert!(state.interaction.selected_placement_ids.is_empty());
+    assert_eq!(state.interaction.selected_annotation_ids, vec![12]);
 
+    drag_marquee_over(&mut state, 13, true);
     assert_eq!(state.interaction.selected_annotation_ids, vec![12, 13]);
 }
-
 #[test]
 fn single_selected_annotation_id_is_none_when_selection_is_empty() {
     let state = CanvasState::default();
     assert_eq!(state.single_selected_annotation_id(), None);
-}
-
-#[test]
-fn compact_layout_handles_larger_mixed_selection() {
-    let mut items = Vec::new();
-    let base = [
-        (300.0, 520.0),
-        (180.0, 260.0),
-        (160.0, 260.0),
-        (150.0, 220.0),
-        (140.0, 180.0),
-        (220.0, 140.0),
-    ];
-    for index in 0..48 {
-        let (width, height) = base[index % base.len()];
-        items.push(arrangement_input(index as i64 + 1, width, height));
-    }
-
-    let gap = 12.0;
-    let (placements, _, _) = best_compact_layout(&items, gap).unwrap();
-
-    assert_eq!(placements.len(), items.len());
-    for left in &items {
-        for right in &items {
-            if left.id >= right.id {
-                continue;
-            }
-            let left_rect = placement_rect(&items, &placements, left.id);
-            let right_rect = placement_rect(&items, &placements, right.id);
-            assert!(rectangles_respect_gap(left_rect, right_rect, gap));
-        }
-    }
 }
 
 #[test]

@@ -226,11 +226,6 @@ pub(crate) fn paint_canvas_items(
 }
 
 #[cfg(test)]
-pub(crate) fn unified_canvas_paint_order_for_state(state: &CanvasState) -> Vec<CanvasStackItem> {
-    state.ordered_canvas_items_back_to_front()
-}
-
-#[cfg(test)]
 pub(crate) fn optimized_image_pass_eligible_for_state(state: &CanvasState) -> bool {
     canvas_stack_matches_existing_layering(state)
 }
