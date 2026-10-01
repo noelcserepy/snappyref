@@ -4,6 +4,8 @@
 # Output layout: a zip whose single top-level entry is `SnappyRef/SnappyRef.app/`.
 # Models are no longer bundled inside `SnappyRef.app`; Semantic Search assets
 # are distributed separately as `snappyref-semantic-search.zip`.
+# SNAPPYREF_BUNDLE_ID and SNAPPYREF_BUNDLE_NAME override the bundle identity,
+# so a QA build does not share LaunchServices state with an installed app.
 set -euo pipefail
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
@@ -12,6 +14,8 @@ if [[ $# -lt 1 || $# -gt 2 ]]; then
 fi
 zip_path=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$1")
 binary_dir=${2:-target/release}
+bundle_id=${SNAPPYREF_BUNDLE_ID:-dev.snappyref.SnappyRef}
+bundle_name=${SNAPPYREF_BUNDLE_NAME:-SnappyRef}
 package_root=$(mktemp -d "${RUNNER_TEMP:-/tmp}/snappyref-macos-package.XXXXXX")
 trap 'rm -rf "$package_root"' EXIT
 install_root="$package_root/SnappyRef"
@@ -48,13 +52,13 @@ cat > "$contents_root/Info.plist" <<PLIST
   <key>CFBundleExecutable</key>
   <string>snappyref</string>
   <key>CFBundleIdentifier</key>
-  <string>dev.snappyref.SnappyRef</string>
+  <string>$bundle_id</string>
   <key>CFBundleIconFile</key>
   <string>snappyref</string>
   <key>CFBundleName</key>
-  <string>SnappyRef</string>
+  <string>$bundle_name</string>
   <key>CFBundleDisplayName</key>
-  <string>SnappyRef</string>
+  <string>$bundle_name</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

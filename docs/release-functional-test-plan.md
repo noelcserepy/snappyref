@@ -18,8 +18,14 @@ stacking, always need a native run.
 
 ## Setup
 
-- Launch with `SNAPPYREF_DATA_ROOT` pointing at a fresh empty folder. Never use
-  a real Library.
+- On macOS, build the QA app with `scripts/build-qa-app-macos.sh`. It prints
+  the path of `SnappyRef QA.app`, whose bundle id `dev.snappyref.SnappyRef.QA`
+  keeps the pass off an installed SnappyRef. Launch its
+  `Contents/MacOS/snappyref` directly so it inherits `SNAPPYREF_DATA_ROOT`.
+- Run exactly one instance, with `SNAPPYREF_DATA_ROOT` pointing at a fresh empty
+  folder. Never use a real Library.
+- Keep the window unoccluded, since eframe pauses an occluded window. Drive all
+  input through the computer-use tool.
 - Images: PNG, JPEG, GIF (animated), WebP, a large image (4000 px or more), a
   very wide and a very tall image, a transparent PNG, a JPEG with a rotated
   EXIF orientation and one with a mirrored orientation, a corrupt `.png`, and a
