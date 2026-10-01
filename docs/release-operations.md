@@ -55,6 +55,14 @@ by a key they do not know.
    commit the run built, which the patchnotes range starts from next time.
 9. Run [update smokes](#update-smokes) only on explicit user request.
 
+For a dry run, dispatch with `publish_to_dist=false` and keep
+`create_draft_release=true`, so the final zips land on the source-repo draft.
+With both off, the zips go nowhere.
+
+```sh
+gh workflow run publish-full-release.yml --ref main -f ref=main -f publish_to_dist=false
+```
+
 Before a release, walk the [feature list](release-functional-test-plan.md) on
 macOS and Windows. It excludes app updating.
 
@@ -79,10 +87,11 @@ Packaging rejects invalid descriptors or differing descriptors across selected b
 Build Windows App and Build macOS App attach their app archive and descriptor to
 `handoff_release_tag` in a source-repo draft release. Package Release Zips accepts
 `windows_build_tag` and `macos_build_tag` to reuse those builds without compiling.
-Blank build tags use the target `release_tag`. Every successful packaging run
-attaches its final zips to that release, creating a draft if the tag has no release.
-Existing releases keep their publication state. Full Release uses the same packaging action,
-then signs its manifest and removes its temporary build handoff assets.
+Blank build tags use the target `release_tag`. Every successful Package Release Zips
+run attaches its final zips to that release, creating a draft if the tag has no release.
+Existing releases keep their publication state. Full Release uses the same packaging action
+but attaches the zips only when `create_draft_release` is on. It then signs its manifest
+and removes its temporary build handoff assets.
 
 Local packaging verification needs no release or model download:
 
