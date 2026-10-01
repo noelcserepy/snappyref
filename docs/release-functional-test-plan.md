@@ -1,8 +1,9 @@
 # Release feature list
 
 Every user-facing feature on current main, one row each, for a release QA pass
-on macOS and Windows. A computer-use agent can walk it top to bottom. App
-updating and the networked smokes are out of scope.
+on macOS and Windows. A computer-use agent can walk it top to bottom, except
+the rows under [Human only](#human-only). App updating and the networked
+smokes are out of scope.
 
 `Mod` is Command on macOS and Control on Windows. `Alt` is Option on macOS.
 Delete is Backspace on macOS. Redo is `Mod+Shift+Z`.
@@ -43,7 +44,7 @@ stacking, always need a native run.
 | ID | Do | Expect | Covered |
 | --- | --- | --- | --- |
 | BRD-1 | Click "+ New board", then press `Mod+N` | Each creates and activates an empty board with a generated name | |
-| BRD-2 | Double-click a board name, type a new name, press Enter; repeat committing by clicking away; try a blank name | Name commits, content unchanged, blank name is not accepted | |
+| BRD-2 | Double-click a board name, type a new name, press Enter; repeat committing by clicking away; try a blank name; type a name and press Escape | Name commits, content unchanged, blank name is not accepted, Escape keeps the old name | |
 | BRD-3 | Switch boards by clicking rows and with `Mod+1`..`Mod+9`, `Mod+0` | The matching board activates, row highlight and canvas agree | |
 | BRD-4 | Give two boards different pan, zoom and background, switch back and forth | Each board restores its own view and background | `switching_boards_saves_previous_viewport_and_loads_target_viewport` |
 | BRD-5 | Hover a board row, click Delete, cancel; repeat and confirm | Dialog names the board, cancel changes nothing, confirm removes it | |
@@ -62,13 +63,14 @@ stacking, always need a native run.
 | IMP-6 | Copy one or several image files in Finder or Explorer, `Mod+V` | Each file imports once | |
 | IMP-7 | Copy a direct `https://` image URL, `Mod+V`; drag a browser image onto the canvas | One image per action | |
 | IMP-8 | Copy plain non-URL text, `Mod+V` on the canvas | Nothing added, existing content unchanged | |
-| IMP-9 | Import each format: PNG, JPEG, GIF, WebP, TIFF, BMP, SVG, EXR, JPEG XL; on macOS also AVIF, HEIC, PSD, JPEG 2000 | Each renders correctly proportioned, no failed tile | |
+| IMP-9 | Import each format: PNG, JPEG, GIF, WebP, TIFF, BMP, SVG, EXR, JPEG XL, AVIF, HEIC, PSD, JPEG 2000 | Each renders correctly proportioned, no failed tile. On Windows, AVIF, HEIC, PSD and JPEG 2000 show as failed, as the README says | |
 | IMP-10 | Import JPEGs with rotated and mirrored EXIF orientation | Displayed upright, matching the photo's intended orientation | |
 | IMP-11 | Import a corrupt `.png` together with valid images | Valid images load; the corrupt one shows as failed, does not spin forever, can be deleted | |
 | IMP-12 | Import a file whose path has spaces and non-ASCII characters | Loads normally | |
 | IMP-13 | Import the same file twice, on two boards | Two placements, one Library asset | |
 | IMP-14 | Hover an animated GIF, then move the pointer away | Animation plays while hovered or selected and holds its frame otherwise | |
 | IMP-15 | Start a large batch, switch to another board right away, come back later | Batch lands only on the first board, complete | |
+| IMP-16 | After IMP-13, press `P` (Dedupe library) with no text field focused, then search and switch boards | Status reports the duplicates removed or none found; every board keeps its images, search lists each image once | |
 
 ## Canvas navigation
 
@@ -130,7 +132,7 @@ There is no flip command. Mirrored images only come from EXIF (IMP-10).
 | GRP-1 | Select three images, `Mod+G`; repeat with context menu > Group | Group with a fine gold outline and name; Group card appears at the canvas's right edge, vertically centered, Wrap selected | |
 | GRP-2 | Group a selection with a textbox in it | Textbox becomes a member; arrows and lines do not | |
 | GRP-3 | Click a member, drag | The whole group selects and moves | |
-| GRP-4 | Edit the name in the card header, press Enter | Name updates on canvas; blank name rejected | |
+| GRP-4 | Edit the name in the card header, press Enter; edit again and press Escape | Enter updates the name on canvas, blank name rejected, Escape keeps the old name | |
 | GRP-5 | Card Row, Column, Wrap, Free buttons | Members reflow in order; Free dims pad, gap and spread | |
 | GRP-6 | Click alignment pad cells; pick Between, Evenly, Around, then Off | Members align to the cell; spread modes distribute them, pad shows bands | |
 | GRP-7 | Type a Gap and a Padding value, Enter | Spacing changes; invalid text does not apply | |
@@ -158,12 +160,13 @@ There is no flip command. Mirrored images only come from EXIF (IMP-10).
 | ORD-1 | `Mod+.` and `Mod+,` on overlapping items; then context menu Move to Front, Move to Back | Selection moves above or below others, relative order kept | |
 | ORD-2 | Context menu with nothing selected | Stack order items disabled | `stack_order_context_actions_are_disabled_without_canvas_item_selection` |
 | CPY-1 | `Mod+D` and context menu Duplicate on a mixed selection | Offset copies, selected, editable on their own | |
-| CPY-2 | `Mod+C` a cropped, rotated image, `Mod+V` on the same and another board | Copies keep crop and rotation | |
+| CPY-2 | `Mod+C` a cropped, rotated image, `Mod+V` on the same and another board; repeat with context menu Copy and Paste | Copies keep crop and rotation | |
 | CPY-3 | Copy one SnappyRef image, paste into an external image editor | Pixels arrive | |
 | CPY-4 | Copy from PureRef, paste into SnappyRef | Referenced images import once | |
 | CPY-5 | Delete, then context menu Delete (from board) | Items leave this board only, Library keeps the image | |
 | CPY-6 | Context menu > Remove from Library..., cancel, then confirm | Cancel keeps all; confirm removes the image from every board and from search | |
 | CPY-7 | Open the context menu, dismiss with Escape and with an outside click | Menu closes, nothing underneath fires | |
+| CPY-8 | Copy a mixed selection (images, a textbox, an arrow, a group), quit, reopen, `Mod+V` | Every item pastes once with its geometry and the group intact | |
 
 ## Undo and redo
 
@@ -220,10 +223,16 @@ The four dialogs are "Enable Semantic Search?", "Delete board?", "Remove asset(s
 | PER-4 | Edit quickly, switch boards, quit right away, reopen | Latest edits kept on the right boards | |
 | PER-5 | Set window size and position, quit, reopen | Window returns at the same bounds | |
 
-## Not here
+## Human only
 
-These need a human or special setup: physical trackpad pinch and wheel feel,
-held-modifier drags the agent cannot hold, PureRef and other cross-app drops,
-an offline launch, install into a protected location, and the live Semantic
-Search download. See [release operations](release-operations.md) for the
-update smokes.
+Rows NAV-1, NAV-3 (wheel and trackpad feel), NAV-2, SEL-4, SEL-6 and ROT-3
+(held-modifier drags) and CPY-4 and IMP-7 (PureRef and browser drops) need a
+person at the machine. So do these:
+
+| ID | Do | Expect | Covered |
+| --- | --- | --- | --- |
+| HUM-1 | Disconnect the network, launch | App opens, boards usable, no blocking error | |
+| HUM-2 | Without `SNAPPYREF_DATA_ROOT`, launch from a folder you cannot write (`Program Files`, a root-owned folder on macOS), import an image; repeat from a writable folder | Protected install keeps data in the platform user-data directory; writable install keeps it beside the app | |
+| HUM-3 | On explicit request only: install Semantic Search from the first-launch prompt, the search palette and Settings; cancel one install; Retry after a failed one | Install finishes and search works; cancel leaves it Not installed; Retry recovers | |
+
+See [release operations](release-operations.md) for the update smokes.
