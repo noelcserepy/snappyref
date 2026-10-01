@@ -108,10 +108,11 @@ git config core.hooksPath .githooks
 
 The [pre-push hook](.githooks/pre-push) runs `cargo fmt --check`, clippy
 with warnings denied, `cargo check --locked`, and
-`cargo test --locked update_preservation_smoke`. CI runs the same gate on
-every pull request. `cargo test --locked`
-runs the full suite. UI behavior is verified through inspect scenarios; list
-them with `docs/skills/inspect/scripts/run-scenario.sh --list`.
+`cargo test --locked update_preservation_smoke`. `cargo test --locked`
+runs the full suite. CI runs clippy, `cargo check` and the full suite on macOS
+and Windows for every pull request, plus `cargo fmt --check` on macOS. UI
+behavior is verified through inspect scenarios; list them with
+`docs/skills/inspect/scripts/run-scenario.sh --list`.
 
 ## Code map
 

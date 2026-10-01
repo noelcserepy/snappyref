@@ -12,9 +12,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# A ruleset on main requires these job names once the repo is public. Rename them
+# only together with the ruleset.
 jobs:
-  check:
-    name: Check
+  macos:
+    name: macOS
     runs-on: macos-latest
 
     steps:
@@ -45,5 +47,40 @@ jobs:
       - name: cargo check
         run: cargo check --locked
 
-      - name: cargo test update_preservation_smoke
-        run: cargo test --locked update_preservation_smoke
+      - name: cargo test
+        run: cargo test --locked
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install libjpeg-turbo
+        shell: pwsh
+        run: |
+          $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+          $vcpkgTriplet = "x64-windows-static-md"
+          git clone https://github.com/microsoft/vcpkg.git $vcpkgRoot
+          & "$vcpkgRoot\bootstrap-vcpkg.bat"
+          & "$vcpkgRoot\vcpkg.exe" install "libjpeg-turbo:$vcpkgTriplet"
+          "TURBOJPEG_SOURCE=explicit" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TURBOJPEG_STATIC=1" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TURBOJPEG_LIB_DIR=$vcpkgRoot\installed\$vcpkgTriplet\lib" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TURBOJPEG_INCLUDE_DIR=$vcpkgRoot\installed\$vcpkgTriplet\include" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: cargo check
+        run: cargo check --locked
+
+      - name: cargo test
+        run: cargo test --locked
