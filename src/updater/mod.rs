@@ -851,7 +851,13 @@ mod tests {
                 assert_eq!(context.size, expected.size);
             }));
             service.start_install();
-            assert!(service.state().is_downloading());
+            assert_eq!(
+                service.state(),
+                &UpdateState::Downloading {
+                    version: "2.0.0".into(),
+                    percent: 0
+                }
+            );
         }
     }
 
