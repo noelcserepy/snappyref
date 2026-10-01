@@ -10,14 +10,16 @@
 //! 3. strips `com.apple.quarantine` from the staged bundle on macOS;
 //! 4. renames the current bundle to a `.previous` backup,
 //!    overwriting any prior backup;
-//! 5. moves the staged bundle into the current bundle's location;
-//! 6. relaunches the new app with the original launch args;
-//! 7. removes the staging directory.
+//! 5. moves the staged bundle into the current bundle's location, moving the
+//!    backup back if that fails;
+//! 6. relaunches the new app, or the restored one, with the original launch args;
+//! 7. removes the staging directory after a successful swap.
 //!
 //! Failures are written to stderr and exit with a non-zero code, never to a
-//! GUI dialog — the helper is a console process. The auto-update flow stays
-//! inside the user's portable install folder and never touches `library/` or
-//! `models/`.
+//! GUI dialog — the helper is a console process. Exit code 2 means the
+//! restore also failed and the prior app is only in the `.previous` backup.
+//! The auto-update flow stays inside the user's portable install folder and
+//! never touches `library/` or `models/`.
 
 #[cfg(target_os = "macos")]
 fn main() -> std::process::ExitCode {
@@ -26,6 +28,10 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(not(target_os = "macos"))]
 fn main() {}
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "../test_support.rs"]
+mod test_support;
 
 #[cfg(target_os = "macos")]
 mod macos {
@@ -53,22 +59,60 @@ mod macos {
     /// actually starting a GUI app.
     const RELAUNCH_OVERRIDE_ENV: &str = "SNAPPYREF_UPDATER_RELAUNCH_PROGRAM";
 
+    /// Exit code when the prior app survives only in its backup and the
+    /// installed path is empty. Any other failure exits with 1.
+    const RECOVERY_REQUIRED_EXIT_CODE: u8 = 2;
+
+    #[derive(Debug)]
+    enum Failure {
+        /// The installed path holds what it held before the helper ran.
+        Failed(String),
+        /// Promotion failed and the prior app is back at the installed path.
+        Recovered(String),
+        /// Promotion and restore both failed. The prior app is only at
+        /// `backup`, which the helper leaves in place.
+        RecoveryRequired { backup: PathBuf, reason: String },
+    }
+
+    impl From<String> for Failure {
+        fn from(reason: String) -> Self {
+            Self::Failed(reason)
+        }
+    }
+
     pub(super) fn main() -> ExitCode {
         match run() {
             Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("snappyref-updater: {error}");
+            Err(Failure::Failed(reason) | Failure::Recovered(reason)) => {
+                eprintln!("snappyref-updater: {reason}");
                 ExitCode::FAILURE
+            }
+            Err(Failure::RecoveryRequired { backup, reason }) => {
+                eprintln!(
+                    "snappyref-updater: recovery required, prior app retained at `{}`: {reason}",
+                    backup.display()
+                );
+                ExitCode::from(RECOVERY_REQUIRED_EXIT_CODE)
             }
         }
     }
 
-    fn run() -> Result<(), String> {
+    fn run() -> Result<(), Failure> {
         let descriptor_path = parse_args()?;
         let descriptor = descriptor::read(&descriptor_path).map_err(|error| error.to_string())?;
         let timeout = resolve_parent_wait_timeout();
         wait_for_parent_exit(descriptor.parent_pid, timeout);
-        apply_swap(&descriptor)?;
+        match apply_swap(&descriptor, |from, to| std::fs::rename(from, to)) {
+            Ok(()) => {}
+            // The user clicked Restart, so bring back the restored app.
+            Err(Failure::Recovered(reason)) => {
+                return Err(Failure::Recovered(match relaunch(&descriptor) {
+                    Ok(()) => reason,
+                    Err(error) => format!("{reason}; {error}"),
+                }));
+            }
+            Err(failure) => return Err(failure),
+        }
         relaunch(&descriptor)?;
         cleanup_staging(&descriptor.staging_dir);
         Ok(())
@@ -131,13 +175,18 @@ mod macos {
     }
 
     /// The current bundle is renamed to its `.previous` backup, and the
-    /// staged bundle is moved into the slot left behind.
-    pub fn apply_swap(descriptor: &PendingUpdateDescriptor) -> Result<(), String> {
+    /// staged bundle is moved into the slot left behind. If that move fails,
+    /// the backup goes back to the installed path. `rename` is the filesystem
+    /// move, injectable so tests can fail promotion and restore.
+    fn apply_swap(
+        descriptor: &PendingUpdateDescriptor,
+        rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
+    ) -> Result<(), Failure> {
         if !descriptor.staged_bundle.exists() {
-            return Err(format!(
+            return Err(Failure::Failed(format!(
                 "staged bundle missing at `{}`",
                 descriptor.staged_bundle.display()
-            ));
+            )));
         }
 
         strip_quarantine_xattr(&descriptor.staged_bundle);
@@ -157,8 +206,9 @@ mod macos {
             })?;
         }
 
-        if descriptor.current_bundle.exists() {
-            std::fs::rename(&descriptor.current_bundle, &backup_path).map_err(|error| {
+        let backed_up = descriptor.current_bundle.exists();
+        if backed_up {
+            rename(&descriptor.current_bundle, &backup_path).map_err(|error| {
                 format!(
                     "failed to back up `{}` to `{}`: {error}",
                     descriptor.current_bundle.display(),
@@ -167,20 +217,23 @@ mod macos {
             })?;
         }
 
-        if let Err(error) = std::fs::rename(&descriptor.staged_bundle, &descriptor.current_bundle) {
-            let failure = format!(
-                "failed to move staged bundle into place at `{}`: {error}",
-                descriptor.current_bundle.display()
-            );
-            if backup_path.exists() {
-                std::fs::rename(&backup_path, &descriptor.current_bundle).map_err(|restore_error| {
-                format!("{failure}; restoration failed: {restore_error}; backup retained at `{}`", backup_path.display())
-            })?;
-            }
-            return Err(failure);
+        let Err(error) = rename(&descriptor.staged_bundle, &descriptor.current_bundle) else {
+            return Ok(());
+        };
+        let reason = format!(
+            "failed to move staged bundle into place at `{}`: {error}",
+            descriptor.current_bundle.display()
+        );
+        if !backed_up {
+            return Err(Failure::Failed(reason));
         }
-
-        Ok(())
+        match rename(&backup_path, &descriptor.current_bundle) {
+            Ok(()) => Err(Failure::Recovered(format!("{reason}; prior app restored"))),
+            Err(restore_error) => Err(Failure::RecoveryRequired {
+                backup: backup_path,
+                reason: format!("{reason}; restoring prior app failed: {restore_error}"),
+            }),
+        }
     }
 
     /// `<install_root>/SnappyRef.app` → `<install_root>/SnappyRef.app.previous`.
@@ -304,6 +357,44 @@ mod macos {
             );
             assert_eq!(backup.file_name().unwrap().to_string_lossy(), expected_name);
             assert_eq!(backup.parent(), current.parent());
+        }
+
+        #[test]
+        fn failed_restore_keeps_backup_and_requires_recovery() {
+            let root = crate::test_support::TempRoot::new("snappyref-updater-restore");
+            let current_bundle = root.join("SnappyRef.app");
+            let staged_bundle = root.join("staging/SnappyRef.app");
+            std::fs::create_dir_all(&current_bundle).unwrap();
+            std::fs::write(current_bundle.join("snappyref"), b"old-binary").unwrap();
+            std::fs::create_dir_all(&staged_bundle).unwrap();
+            let descriptor = PendingUpdateDescriptor {
+                parent_pid: 0,
+                expected_new_version: "9.9.9".to_owned(),
+                install_root: root.to_path_buf(),
+                current_bundle: current_bundle.clone(),
+                staged_bundle,
+                staging_dir: root.join("staging"),
+                launch_args: vec![],
+            };
+
+            // Promotion and restore both move into the installed path.
+            let result = apply_swap(&descriptor, |from, to| {
+                if to == current_bundle {
+                    Err(std::io::Error::other("injected"))
+                } else {
+                    std::fs::rename(from, to)
+                }
+            });
+
+            let Err(Failure::RecoveryRequired { backup, .. }) = result else {
+                panic!("expected recovery-required, got {result:?}");
+            };
+            assert_eq!(backup, backup_path_for(&current_bundle));
+            assert_eq!(
+                std::fs::read(backup.join("snappyref")).unwrap(),
+                b"old-binary"
+            );
+            assert!(!current_bundle.exists());
         }
     }
 }
