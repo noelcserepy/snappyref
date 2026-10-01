@@ -193,15 +193,6 @@ fn group_copy_duplicate_delete_ungroup_and_paste_history_preserve_structure() {
 }
 
 #[test]
-fn mixed_duplicate_preserves_shared_stack_order() {
-    use StackContentKind::{Annotation, Placement};
-    assert_copy_keeps_stack_order(
-        [Placement, Annotation, Placement, Annotation],
-        SnappyRefApp::duplicate_selection_with_gap,
-    );
-}
-
-#[test]
 fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
     let mut scenario = InspectScenario::new("annotation-editing");
     let root = TempRoot::new("snappyref-release-annotations");

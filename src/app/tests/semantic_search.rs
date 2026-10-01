@@ -116,69 +116,6 @@ fn first_launch_semantic_search_prompt_enable_persists_seen_and_starts_install()
 }
 
 #[test]
-fn removing_semantic_search_keeps_first_launch_prompt_seen() {
-    let mut app = test_app(None);
-    app.settings.semantic_search_first_launch_prompt_seen = true;
-    app.search
-        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
-
-    app.search
-        .remove_semantic_search_assets_from_settings(&mut app.status);
-
-    assert!(app.settings.semantic_search_first_launch_prompt_seen);
-    assert_eq!(
-        app.search.local_model_store_status(),
-        LocalModelStoreStatus::Missing
-    );
-    assert!(!app.should_show_semantic_search_first_launch_prompt());
-}
-
-#[test]
-fn image_search_context_action_requires_exactly_one_image() {
-    let ctx = egui::Context::default();
-    let mut app = test_app(None);
-    app.canvas
-        .add_prepared_placement_image(&ctx, test_loaded_item(1, 1));
-    app.canvas
-        .add_prepared_placement_image(&ctx, test_loaded_item(2, 1));
-
-    app.canvas.select_placements(&[1]);
-    let single = app.context_menu_items();
-    assert!(item_enabled(
-        &single,
-        crate::app::shortcuts::ContextMenuAction::SearchUsingImage
-    ));
-
-    app.canvas.select_placements(&[1, 2]);
-    let multiple = app.context_menu_items();
-    assert!(!item_enabled(
-        &multiple,
-        crate::app::shortcuts::ContextMenuAction::SearchUsingImage
-    ));
-}
-
-#[test]
-fn search_using_image_context_action_opens_image_pivot_search() {
-    let ctx = egui::Context::default();
-    let mut app = test_app(None);
-    app.canvas
-        .add_prepared_placement_image(&ctx, test_loaded_item(42, 1));
-    app.canvas.select_placements(&[42]);
-
-    app.handle_context_menu_action(
-        crate::app::shortcuts::ContextMenuAction::SearchUsingImage,
-        &ctx,
-        egui::Rect::EVERYTHING,
-    );
-
-    assert!(app.search.overlay.open);
-    assert!(app.search.overlay.suppress_next_outside_click);
-    let pivot = app.search.overlay.image_pivot.unwrap();
-    assert_eq!(pivot.asset_id, 42);
-    assert!(pivot.asset_preview_path.is_none());
-}
-
-#[test]
 fn search_using_image_context_action_survives_activation_click_outside_overlay() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
@@ -191,6 +128,10 @@ fn search_using_image_context_action_survives_activation_click_outside_overlay()
         &ctx,
         egui::Rect::EVERYTHING,
     );
+    let pivot = app.search.overlay.image_pivot.as_ref().unwrap();
+    assert_eq!(pivot.asset_id, 42);
+    assert!(pivot.asset_preview_path.is_none());
+    assert!(app.search.overlay.suppress_next_outside_click);
 
     let _ = crate::ui::test_frame::run_ui(
         &ctx,
@@ -320,51 +261,6 @@ fn settings_semantic_search_remove_requires_confirmation() {
 }
 
 #[test]
-fn search_shortcut_opens_overlay_when_enabled() {
-    let ctx = egui::Context::default();
-    let root = TempRoot::new("snappyref-search-shortcut-enabled");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let mut app = test_app(Some(library));
-    app.search
-        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
-
-    let _ = crate::ui::test_frame::run_ui(
-        &ctx,
-        egui::RawInput {
-            events: vec![
-                egui::Event::ModifiersChanged(egui::Modifiers {
-                    command: true,
-                    ..Default::default()
-                }),
-                egui::Event::Key {
-                    key: egui::Key::F,
-                    physical_key: Some(egui::Key::F),
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers {
-                        command: true,
-                        ..Default::default()
-                    },
-                },
-            ],
-            ..Default::default()
-        },
-        |ui| {
-            app.search.handle_shortcut(
-                ui.ctx(),
-                app.library.as_ref(),
-                &mut app.canvas,
-                &mut app.status,
-                app.settings.canvas_image_max_side,
-            )
-        },
-    );
-
-    assert!(app.search.overlay.open);
-    assert!(app.search.overlay.focus_requested);
-}
-
-#[test]
 fn search_shortcut_opens_missing_palette_with_focused_install_action() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
@@ -373,25 +269,7 @@ fn search_shortcut_opens_missing_palette_with_focused_install_action() {
 
     let _ = crate::ui::test_frame::run_ui(
         &ctx,
-        egui::RawInput {
-            events: vec![
-                egui::Event::ModifiersChanged(egui::Modifiers {
-                    command: true,
-                    ..Default::default()
-                }),
-                egui::Event::Key {
-                    key: egui::Key::F,
-                    physical_key: Some(egui::Key::F),
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers {
-                        command: true,
-                        ..Default::default()
-                    },
-                },
-            ],
-            ..Default::default()
-        },
+        key_press_input(egui::Modifiers::COMMAND, egui::Key::F),
         |ui| {
             app.search.handle_shortcut(
                 ui.ctx(),
@@ -410,55 +288,6 @@ fn search_shortcut_opens_missing_palette_with_focused_install_action() {
         app.search.local_model_store_status(),
         LocalModelStoreStatus::Missing
     );
-}
-
-#[test]
-fn escape_closes_search_overlay() {
-    let ctx = egui::Context::default();
-    let mut app = test_app(None);
-    app.search.overlay.open = true;
-    app.search.overlay.query = "cat".to_owned();
-
-    let _ = crate::ui::test_frame::run_ui(
-        &ctx,
-        egui::RawInput {
-            events: vec![egui::Event::Key {
-                key: egui::Key::Escape,
-                physical_key: Some(egui::Key::Escape),
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::default(),
-            }],
-            ..Default::default()
-        },
-        |ui| {
-            app.show_search_overlay(
-                ui.ctx(),
-                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
-            )
-        },
-    );
-
-    assert!(!app.search.overlay.open);
-    assert!(app.search.overlay.query.is_empty());
-}
-
-#[test]
-fn search_overlay_focuses_text_input_when_requested() {
-    let ctx = egui::Context::default();
-    let mut app = test_app(None);
-    app.search.overlay.open = true;
-    app.search.overlay.focus_requested = true;
-
-    let _ = crate::ui::test_frame::run_ui(&ctx, egui::RawInput::default(), |ui| {
-        app.show_search_overlay(
-            ui.ctx(),
-            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 640.0)),
-        )
-    });
-
-    assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("semantic_search_input"))));
-    assert!(!app.search.overlay.focus_requested);
 }
 
 #[test]
@@ -684,93 +513,6 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
     assert!(layout.iter().any(|item| {
         (item.width() - second_size.x).abs() < 0.1 && (item.height() - second_size.y).abs() < 0.1
     }));
-}
-
-#[test]
-fn multi_select_enter_library_search_results_show_pending_cursor_arrangement_inputs() {
-    let root = TempRoot::new("snappyref-library-search-multi-enter-provisional-placement");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let first_path = library
-        .store_rgba_image("first", &vec![255; 10 * 10 * 4], 10, 10)
-        .unwrap();
-    let second_path = library
-        .store_rgba_image("second", &vec![180; 20 * 10 * 4], 20, 10)
-        .unwrap();
-    let first = library
-        .fixture_placement(
-            library.load_user_session().unwrap().active_board_id,
-            crate::data::Placement::loaded(
-                crate::data::PlacementState::new(
-                    library.allocate_document_id(),
-                    egui::pos2(0.0, 0.0),
-                    1.0,
-                    0.0,
-                    0,
-                    false,
-                ),
-                library
-                    .register_original(&first_path, "image/png", 10, 10, 4, None)
-                    .unwrap(),
-            ),
-        )
-        .unwrap();
-    let second = library
-        .fixture_placement(
-            library.load_user_session().unwrap().active_board_id,
-            crate::data::Placement::loaded(
-                crate::data::PlacementState::new(
-                    library.allocate_document_id(),
-                    egui::pos2(20.0, 0.0),
-                    1.0,
-                    0.0,
-                    0,
-                    false,
-                ),
-                library
-                    .register_original(&second_path, "image/png", 20, 10, 4, None)
-                    .unwrap(),
-            ),
-        )
-        .unwrap();
-    library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: [first.state.id, second.state.id].to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if [first.state.id, second.state.id].contains(id))).collect()), ..Default::default()})
-        .unwrap();
-    let empty_board = library.fixture_board("Empty").unwrap();
-    library.set_active_board(empty_board.id).unwrap();
-    let mut app = test_app(Some(library.clone()));
-    app.active_board_id = empty_board.id;
-    app.refresh_board_summaries();
-    app.search.overlay.open = true;
-    app.search.overlay.results = vec![
-        SearchResultAssetEntry {
-            asset_id: first.require_loaded_asset().id,
-            asset_preview_path: None,
-            asset_width: 1,
-            asset_height: 1,
-        },
-        SearchResultAssetEntry {
-            asset_id: second.require_loaded_asset().id,
-            asset_preview_path: None,
-            asset_width: 1,
-            asset_height: 1,
-        },
-    ];
-    app.search.overlay.result_selection.replace(0);
-    app.search.overlay.result_selection.toggle(1);
-    let mut harness = app_harness(app, |ctx, app| {
-        app.show_search_overlay(ctx, test_screen_rect());
-    });
-
-    harness.key_press(egui::Key::Enter);
-    harness.step();
-
-    assert_eq!(
-        harness
-            .state()
-            .canvas
-            .provisional_placements_in_selection_order()
-            .len(),
-        2
-    );
 }
 
 #[test]

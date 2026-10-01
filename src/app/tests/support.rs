@@ -34,6 +34,22 @@ pub(super) fn test_app(library: Option<Library>) -> SnappyRefApp {
     app
 }
 
+pub(super) fn key_press_input(modifiers: egui::Modifiers, key: egui::Key) -> egui::RawInput {
+    egui::RawInput {
+        events: vec![
+            egui::Event::ModifiersChanged(modifiers),
+            egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: true,
+                repeat: false,
+                modifiers,
+            },
+        ],
+        ..Default::default()
+    }
+}
+
 pub(super) fn test_screen_rect() -> egui::Rect {
     egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))
 }
@@ -921,16 +937,6 @@ fn composite_pixel_over_background(
 
 pub(super) fn test_viewport_world() -> egui::Rect {
     egui::Rect::from_min_max(egui::pos2(-240.0, -180.0), egui::pos2(240.0, 180.0))
-}
-
-pub(super) fn item_enabled(
-    items: &[crate::app::shortcuts::ContextMenuItem],
-    action: crate::app::shortcuts::ContextMenuAction,
-) -> bool {
-    items
-        .iter()
-        .find(|item| item.action == action)
-        .is_some_and(|item| item.enabled)
 }
 
 pub(super) fn test_loaded_item(placement_id: i64, target_board_id: i64) -> PreparedPlacementImage {
