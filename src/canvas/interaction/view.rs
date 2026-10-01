@@ -357,8 +357,8 @@ impl CanvasState {
         self.interaction.selected_placement_ids.clear();
         self.interaction.selected_placement_ids.push(placement_id);
         self.interaction.selected_group_ids.clear();
-        self.expand_group_selection();
         self.interaction.selected_annotation_ids.clear();
+        self.expand_group_selection();
         self.interaction.editing_text_annotation_id = None;
         self.interaction.end_transform_gesture();
         self.prune_cached_pixels_to_selected_items();
