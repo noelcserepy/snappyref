@@ -57,7 +57,7 @@ stacking, always need a native run.
 | IMP-1 | Drag one image from Finder or Explorer onto an off-center spot | One image appears at the drop point and loads; view does not pan or zoom | |
 | IMP-2 | Drag several images of different sizes at once | One batch, compacted near the drop, selected; one Undo removes all, Redo restores | |
 | IMP-3 | Drag files over the canvas and leave without dropping | Hover preview follows the pointer and disappears; nothing added | |
-| IMP-4 | Drop near each window corner with the sidebar open and closed | Images land under the cursor, no fixed offset | |
+| IMP-4 | Hover and drop near each window corner with the sidebar open and closed. On Windows, repeat at 100% and a scaled display (150%) | Preview and images land under the cursor at every scale, no fixed offset | |
 | IMP-5 | Copy an image in an image editor or browser, `Mod+V` on the canvas | One image with correct pixels | |
 | IMP-6 | Copy one or several image files in Finder or Explorer, `Mod+V` | Each file imports once | |
 | IMP-7 | Copy a direct `https://` image URL, `Mod+V`; drag a browser image onto the canvas | One image per action | |
