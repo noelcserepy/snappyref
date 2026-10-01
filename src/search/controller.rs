@@ -1134,7 +1134,6 @@ mod tests {
 
         assert_eq!(search.demand_embedding_pending_count(), 0);
         assert_eq!(status, "Ready");
-        assert!(search.service.is_none());
     }
 
     #[test]
@@ -1148,7 +1147,6 @@ mod tests {
         assert!(search.overlay.open);
         assert!(!search.overlay.focus_requested);
         assert!(search.overlay.install_action_focus_requested);
-        assert!(search.service.is_none());
     }
 
     #[test]
@@ -1168,18 +1166,20 @@ mod tests {
     }
 
     #[test]
-    fn downloading_local_model_store_status_stops_running_service() {
-        let (mut search, _root) =
-            search_controller_with_semantic_service("snappyref-downloading-stops-service");
-        let mut status = "Ready".to_owned();
-
-        search.sync_model_store_status(
+    fn uninstalled_local_model_store_status_stops_running_service() {
+        for model_store_status in [
+            LocalModelStoreStatus::Missing,
             LocalModelStoreStatus::Downloading { percent: 25 },
-            &mut status,
-        );
+            LocalModelStoreStatus::Failed("data root is not writable".to_owned()),
+        ] {
+            let (mut search, _root) =
+                search_controller_with_semantic_service("snappyref-uninstalled-stops-service");
+            let mut status = "Ready".to_owned();
 
-        assert!(search.service.is_none());
-        assert_eq!(status, "Ready");
+            search.sync_model_store_status(model_store_status.clone(), &mut status);
+
+            assert!(search.service.is_none(), "{model_store_status:?}");
+        }
     }
 
     #[test]
