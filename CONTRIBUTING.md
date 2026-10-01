@@ -24,8 +24,9 @@ cargo check --locked
 cargo test --locked
 ```
 
-The pre-push hook runs the first three plus one update-preservation test, and
-CI runs the same gate on every pull request. For UI behavior, run the matching inspect
+The pre-push hook runs the first three plus one update-preservation test. CI
+runs all four on macOS and all but `cargo fmt --check` on Windows for every
+pull request. For UI behavior, run the matching inspect
 scenario with `docs/skills/inspect/scripts/run-scenario.sh <scenario>` and
 keep the artifact path for the PR.
 

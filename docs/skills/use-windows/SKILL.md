@@ -57,7 +57,7 @@ scripts/windows-check.sh
 
 Normal checks and tests use shipping default features. The Windows user needs
 libjpeg-turbo and the explicit `TURBOJPEG_*` environment settings used by the
-[shipping build](../../../.github/workflows/build-windows-app.yml). Keep local
+[CI install action](../../../.github/actions/install-turbojpeg-windows/action.yml). Keep local
 installation paths in that machine's user environment. The test wrapper runs
 serially, matching the canonical behavior gate; an explicit `--test-threads`
 option overrides that default.

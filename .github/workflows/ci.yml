@@ -64,17 +64,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install libjpeg-turbo
-        shell: pwsh
-        run: |
-          $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
-          $vcpkgTriplet = "x64-windows-static-md"
-          git clone https://github.com/microsoft/vcpkg.git $vcpkgRoot
-          & "$vcpkgRoot\bootstrap-vcpkg.bat"
-          & "$vcpkgRoot\vcpkg.exe" install "libjpeg-turbo:$vcpkgTriplet"
-          "TURBOJPEG_SOURCE=explicit" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "TURBOJPEG_STATIC=1" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "TURBOJPEG_LIB_DIR=$vcpkgRoot\installed\$vcpkgTriplet\lib" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "TURBOJPEG_INCLUDE_DIR=$vcpkgRoot\installed\$vcpkgTriplet\include" | Out-File -FilePath $env:GITHUB_ENV -Append
+        uses: ./.github/actions/install-turbojpeg-windows
 
       - name: cargo clippy
         run: cargo clippy --locked --all-targets -- -D warnings
