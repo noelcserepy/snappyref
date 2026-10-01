@@ -51,7 +51,9 @@ by a key they do not know.
 5. Public builds use the shipping `release` profile.
 6. Inspect the draft `snappyref-dist` release assets before publishing.
 7. Confirm archive validation passed for both app zips.
-8. Run [update smokes](#update-smokes) only on explicit user request.
+8. Publish the source-repo draft release. That creates the release tag on the
+   commit the run built, which the patchnotes range starts from next time.
+9. Run [update smokes](#update-smokes) only on explicit user request.
 
 Before a release, walk the [feature list](release-functional-test-plan.md) on
 macOS and Windows. It excludes app updating.

@@ -66,6 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,7 +74,9 @@ jobs:
       - id: release
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: python3 scripts/resolve-release-version.py --tag "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
+        run: |
+          python3 scripts/resolve-release-version.py --tag "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   windows:
     name: Build Windows app
@@ -81,7 +84,7 @@ jobs:
     if: ${{ inputs.include_windows }}
     uses: ./.github/workflows/build-windows-app.yml
     with:
-      ref: ${{ inputs.ref }}
+      ref: ${{ needs.resolve.outputs.sha }}
       build_profile: release
       semantic_search_url: ${{ inputs.semantic_search_url }}
       semantic_search_sha256: ${{ inputs.semantic_search_sha256 }}
@@ -94,7 +97,7 @@ jobs:
     if: ${{ inputs.include_macos }}
     uses: ./.github/workflows/build-macos-app.yml
     with:
-      ref: ${{ inputs.ref }}
+      ref: ${{ needs.resolve.outputs.sha }}
       build_profile: release
       semantic_search_url: ${{ inputs.semantic_search_url }}
       semantic_search_sha256: ${{ inputs.semantic_search_sha256 }}
@@ -156,7 +159,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.resolve.outputs.sha }}
 
       - name: Package selected app builds
         id: package
@@ -224,7 +227,7 @@ jobs:
           tag="${{ needs.resolve.outputs.tag }}"
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" \
-              --target "${{ inputs.ref }}" \
+              --target "${{ needs.resolve.outputs.sha }}" \
               --title "SnappyRef $tag" \
               --notes "Draft SnappyRef release." \
               --draft
