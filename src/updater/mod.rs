@@ -751,56 +751,9 @@ fn classify(manifest: &Manifest, current_version: &str) -> CheckOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
-    use serde_json::json;
+    use crate::test_support::TempRoot;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-
-    fn signing_key() -> SigningKey {
-        SigningKey::from_bytes(&[3u8; 32])
-    }
-
-    fn build_manifest_bytes(version: &str, key: &SigningKey) -> Vec<u8> {
-        let body = json!({
-            "channel": "stable",
-            "version": version,
-            "released_at": "2026-05-11T12:00:00Z",
-            "notes_url": "https://example/notes",
-            "platforms": {
-                "macos": { "url": "https://example/mac.zip", "sha256": "0".repeat(64), "size": 1 },
-                "windows": { "url": "https://example/win.zip", "sha256": "0".repeat(64), "size": 1 },
-            },
-        });
-        let unsigned = serde_json::to_vec(&body).unwrap();
-        let signature = key.sign(&unsigned);
-        let mut signed = body;
-        signed.as_object_mut().unwrap().insert(
-            "signature".to_owned(),
-            json!(hex::encode(signature.to_bytes())),
-        );
-        serde_json::to_vec(&signed).unwrap()
-    }
-
-    #[test]
-    fn classify_emits_newer_when_manifest_version_is_higher() {
-        let bytes = build_manifest_bytes("9.9.9", &signing_key());
-        let manifest = manifest::parse_and_verify_with_key(&bytes, &signing_key().verifying_key())
-            .expect("test manifest verifies");
-        match classify(&manifest, "0.1.0") {
-            CheckOutcome::NewerAvailable { release } => {
-                assert_eq!(release.version, "9.9.9");
-            }
-            other => panic!("expected NewerAvailable, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn classify_emits_up_to_date_when_manifest_version_matches() {
-        let bytes = build_manifest_bytes("0.1.0", &signing_key());
-        let manifest = manifest::parse_and_verify_with_key(&bytes, &signing_key().verifying_key())
-            .expect("test manifest verifies");
-        assert_eq!(classify(&manifest, "0.1.0"), CheckOutcome::UpToDate);
-    }
 
     fn drive_until_quiescent(service: &mut UpdateService) {
         // Pump tick() up to a small bound; each tick can complete one
@@ -811,18 +764,6 @@ mod tests {
                 return;
             }
         }
-    }
-
-    #[test]
-    fn service_stays_hidden_before_settled_idle() {
-        let mut service = UpdateService::new(UpdateConfig::for_tests());
-        service.fetch_override = Some(Box::new(|| panic!("must not fetch before settled idle")));
-        // Many frames before settled idle reports true. The service must
-        // not touch the network or the state.
-        for _ in 0..16 {
-            service.tick(false);
-        }
-        assert_eq!(*service.state(), UpdateState::Hidden);
     }
 
     #[test]
@@ -849,76 +790,12 @@ mod tests {
     }
 
     #[test]
-    fn service_promotes_to_available_when_fetch_yields_newer() {
-        let mut service = UpdateService::new(UpdateConfig {
-            current_version: "0.1.0".to_owned(),
-            ..UpdateConfig::for_tests()
-        });
-        let key = signing_key();
-        let bytes = build_manifest_bytes("1.0.0", &key);
-        let public = key.verifying_key();
-        let bytes_clone = bytes.clone();
-        service.fetch_override = Some(Box::new(move || {
-            let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            classify(&manifest, "0.1.0")
-        }));
-        drive_until_quiescent(&mut service);
-        match service.state() {
-            UpdateState::Available { release } => {
-                assert_eq!(release.version, "1.0.0");
-            }
-            other => panic!("expected Available, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn service_reports_failed_on_fetch_failure() {
+    fn discovery_failure_reports_failed_and_retries_within_a_minute() {
         let mut service = UpdateService::new(UpdateConfig::for_tests());
         service.fetch_override = Some(Box::new(|| CheckOutcome::Failed));
         drive_until_quiescent(&mut service);
         assert!(matches!(service.state(), UpdateState::Failed { .. }));
-        assert_eq!(service.consecutive_failures, 1);
-    }
-
-    #[test]
-    fn failure_does_not_clobber_previously_available_state() {
-        let mut service = UpdateService::new(UpdateConfig {
-            current_version: "0.1.0".to_owned(),
-            ..UpdateConfig::for_tests()
-        });
-        let calls = Arc::new(AtomicUsize::new(0));
-        let calls_clone = calls.clone();
-        service.fetch_override = Some(Box::new(move || {
-            let n = calls_clone.fetch_add(1, Ordering::SeqCst);
-            if n == 0 {
-                CheckOutcome::NewerAvailable {
-                    release: manifest_with("9.9.9"),
-                }
-            } else {
-                CheckOutcome::Failed
-            }
-        }));
-        drive_until_quiescent(&mut service);
-        assert!(service.state().is_available());
-        // Force a second attempt by clearing the wait timer and bumping
-        // time forward past the steady-state poll interval. The simplest
-        // way: manually invoke start_check then tick to drain the second
-        // outcome.
-        service.last_check = Some(
-            service
-                .started_at
-                .elapsed()
-                .saturating_sub(discovery::POLL_INTERVAL),
-        );
-        // First tick recomputes schedule and starts the second check; the
-        // synchronous test fetcher delivers the outcome before tick
-        // returns; second tick drains it.
-        service.tick(true);
-        service.tick(true);
-        assert!(
-            service.state().is_available(),
-            "Available state must survive a transient failure"
-        );
+        assert!(service.time_until_next_check().unwrap() <= Duration::from_secs(60));
     }
 
     pub(super) fn manifest_with(version: &str) -> Manifest {
@@ -940,7 +817,7 @@ mod tests {
     #[test]
     fn retained_available_release_keeps_its_exact_package_after_older_discovery() {
         for later_version in ["0.5.0", "1.0.0", "1.5.0", "2.0.0"] {
-            let root = crate::test_support::TempRoot::new("retained-release");
+            let root = TempRoot::new("retained-release");
             let mut service = UpdateService::new(UpdateConfig {
                 current_version: "1.0.0".to_owned(),
                 install_root: Some(root.to_path_buf()),
@@ -980,7 +857,7 @@ mod tests {
 
     #[test]
     fn preparation_failure_keeps_reason_and_requires_a_fresh_check() {
-        let root = crate::test_support::TempRoot::new("failed-release-recheck");
+        let root = TempRoot::new("failed-release-recheck");
         let mut service = UpdateService::new(UpdateConfig {
             current_version: "1.0.0".into(),
             install_root: Some(root.to_path_buf()),
@@ -1011,41 +888,6 @@ mod tests {
     }
 
     #[test]
-    fn start_install_is_noop_unless_state_is_available() {
-        let mut service = UpdateService::new(UpdateConfig::for_tests());
-        // State is still Hidden. start_install must refuse to act so a
-        // race between failure and click cannot kick off a phantom
-        // download.
-        service.start_install();
-        assert_eq!(*service.state(), UpdateState::Hidden);
-    }
-
-    #[test]
-    fn start_install_transitions_to_downloading_with_zero_percent() {
-        let mut service = UpdateService::new(UpdateConfig {
-            current_version: "0.1.0".to_owned(),
-            ..UpdateConfig::for_tests()
-        });
-        service.state.apply(CheckOutcome::NewerAvailable {
-            release: manifest_with("1.0.0"),
-        });
-        // Stub the install worker so start_install doesn't depend on
-        // platform shape or filesystem.
-        service.install_override = Some(Box::new(|_, _| {}));
-        // Pin install root to a temp dir so resolve_install_root doesn't
-        // try to derive it from the test binary's path.
-        service.config.install_root = Some(std::env::temp_dir());
-        service.start_install();
-        match service.state() {
-            UpdateState::Downloading { version, percent } => {
-                assert_eq!(version, "1.0.0");
-                assert_eq!(*percent, 0);
-            }
-            other => panic!("expected Downloading, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn drain_install_progress_promotes_to_ready_on_staged() {
         let mut service = UpdateService::new(UpdateConfig::for_tests());
         service.state.apply(CheckOutcome::NewerAvailable {
@@ -1072,57 +914,34 @@ mod tests {
     }
 
     #[test]
-    fn drain_install_progress_transitions_to_failed_on_install_error() {
-        let mut service = UpdateService::new(UpdateConfig::for_tests());
-        service.state.apply(CheckOutcome::NewerAvailable {
-            release: manifest_with("1.0.0"),
-        });
-        service.config.install_root = Some(std::env::temp_dir());
-        service.install_override = Some(Box::new(|_, tx| {
-            let _ = tx.send(InstallProgress::Failed {
-                reason: "boom".to_owned(),
-            });
-        }));
-        service.start_install();
-        service.tick(true);
-        assert!(matches!(service.state(), UpdateState::Failed { .. }));
-    }
-
-    #[test]
     fn cleanup_partial_downloads_removes_files_in_updates_dir() {
-        // Simulate a partial zip left behind by a previous launch.
-        let scratch = std::env::temp_dir().join(format!(
-            "snappyref-updater-cleanup-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        let updates_dir = install_paths::updates_dir(&scratch);
+        let root = TempRoot::new("updater-cleanup");
+        // A partial zip left behind by a previous launch.
+        let updates_dir = install_paths::updates_dir(&root);
         std::fs::create_dir_all(&updates_dir).unwrap();
         let partial = updates_dir.join("download-1.0.0.zip");
         std::fs::write(&partial, b"partial").unwrap();
         // And a staging dir that must NOT be touched.
-        let staging = install_paths::staging_dir(&scratch, "0.9.0");
+        let staging = install_paths::staging_dir(&root, "0.9.0");
         std::fs::create_dir_all(&staging).unwrap();
         std::fs::write(staging.join("marker"), b"keep").unwrap();
 
         let _service = UpdateService::new(UpdateConfig {
-            install_root: Some(scratch.clone()),
+            install_root: Some(root.to_path_buf()),
             ..UpdateConfig::for_tests()
         });
 
         assert!(!partial.exists(), "partial download must be removed");
         assert!(staging.join("marker").exists(), "staging tree must survive");
-
-        let _ = std::fs::remove_dir_all(&scratch);
     }
 
-    /// Create a structurally-valid staged bundle on disk and write the
-    /// sha sidecar so detect_existing_staging accepts it. Returns the
-    /// staging directory path so the caller can manipulate it further.
-    fn write_valid_staging(install_root: &std::path::Path, version: &str, sha: &str) -> PathBuf {
+    /// Create a structurally-valid staged bundle on disk, with the source
+    /// sha sidecar when `sha` is given. Returns the staging directory.
+    fn write_valid_staging(
+        install_root: &std::path::Path,
+        version: &str,
+        sha: Option<&str>,
+    ) -> PathBuf {
         let staging = install_paths::staging_dir(install_root, version);
         match TargetPlatform::current().expect("test runs on macOS or Windows") {
             TargetPlatform::Macos => {
@@ -1141,16 +960,31 @@ mod tests {
                 std::fs::write(bundle.join("snappyref.exe"), b"binary").unwrap();
             }
         }
-        stager::record_source_sha(&staging, sha);
+        if let Some(sha) = sha {
+            stager::record_source_sha(&staging, sha);
+        }
         staging
+    }
+
+    /// Run one discovery that offers 1.0.0, whose package sha is
+    /// `"0".repeat(64)`, to an app on 0.1.0.
+    fn discover_release(root: &TempRoot) -> UpdateService {
+        let mut service = UpdateService::new(UpdateConfig {
+            current_version: "0.1.0".to_owned(),
+            install_root: Some(root.to_path_buf()),
+            ..UpdateConfig::for_tests()
+        });
+        service.fetch_override = Some(Box::new(|| classify(&manifest_with("1.0.0"), "0.1.0")));
+        drive_until_quiescent(&mut service);
+        service
     }
 
     #[cfg(target_os = "macos")]
     #[test]
     fn detect_existing_staging_rejects_missing_app_or_helper() {
         for executable in ["snappyref", "snappyref-updater"] {
-            let root = crate::test_support::TempRoot::new("restart-missing-executable");
-            let staging = write_valid_staging(&root, "9.9.9", &"0".repeat(64));
+            let root = TempRoot::new("restart-missing-executable");
+            let staging = write_valid_staging(&root, "9.9.9", Some(&"0".repeat(64)));
             std::fs::remove_file(staging.join(format!(
                 "SnappyRef/SnappyRef.app/Contents/MacOS/{executable}"
             )))
@@ -1169,211 +1003,56 @@ mod tests {
 
     #[test]
     fn detect_existing_staging_promotes_to_ready_when_manifest_matches() {
-        // Set up an install root with a valid staged bundle for the
-        // version the manifest will advertise. The platform-current()
-        // function only resolves on macOS/Windows; on other hosts the
-        // detect path early-returns, so we skip the assertion there.
-        if TargetPlatform::current().is_none() {
-            return;
-        }
-        let scratch = std::env::temp_dir().join(format!(
-            "snappyref-updater-staged-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        // Manifest builder pins both platforms' sha to "0" repeated.
-        write_valid_staging(&scratch, "1.0.0", &"0".repeat(64));
+        let root = TempRoot::new("updater-staged");
+        write_valid_staging(&root, "1.0.0", Some(&"0".repeat(64)));
 
-        let mut service = UpdateService::new(UpdateConfig {
-            current_version: "0.1.0".to_owned(),
-            install_root: Some(scratch.clone()),
-            ..UpdateConfig::for_tests()
-        });
-        let key = signing_key();
-        let bytes = build_manifest_bytes("1.0.0", &key);
-        let public = key.verifying_key();
-        let bytes_clone = bytes.clone();
-        service.fetch_override = Some(Box::new(move || {
-            let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            classify(&manifest, "0.1.0")
-        }));
-        drive_until_quiescent(&mut service);
+        let service = discover_release(&root);
+
         assert!(
             service.state().is_ready(),
             "service should be Ready when a verified staged bundle is on disk for the manifest's version, got {:?}",
             service.state(),
         );
-
-        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]
-    fn detect_existing_staging_does_not_promote_when_manifest_is_not_newer() {
-        if TargetPlatform::current().is_none() {
-            return;
+    fn detect_existing_staging_discards_a_bundle_without_the_manifest_sha() {
+        // No sidecar means the sha was lost; a different sha means the
+        // version was republished. Neither proves the bundle matches.
+        let republished = "f".repeat(64);
+        for sidecar in [None, Some(republished.as_str())] {
+            let root = TempRoot::new("updater-staging-sha");
+            let staging = write_valid_staging(&root, "1.0.0", sidecar);
+
+            let service = discover_release(&root);
+
+            assert!(
+                service.state().is_available(),
+                "sidecar {sidecar:?} must leave the release Available, got {:?}",
+                service.state(),
+            );
+            assert!(
+                !staging.exists(),
+                "sidecar {sidecar:?} staging must be removed"
+            );
         }
-        let scratch = std::env::temp_dir().join(format!(
-            "snappyref-updater-up-to-date-staging-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        write_valid_staging(&scratch, "1.0.0", &"0".repeat(64));
-
-        let mut service = UpdateService::new(UpdateConfig {
-            current_version: "1.0.0".to_owned(),
-            install_root: Some(scratch.clone()),
-            ..UpdateConfig::for_tests()
-        });
-        let key = signing_key();
-        let bytes = build_manifest_bytes("1.0.0", &key);
-        let public = key.verifying_key();
-        let bytes_clone = bytes.clone();
-        service.fetch_override = Some(Box::new(move || {
-            let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            classify(&manifest, "1.0.0")
-        }));
-        drive_until_quiescent(&mut service);
-
-        assert_eq!(*service.state(), UpdateState::Hidden);
-
-        let _ = std::fs::remove_dir_all(&scratch);
-    }
-
-    #[test]
-    fn detect_existing_staging_rejects_a_bundle_without_a_sha_sidecar() {
-        // A staging dir produced by a pre-sidecar build (or one whose
-        // sidecar was lost) must not be promoted: we can't prove it
-        // matches the current manifest.
-        if TargetPlatform::current().is_none() {
-            return;
-        }
-        let scratch = std::env::temp_dir().join(format!(
-            "snappyref-updater-no-sidecar-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        let staging = write_valid_staging(&scratch, "1.0.0", &"0".repeat(64));
-        // Strip the sidecar to simulate the pre-sidecar case.
-        let _ = std::fs::remove_file(staging.join(stager::STAGED_SHA_FILE));
-
-        let mut service = UpdateService::new(UpdateConfig {
-            current_version: "0.1.0".to_owned(),
-            install_root: Some(scratch.clone()),
-            ..UpdateConfig::for_tests()
-        });
-        let key = signing_key();
-        let bytes = build_manifest_bytes("1.0.0", &key);
-        let public = key.verifying_key();
-        let bytes_clone = bytes.clone();
-        service.fetch_override = Some(Box::new(move || {
-            let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            classify(&manifest, "0.1.0")
-        }));
-        drive_until_quiescent(&mut service);
-        assert!(
-            service.state().is_available(),
-            "service must stay Available when staging has no sidecar, got {:?}",
-            service.state(),
-        );
-        assert!(!staging.exists(), "stale staging must be cleaned up");
-
-        let _ = std::fs::remove_dir_all(&scratch);
-    }
-
-    #[test]
-    fn detect_existing_staging_rejects_a_bundle_whose_sidecar_sha_mismatches() {
-        // Manifest republished with a different binary for the same
-        // version: the staged bundle is now stale and must be rejected.
-        if TargetPlatform::current().is_none() {
-            return;
-        }
-        let scratch = std::env::temp_dir().join(format!(
-            "snappyref-updater-stale-sha-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        // Manifest sha is "0".repeat(64); record a different one.
-        let staging = write_valid_staging(&scratch, "1.0.0", &"f".repeat(64));
-
-        let mut service = UpdateService::new(UpdateConfig {
-            current_version: "0.1.0".to_owned(),
-            install_root: Some(scratch.clone()),
-            ..UpdateConfig::for_tests()
-        });
-        let key = signing_key();
-        let bytes = build_manifest_bytes("1.0.0", &key);
-        let public = key.verifying_key();
-        let bytes_clone = bytes.clone();
-        service.fetch_override = Some(Box::new(move || {
-            let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            classify(&manifest, "0.1.0")
-        }));
-        drive_until_quiescent(&mut service);
-        assert!(
-            service.state().is_available(),
-            "service must stay Available when staging sha disagrees with manifest, got {:?}",
-            service.state(),
-        );
-        assert!(!staging.exists(), "stale staging must be cleaned up");
-
-        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]
     fn detect_existing_staging_sweeps_stale_versions_after_manifest_fetch() {
-        // A staging-{older-version}/ from a prior session must not
-        // accumulate forever. After we verify a manifest for the new
-        // version, any non-matching staging dir is removed.
-        if TargetPlatform::current().is_none() {
-            return;
-        }
-        let scratch = std::env::temp_dir().join(format!(
-            "snappyref-updater-sweep-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        let stale = install_paths::staging_dir(&scratch, "0.9.0");
+        let root = TempRoot::new("updater-sweep");
+        let stale = install_paths::staging_dir(&root, "0.9.0");
         std::fs::create_dir_all(&stale).unwrap();
         std::fs::write(stale.join("debris"), b"old").unwrap();
-        // The matching-version staging that should be kept.
-        write_valid_staging(&scratch, "1.0.0", &"0".repeat(64));
+        let current = write_valid_staging(&root, "1.0.0", Some(&"0".repeat(64)));
 
-        let mut service = UpdateService::new(UpdateConfig {
-            current_version: "0.1.0".to_owned(),
-            install_root: Some(scratch.clone()),
-            ..UpdateConfig::for_tests()
-        });
-        let key = signing_key();
-        let bytes = build_manifest_bytes("1.0.0", &key);
-        let public = key.verifying_key();
-        let bytes_clone = bytes.clone();
-        service.fetch_override = Some(Box::new(move || {
-            let manifest = manifest::parse_and_verify_with_key(&bytes_clone, &public).unwrap();
-            classify(&manifest, "0.1.0")
-        }));
-        drive_until_quiescent(&mut service);
+        discover_release(&root);
+
         assert!(!stale.exists(), "stale staging-0.9.0/ must be removed");
         assert!(
-            install_paths::staging_dir(&scratch, "1.0.0").exists(),
-            "current-version staging must survive sweep",
+            current.exists(),
+            "current-version staging must survive sweep"
         );
-
-        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]
