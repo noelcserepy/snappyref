@@ -658,7 +658,6 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
             .resolve_placements(second.id, vec![resolved.clone()])
             .unwrap()
     );
-    std::thread::sleep(Duration::from_millis(100));
 
     app.request_board_delete(second.id, second.name.clone());
     app.confirm_pending_board_delete(&ctx);
@@ -695,7 +694,6 @@ fn queued_board_identities_remain_visible_while_persistence_retries() {
 
     app.create_and_switch_board(false);
     app.create_and_switch_board(false);
-    std::thread::sleep(Duration::from_millis(100));
     assert_eq!(app.board_summaries().len(), 3);
 
     app.refresh_board_summaries();
@@ -732,7 +730,6 @@ fn deleting_active_queued_board_uses_accepted_queued_fallback() {
     let fallback_id = app.active_board_id;
     app.create_and_switch_board(false);
     let deleted_id = app.active_board_id;
-    std::thread::sleep(Duration::from_millis(100));
 
     app.request_board_delete(deleted_id, "Board 3".to_owned());
     app.confirm_pending_board_delete(&ctx);
@@ -812,7 +809,6 @@ fn deleting_active_board_restores_accepted_fallback_content_while_persistence_re
         .unwrap();
     app.create_and_switch_board(false);
     let deleted_id = app.active_board_id;
-    std::thread::sleep(Duration::from_millis(100));
 
     app.request_board_delete(deleted_id, "Board 2".to_owned());
     app.confirm_pending_board_delete(&ctx);
@@ -888,7 +884,6 @@ fn undoing_board_create_reopens_accepted_previous_board_while_persistence_retrie
         .unwrap();
     app.create_and_switch_board(false);
     assert_ne!(app.active_board_id, previous.id);
-    std::thread::sleep(Duration::from_millis(100));
 
     app.undo_document_history(&ctx);
 

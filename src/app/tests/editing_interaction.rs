@@ -998,7 +998,9 @@ fn create_undo_persists_reassigned_redo_history_with_the_archive() {
         .unwrap();
 
     app.undo_document_history(&ctx);
-    std::thread::sleep(Duration::from_millis(100));
+    // Returns once the worker has exhausted its retries against the trigger.
+    app.flush_persistence();
+    assert!(app.status.contains("injected reassigned-history failure"));
     assert_eq!(
         trigger_connection
             .query_row(
