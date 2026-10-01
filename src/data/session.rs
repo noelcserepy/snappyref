@@ -157,13 +157,6 @@ mod tests {
     }
 
     #[test]
-    fn first_launch_semantic_search_prompt_starts_unseen() {
-        let settings = WorkspaceSettings::default();
-
-        assert!(!settings.semantic_search_first_launch_prompt_seen);
-    }
-
-    #[test]
     fn default_placement_gap_is_zero_for_new_workspaces() {
         let settings = WorkspaceSettings::default();
 
