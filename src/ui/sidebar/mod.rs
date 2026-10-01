@@ -323,7 +323,7 @@ const SIDEBAR_OPTIONS_SECTIONS: [SidebarOptionsSection; 3] = [
 #[cfg(test)]
 mod tests {
     use super::boards::paint_board_row;
-    use super::shortcuts::{display_shortcut_label, shortcut_label_uses_small_symbol_glyphs};
+    use super::shortcuts::display_shortcut_label;
     use eframe::egui;
 
     #[test]
@@ -334,13 +334,6 @@ mod tests {
         assert_eq!(display_shortcut_label("Ctrl+Shift+L"), "Ctrl Shift L");
         assert_eq!(display_shortcut_label("C + Drag"), "C + Drag");
         assert_eq!(display_shortcut_label("R + Drag"), "R + Drag");
-    }
-
-    #[test]
-    fn shortcut_label_detects_visually_small_symbol_glyphs() {
-        assert!(shortcut_label_uses_small_symbol_glyphs("⇧ ⌘ L"));
-        assert!(shortcut_label_uses_small_symbol_glyphs("↵"));
-        assert!(!shortcut_label_uses_small_symbol_glyphs("⌘ B"));
     }
 
     #[test]

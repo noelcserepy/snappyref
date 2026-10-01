@@ -93,6 +93,8 @@ def notices(metadata: dict) -> str:
         'This software is based in part on the work of the Independent JPEG Group.\n'
         'Its license is listed with turbojpeg-sys below.',
         'DM Sans\n\n' + (ROOT / 'assets/fonts/DMSans-OFL.txt').read_text(encoding='utf-8').strip(),
+        'JetBrains Mono modifier-key subset\n\n'
+        + (ROOT / 'assets/fonts/JetBrainsMono-OFL.txt').read_text(encoding='utf-8').strip(),
         'SigLIP 2 model, downloaded by Semantic Search and not part of this archive\n\n'
         + semantic_model.NOTICE.strip() + '\n\n' + (LICENSES / 'Apache-2.0.txt').read_text(encoding='utf-8').strip(),
         f'Rust crates\n\n{crates}',
