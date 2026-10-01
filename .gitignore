@@ -1,6 +1,9 @@
 target/
 /library/
+/models/
 .claude/
+.agents/
+.codex/
 .scratch/
 .ralph/
 .env.windows
@@ -8,3 +11,4 @@ tests/fixtures/external/files/
 perf-assets/images
 perf-assets/runs
 **/__pycache__/
+.DS_Store
