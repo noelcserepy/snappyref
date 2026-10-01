@@ -341,7 +341,7 @@ fn helper_restores_current_bundle_when_promotion_fails() {
         .env("SNAPPYREF_UPDATER_PARENT_WAIT_TIMEOUT_MS", "0")
         .output()
         .unwrap();
-    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("failed to move staged bundle"));
     assert_eq!(
         fs::read(fixture.current_bundle.join("Contents/MacOS/snappyref")).unwrap(),
