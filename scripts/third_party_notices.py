@@ -22,6 +22,7 @@ BUNDLED = {
     'turbojpeg-sys': 'libjpeg-turbo/LICENSE.md',
 }
 RULE = '\n\n' + '=' * 78 + '\n\n'
+FONT_AUTHORS = re.compile(r'^Copyright .*? The (.+?) Project Authors', re.M)
 
 
 def shipped_packages(metadata: dict) -> list[dict]:
@@ -43,7 +44,9 @@ def shipped_packages(metadata: dict) -> list[dict]:
 def license_texts(package: dict) -> list[str]:
     """The crate's own license files, or the standard text of a license it offers when it ships none."""
     crate = Path(package['manifest_path']).parent
-    files = sorted(path for path in crate.iterdir() if path.is_file() and LICENSE_FILE.match(path.name))
+    # Sort by name: Windows paths compare case-insensitively, which would reorder the notices.
+    files = sorted((path for path in crate.iterdir() if path.is_file() and LICENSE_FILE.match(path.name)),
+                   key=lambda path: path.name)
     if not files:
         offered = re.findall(r'[\w.+-]+', package['license'] or '')
         standard = [LICENSES / f'{name}.txt' for name in offered if (LICENSES / f'{name}.txt').is_file()]
@@ -52,7 +55,7 @@ def license_texts(package: dict) -> list[str]:
                              f'no license in {LICENSES}: {package["license"]}')
         files = standard[:1]
     if package['name'] in BUNDLED:
-        files += sorted(crate.glob(BUNDLED[package['name']]))
+        files += sorted(crate.glob(BUNDLED[package['name']]), key=lambda path: path.name)
     return [path.read_text(encoding='utf-8', errors='replace').strip() for path in files]
 
 
@@ -71,6 +74,18 @@ def onnx_runtime_section(packages: list[dict]) -> str:
                          f'from microsoft/onnxruntime v{version}.')
     texts = [(vendored / name).read_text(encoding='utf-8').strip() for name in ('LICENSE', 'ThirdPartyNotices.txt')]
     return f'ONNX Runtime {version}, statically linked through the ort crate\n\n' + '\n\n'.join(texts)
+
+
+def font_sections() -> list[str]:
+    """One section per bundled font license, headed by the font name from its copyright line."""
+    sections = []
+    for path in sorted(ROOT.glob('assets/fonts/*-OFL.txt'), key=lambda path: path.name):
+        text = path.read_text(encoding='utf-8').strip()
+        authors = FONT_AUTHORS.search(text)
+        if not authors:
+            raise ValueError(f'{path} has no "Copyright ... The <font> Project Authors" line')
+        sections.append(f'{authors[1]}\n\n{text}')
+    return sections
 
 
 def notices(metadata: dict) -> str:
@@ -92,9 +107,7 @@ def notices(metadata: dict) -> str:
         'libjpeg-turbo, statically linked through the turbojpeg crate\n\n'
         'This software is based in part on the work of the Independent JPEG Group.\n'
         'Its license is listed with turbojpeg-sys below.',
-        'DM Sans\n\n' + (ROOT / 'assets/fonts/DMSans-OFL.txt').read_text(encoding='utf-8').strip(),
-        'JetBrains Mono modifier-key subset\n\n'
-        + (ROOT / 'assets/fonts/JetBrainsMono-OFL.txt').read_text(encoding='utf-8').strip(),
+        *font_sections(),
         'SigLIP 2 model, downloaded by Semantic Search and not part of this archive\n\n'
         + semantic_model.NOTICE.strip() + '\n\n' + (LICENSES / 'Apache-2.0.txt').read_text(encoding='utf-8').strip(),
         f'Rust crates\n\n{crates}',
