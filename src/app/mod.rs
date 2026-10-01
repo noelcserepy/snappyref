@@ -827,7 +827,7 @@ impl SnappyRefApp {
             } else if modifiers.command {
                 self.group_selection();
             } else if !modifiers.alt && !modifiers.shift {
-                self.canvas.open_group_picker();
+                self.open_group_picker();
             }
             return;
         }
@@ -1007,6 +1007,14 @@ impl SnappyRefApp {
             self.active_board_id,
         ) {
             self.status = error;
+        }
+    }
+
+    fn open_group_picker(&mut self) {
+        // Content only reaches the canvas through a library, so without one there is nothing to group.
+        if let Some(library) = &self.library {
+            self.canvas
+                .open_group_picker(library.allocate_document_id());
         }
     }
 
@@ -1353,18 +1361,6 @@ impl eframe::App for SnappyRefApp {
         }
         self.handle_pending_crop_requests(ui.ctx());
         self.handle_pending_annotation_requests();
-        if let Some((name, members)) = self.canvas.take_group_creation()
-            && let Some(library) = &self.library
-        {
-            match self
-                .canvas
-                .create_named_group(library.allocate_document_id(), name, &members)
-            {
-                Ok(Some(id)) => self.canvas.remember_group_destination(id),
-                Ok(None) => {}
-                Err(error) => self.status = error,
-            }
-        }
         self.persist_canvas_changes_debounced(ui.ctx());
         if let Some(error) = self.board_editing.persistence.take_error() {
             self.status = error;

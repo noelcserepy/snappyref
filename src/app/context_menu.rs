@@ -195,7 +195,7 @@ impl SnappyRefApp {
         match action {
             ContextMenuAction::Group => self.group_selection(),
             ContextMenuAction::Ungroup => self.ungroup_selection(),
-            ContextMenuAction::AddToGroup => self.canvas.open_group_picker(),
+            ContextMenuAction::AddToGroup => self.open_group_picker(),
             ContextMenuAction::Copy => self.copy_selection_to_system_clipboard(),
             ContextMenuAction::Paste => self.handle_clipboard_paste_from_context(ctx, screen_rect),
             ContextMenuAction::Duplicate => self.duplicate_selection_with_gap(),
