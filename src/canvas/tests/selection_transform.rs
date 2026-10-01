@@ -525,3 +525,48 @@ fn context_click_inside_existing_mixed_selection_preserves_selection() {
     assert_eq!(state.selected_annotation_ids(), vec![20]);
     assert!(state.take_context_menu_request().is_some());
 }
+
+#[test]
+fn context_click_on_grouped_image_selects_group_textbox_members() {
+    let mut state = CanvasState::default();
+    let rect = eframe::egui::Rect::from_min_size(
+        eframe::egui::Pos2::ZERO,
+        eframe::egui::vec2(400.0, 300.0),
+    );
+    eframe::egui::__run_test_ui(|ui| {
+        push_test_image(ui, &mut state, 1, 40, 40, 1.0, eframe::egui::pos2(0.0, 0.0));
+    });
+    state.add_annotation(CanvasAnnotation::new(
+        20,
+        CanvasAnnotationKind::Textbox,
+        eframe::egui::pos2(80.0, 0.0),
+        eframe::egui::pos2(160.0, 40.0),
+        "note".to_owned(),
+        default_text_size(),
+        default_stroke_width(),
+        default_annotation_color(),
+        false,
+        false,
+    ));
+    state.restore_groups(vec![crate::data::Group {
+        id: 7,
+        name: "References".into(),
+        members: vec![1, 20],
+        container: crate::data::RectGeometry::new(
+            eframe::egui::pos2(60.0, 0.0),
+            eframe::egui::vec2(240.0, 120.0),
+            1.0,
+            0.0,
+            0,
+        ),
+        flow: crate::data::GroupFlow::Row,
+        gap: 8.0,
+        padding: 12.0,
+        layout: Default::default(),
+    }]);
+
+    open_context_menu_at_pointer(&mut state, rect, rect.center());
+
+    assert_eq!(state.selected_placement_ids(), vec![1]);
+    assert_eq!(state.selected_annotation_ids(), vec![20]);
+}
