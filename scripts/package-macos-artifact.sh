@@ -36,6 +36,7 @@ chmod +x "$macos_root/snappyref"
 cp "$binary_dir/snappyref-updater" "$macos_root/"
 chmod +x "$macos_root/snappyref-updater"
 cp assets/app-icon/snappyref.icns "$resources_root/"
+python3 scripts/third_party_notices.py "$resources_root/THIRD_PARTY_NOTICES.txt"
 
 cat > "$contents_root/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

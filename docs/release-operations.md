@@ -10,8 +10,16 @@ ordinary app release zips.
   signed `latest.json`, and the standalone `snappyref-semantic-search.zip`.
 - App release zips contain a single top-level `SnappyRef/` folder.
 - macOS zips contain `SnappyRef/SnappyRef.app/`, including the macOS
-  `snappyref-updater` helper inside the app bundle.
-- Windows zips contain `SnappyRef/snappyref.exe` only.
+  `snappyref-updater` helper and `Contents/Resources/THIRD_PARTY_NOTICES.txt`
+  inside the app bundle.
+- Windows zips contain `SnappyRef/snappyref.exe` and
+  `SnappyRef/THIRD_PARTY_NOTICES.txt`. The update swap replaces only the exe,
+  so an updated install keeps the notices file from its first install.
+- `scripts/third_party_notices.py` writes the notices during packaging from
+  `cargo metadata --locked`, so they follow `Cargo.lock` without a regeneration
+  step. It fails when a crate ships no license file and offers no license in
+  `assets/licenses/`, or when ort-sys links an ONNX Runtime version other than
+  the vendored `assets/licenses/onnxruntime-<version>/`.
 - Release zips must not contain `library/`, `models/`, `UPDATE.txt`, or any
   user-owned data.
 - The **Local Model Store** is acquired separately by Semantic Search install
@@ -58,6 +66,9 @@ Workflow inputs and `SNAPPYREF_SEMANTIC_SEARCH_*` build variables override value
 when needed. Update the descriptor after publishing a replacement model package.
 `MODEL_BUNDLE.txt` records the model key and hashes of the tokenizer and both
 ONNX files for manual package provenance. Keep it in model packages.
+`scripts/semantic_model.py` downloads a pinned Hugging Face revision and adds
+the Apache-2.0 `LICENSE` and a `NOTICE` next to the model files. The app's
+notices carry the same text because the published package predates both.
 Build workflows attach the resolved descriptor alongside the app archive.
 Packaging rejects invalid descriptors or differing descriptors across selected builds.
 

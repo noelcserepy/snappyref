@@ -147,6 +147,8 @@ jobs:
           try {
             New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
             Copy-Item (Join-Path $env:SNAPPYREF_TARGET_DIR "snappyref.exe") $packageRoot
+            python scripts/third_party_notices.py (Join-Path $packageRoot "THIRD_PARTY_NOTICES.txt")
+            if ($LASTEXITCODE -ne 0) { throw "failed to write third-party notices" }
             Copy-Item `
               (Join-Path $env:RUNNER_TEMP "semantic-search-descriptor\semantic-search-descriptor.env") `
               (Join-Path $env:RUNNER_TEMP "snappyref-windows-semantic-search-descriptor.env")

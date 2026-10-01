@@ -23,13 +23,14 @@ def validate_archive(path: Path, platform: str) -> None:
         if archive.testzip() is not None:
             raise ValueError('corrupt release archive')
 
-    required = ['SnappyRef/snappyref.exe']
+    required = ['SnappyRef/snappyref.exe', 'SnappyRef/THIRD_PARTY_NOTICES.txt']
     forbidden = ['SnappyRef/UPDATE.txt', 'SnappyRef/models', 'SnappyRef/library',
                  'SnappyRef/library.db', 'SnappyRef/originals', 'SnappyRef/thumbs']
     if platform == 'macos':
+        # Notices live inside the bundle so the macOS update swap carries them.
         prefix = 'SnappyRef/SnappyRef.app/Contents/'
-        required = [prefix + name for name in ('MacOS/snappyref', 'MacOS/snappyref-updater',
-                                               'Info.plist', 'Resources/snappyref.icns')]
+        required = [prefix + name for name in ('MacOS/snappyref', 'MacOS/snappyref-updater', 'Info.plist',
+                                               'Resources/snappyref.icns', 'Resources/THIRD_PARTY_NOTICES.txt')]
         forbidden.append(prefix + 'Resources/models')
     else:
         forbidden.append('SnappyRef/snappyref-updater.exe')
