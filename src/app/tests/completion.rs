@@ -24,7 +24,7 @@ fn preparation_without_diagnostics_updates_the_accepted_edit_and_survives_restar
     let asset = loaded.placement.asset_id();
     app.accept_preparation_result(
         &ctx,
-        crate::image_preparation::ImagePrepResult::Loaded(loaded),
+        crate::image_preparation::ImagePrepResult::Loaded(Box::new(loaded)),
     );
     assert_eq!(app.placement_creation.pending_len(), 0);
     assert_eq!(app.canvas.placement_for_id(id).unwrap().asset_id(), asset);
@@ -53,7 +53,7 @@ fn cancelled_reservation_rejects_its_late_result() {
     loaded.queue_id = Some(reservation.queue_id);
     app.accept_preparation_result(
         &ctx,
-        crate::image_preparation::ImagePrepResult::Loaded(loaded),
+        crate::image_preparation::ImagePrepResult::Loaded(Box::new(loaded)),
     );
     assert!(app.canvas.placement_for_id(-1).is_none());
     assert_eq!(app.placement_creation.pending_len(), 0);
@@ -238,7 +238,7 @@ fn first_load_fits_latest_placeholder_area_and_rejects_deleted_placement() {
     app.canvas.add_unresolved_placement(edited);
     app.accept_preparation_result(
         &ctx,
-        crate::image_preparation::ImagePrepResult::Loaded(loaded),
+        crate::image_preparation::ImagePrepResult::Loaded(Box::new(loaded)),
     );
     let resolved = app.canvas.placement_for_id(id).unwrap().state.geometry;
     assert_eq!(resolved.center, current.center);
@@ -258,7 +258,7 @@ fn first_load_fits_latest_placeholder_area_and_rejects_deleted_placement() {
     app.canvas.delete_placements(&[reservation.placement_id]);
     app.accept_preparation_result(
         &ctx,
-        crate::image_preparation::ImagePrepResult::Loaded(late),
+        crate::image_preparation::ImagePrepResult::Loaded(Box::new(late)),
     );
     assert!(
         app.canvas

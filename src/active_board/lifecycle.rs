@@ -344,7 +344,7 @@ impl BoardLifecycle<'_> {
                 None,
             ) {
                 crate::image_preparation::ImagePrepResult::Loaded(loaded) => {
-                    self.canvas.add_prepared_placement_image(ctx, loaded);
+                    self.canvas.add_prepared_placement_image(ctx, *loaded);
                 }
                 crate::image_preparation::ImagePrepResult::Failed { error, .. } => {
                     return Err(error);

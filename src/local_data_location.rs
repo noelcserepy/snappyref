@@ -78,10 +78,10 @@ fn platform_user_data_root() -> Result<PathBuf, String> {
         if let Some(root) = std::env::var_os("APPDATA").map(PathBuf::from) {
             return Ok(root.join("SnappyRef"));
         }
-        return Err(
+        Err(
             "Failed to resolve user data directory: LOCALAPPDATA and APPDATA are not set"
                 .to_owned(),
-        );
+        )
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]

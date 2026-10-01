@@ -35,7 +35,7 @@ impl PlacementCreation {
             return PreparationOutcome::Status(None);
         }
         match result {
-            ImagePrepResult::Loaded(loaded) => match self.accept_loaded(ctx, context, loaded) {
+            ImagePrepResult::Loaded(loaded) => match self.accept_loaded(ctx, context, *loaded) {
                 Ok(outcome) => PreparationOutcome::Loaded(outcome),
                 Err(error) => PreparationOutcome::Status(Some(error)),
             },
