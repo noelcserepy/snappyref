@@ -231,6 +231,9 @@ jobs:
               --title "SnappyRef $tag" \
               --notes "Draft SnappyRef release." \
               --draft
+          elif [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" = true ]; then
+            # An earlier run's draft keeps that run's target until publishing creates the tag.
+            gh release edit "$tag" --target "${{ needs.resolve.outputs.sha }}"
           fi
           gh release upload "$tag" "${RUNNER_TEMP}"/release-assets/*.zip --clobber
 
