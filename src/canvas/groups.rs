@@ -409,13 +409,15 @@ pub(super) struct GroupPicker {
     highlighted: Option<GroupPickerChoice>,
     focus: bool,
     members: Vec<i64>,
+    /// Reserved on open, so Create needs nothing from the app after confirm.
+    create_id: GroupId,
 }
 
 impl CanvasState {
     pub(crate) fn group_picker_open(&self) -> bool {
         self.interaction.group_picker.is_some()
     }
-    pub fn open_group_picker(&mut self) {
+    pub fn open_group_picker(&mut self, create_id: GroupId) {
         if self.selected_placement_ids().is_empty() && self.selected_annotation_ids().is_empty() {
             return;
         }
@@ -434,14 +436,11 @@ impl CanvasState {
                 .chain(self.selected_annotation_ids())
                 .filter(|&id| self.group_member_geometry(id).is_some())
                 .collect(),
+            create_id,
         });
     }
 
-    pub(crate) fn take_group_creation(&mut self) -> Option<(String, Vec<i64>)> {
-        self.interaction.pending_group_creation.take()
-    }
-
-    pub(crate) fn remember_group_destination(&mut self, id: GroupId) {
+    fn remember_group_destination(&mut self, id: GroupId) {
         self.interaction.last_group_destination = Some(id);
     }
 
@@ -615,8 +614,13 @@ impl CanvasState {
                     }
                 }
                 Some(GroupPickerChoice::Create) => {
-                    self.interaction.pending_group_creation =
-                        Some((picker.query.trim().to_owned(), picker.members));
+                    if let Ok(Some(id)) = self.create_named_group(
+                        picker.create_id,
+                        picker.query.trim().to_owned(),
+                        &picker.members,
+                    ) {
+                        self.remember_group_destination(id);
+                    }
                 }
                 None => self.interaction.group_picker = Some(picker),
             }

@@ -13,8 +13,11 @@ fn begin_textbox_pending_move(
     annotation: &CanvasAnnotation,
     pointer_pos: egui::Pos2,
 ) {
-    state.interaction.selected_placement_ids.clear();
+    // Like a placement press, pressing a selected textbox keeps the selection
+    // and its Groups; any other press replaces both.
     if !state.is_annotation_selected(annotation.id) {
+        state.interaction.selected_group_ids.clear();
+        state.interaction.selected_placement_ids.clear();
         state.interaction.selected_annotation_ids = vec![annotation.id];
     }
     let annotation_ids = state

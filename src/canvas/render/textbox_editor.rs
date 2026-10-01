@@ -198,12 +198,14 @@ fn expand_textbox_to_height(state: &mut CanvasState, index: usize, required_heig
         return false;
     }
 
-    // Fill height belongs to the Group, so growing it would fight every reflow.
+    // Active Fill height belongs to the Group, so growing it would fight every
+    // reflow. Free and Absolute leave saved Fill dormant.
     let group_owns_height = state.groups().iter().any(|g| {
-        g.layout
-            .members
-            .get(&annotation.id)
-            .is_some_and(|m| m.fill[1])
+        g.flow != crate::data::GroupFlow::Free
+            && g.layout
+                .members
+                .get(&annotation.id)
+                .is_some_and(|m| m.fill[1] && !m.absolute)
     });
     let world_rect = textbox_world_rect(annotation);
     if group_owns_height || required_height <= world_rect.height() + 0.5 {

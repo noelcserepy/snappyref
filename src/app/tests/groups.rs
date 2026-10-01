@@ -1090,6 +1090,43 @@ fn dragging_a_member_moves_every_selected_group() {
         .map(|(after, before)| *after - *before)
         .collect::<Vec<_>>();
     assert_eq!(moved, [egui::vec2(180.0, 120.0); 3]);
+    let payload = h.state().copy_selected_board_payload().unwrap();
+    assert_eq!(payload.placements.len(), 5);
+    assert_eq!(payload.groups.len(), 3);
+}
+
+#[test]
+fn dragging_a_loose_textbox_leaves_the_selected_group() {
+    let (_root, mut h, _ids) = dock_fixture();
+    let app = h.state_mut();
+    let note = app.library.as_ref().unwrap().new_canvas_annotation(
+        CanvasAnnotationKind::Textbox,
+        egui::pos2(-200.0, 200.0),
+        egui::pos2(40.0, 256.0),
+        "note".to_owned(),
+        CanvasTextSize::M,
+        CanvasStrokeWidth::M,
+        crate::data::CanvasAnnotationColor::Sky,
+        true,
+    );
+    app.canvas.add_annotation(note.clone());
+    let group = app.canvas.groups()[0].id;
+    app.canvas.select_group(group);
+    h.step();
+    let before = h.state().canvas.groups()[0].container.center;
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
+    let from = inspect_world_to_screen(egui::pos2(10.0, 228.0), screen);
+    drag(
+        &mut h,
+        from,
+        from + egui::vec2(90.0, 60.0),
+        egui::Modifiers::NONE,
+    );
+    assert_eq!(
+        h.state().canvas.annotation_for_id(note.id).unwrap().start(),
+        note.start() + egui::vec2(90.0, 60.0)
+    );
+    assert_eq!(h.state().canvas.groups()[0].container.center, before);
 }
 
 #[test]
