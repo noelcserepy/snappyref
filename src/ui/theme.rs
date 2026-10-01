@@ -1,6 +1,10 @@
 use eframe::egui::{self, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
 
 const DM_SANS_VARIABLE: &[u8] = include_bytes!("../../assets/fonts/DMSans-Variable.ttf");
+/// JetBrains Mono 2.304 Regular subset to the macOS modifier symbols
+/// (⌘ ⌥ ⇧ ⌃), which DM Sans lacks. One source keeps them the same size in
+/// every shortcut label.
+const MODIFIER_KEYS: &[u8] = include_bytes!("../../assets/fonts/JetBrainsMono-ModifierKeys.ttf");
 
 const SHELL_BG: egui::Color32 = color(0x0A, 0x0A, 0x0A);
 const PANEL_BG: egui::Color32 = color(0x16, 0x15, 0x14);
@@ -185,23 +189,24 @@ pub fn configure_theme(ctx: &egui::Context) {
 
 fn configure_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
-    let dm_sans_name = "dm_sans_variable".to_owned();
+    // Ahead of egui's defaults, in fallback order.
+    let bundled_fonts = [
+        ("dm_sans_variable", DM_SANS_VARIABLE),
+        ("modifier_keys", MODIFIER_KEYS),
+    ];
 
-    fonts.font_data.insert(
-        dm_sans_name.clone(),
-        FontData::from_static(DM_SANS_VARIABLE).into(),
-    );
-
-    fonts
-        .families
-        .get_mut(&FontFamily::Proportional)
-        .expect("default proportional font family")
-        .insert(0, dm_sans_name.clone());
-    fonts
-        .families
-        .get_mut(&FontFamily::Monospace)
-        .expect("default monospace font family")
-        .insert(0, dm_sans_name);
+    for (index, (name, data)) in bundled_fonts.into_iter().enumerate() {
+        fonts
+            .font_data
+            .insert(name.to_owned(), FontData::from_static(data).into());
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            fonts
+                .families
+                .get_mut(&family)
+                .expect("default font family")
+                .insert(index, name.to_owned());
+        }
+    }
 
     ctx.set_fonts(fonts);
 }
@@ -280,4 +285,20 @@ pub fn motion_easing(t: f32) -> f32 {
 
 const fn color(r: u8, g: u8, b: u8) -> egui::Color32 {
     egui::Color32::from_rgb(r, g, b)
+}
+
+#[cfg(test)]
+mod tests {
+    use eframe::egui::{self, FontId};
+
+    #[test]
+    fn macos_modifier_symbols_have_glyphs() {
+        let ctx = egui::Context::default();
+        super::configure_theme(&ctx);
+        crate::ui::test_frame::run_ui(&ctx, egui::RawInput::default(), |_| {});
+
+        for font in [FontId::proportional(12.0), FontId::monospace(10.0)] {
+            assert!(ctx.fonts_mut(|fonts| fonts.has_glyphs(&font, "⌘⌥⇧⌃")));
+        }
+    }
 }

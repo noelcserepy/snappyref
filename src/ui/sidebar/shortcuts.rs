@@ -48,10 +48,7 @@ fn paint_shortcut_row(ui: &mut egui::Ui, shortcut: &SupportedShortcut) {
 /// no pill chrome. The key column stays right-aligned for scanning.
 fn paint_shortcut_keys(ui: &mut egui::Ui, keys: &str) {
     let keys = display_shortcut_label(keys);
-    let mut font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
-    if shortcut_label_uses_small_symbol_glyphs(&keys) {
-        font.size += 3.0;
-    }
+    let font = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
     let galley = ui
         .painter()
         .layout_no_wrap(keys, font, crate::ui::theme::TEXT_MUTED);
@@ -104,8 +101,4 @@ pub(super) fn display_shortcut_label(keys: &str) -> String {
     }
 
     label
-}
-
-pub(super) fn shortcut_label_uses_small_symbol_glyphs(keys: &str) -> bool {
-    keys.chars().any(|ch| matches!(ch, '⇧' | '↵'))
 }
