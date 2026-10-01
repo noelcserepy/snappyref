@@ -15,6 +15,7 @@ SCENARIOS = {
     'member-dock': ('inspect_member_dock_writes_artifact', 'member-dock', False, False),
     'annotation-editing': ('inspect_annotation_creation_editing_and_styles_writes_artifact', 'annotation-editing', False, False),
     'annotation-endpoint-drag': ('inspect_annotation_endpoint_drag_writes_artifact', 'annotation-endpoint-drag', False, False),
+    'readme-board': ('inspect_readme_board_writes_artifact', 'readme-board', False, False),
     'image-format-gallery': ('inspect_image_format_gallery_writes_artifact', 'image-format-gallery', False, True),
     'group-picker-rename-create': ('inspect_group_picker_rename_and_create_writes_artifact', 'group-picker-rename-create', False, False),
     'check-harness': ('inspect_search_result_drag_to_canvas_writes_artifact', 'search-drag-to-canvas', False, False),

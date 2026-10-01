@@ -133,3 +133,83 @@ fn inspect_image_format_gallery_writes_artifact() {
     let report = scenario.finish();
     assert!(report.passed, "{}", report.artifact_dir.display());
 }
+
+/// README board screenshot: public-domain references in justified rows.
+/// After visual changes, quantize `frames/board.png` to 256 colors and save it
+/// as `assets/readme/board.png`.
+#[test]
+fn inspect_readme_board_writes_artifact() {
+    const ROW_WIDTH: f32 = 1600.;
+    const GAP: f32 = 12.;
+    let fixtures =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/images/readme-board");
+    let mut scenario = InspectScenario::new("readme-board");
+    let root = TempRoot::new("snappyref-inspect-readme-board");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let rows: [&[&str]; 3] = [
+        &["tetons-snake-river", "great-wave", "woman-water-pitcher"],
+        &[
+            "matterhorn",
+            "neue-burg-staircase",
+            "hall-of-justice",
+            "wheat-field-cypresses",
+        ],
+        &[
+            "earthrise",
+            "evening-snow-kanbara",
+            "bgk-staircase",
+            "merced-river",
+        ],
+    ];
+    let mut items = Vec::new();
+    let mut top = 0.;
+    for row in rows {
+        let row_items = row
+            .iter()
+            .map(|name| {
+                let path = fixtures.join(format!("{name}.jpg"));
+                crate::image_preparation::import_path_sync(&library, path, egui::Pos2::ZERO)
+                    .unwrap_or_else(|error| panic!("{name}: {error}"))
+            })
+            .collect::<Vec<_>>();
+        let aspect_sum: f32 = row_items
+            .iter()
+            .map(|item| item.placement.state.geometry.size.x / item.placement.state.geometry.size.y)
+            .sum();
+        let height = (ROW_WIDTH - GAP * (row.len() - 1) as f32) / aspect_sum;
+        let mut left = 0.;
+        for mut item in row_items {
+            let geometry = &mut item.placement.state.geometry;
+            geometry.scale = height / geometry.size.y;
+            let width = geometry.size.x * geometry.scale;
+            geometry.center = egui::pos2(left + width / 2., top + height / 2.);
+            left += width + GAP;
+            item.placement = library.fixture_placement(1, item.placement).unwrap();
+            items.push(item);
+        }
+        top += height + GAP;
+    }
+    let placed = items.len();
+    let mut app = test_app(Some(library));
+    let mut harness = app_full_harness_with_startup(0.25, move |ctx| {
+        for item in items {
+            app.canvas.add_prepared_placement_image(ctx, item);
+        }
+        app
+    });
+    harness.step();
+    let ids = harness.state().canvas.all_placement_ids();
+    harness.state_mut().canvas.select_placements(&ids);
+    harness.key_press(egui::Key::Space);
+    harness.step();
+    harness.state_mut().canvas.select_content(&[], &[]);
+    // Outlast the "Focused selection" status message.
+    for _ in 0..20 {
+        harness.step();
+    }
+    let stats = scenario.capture_screen("board", &mut harness);
+    scenario.assertion("all references placed", ids.len() == placed);
+    scenario.assertion("board frame is opaque", stats.transparent_pixels == 0);
+    let report = scenario.finish();
+    assert!(report.passed, "{}", report.artifact_dir.display());
+}

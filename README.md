@@ -3,8 +3,7 @@
 A local reference-board app for macOS and Windows. Drop images on a canvas,
 arrange them, and find them again across every board with on-device search.
 
-<!-- Screenshot placeholder. Inspect scenarios seed solid-color rectangles, not
-real boards. Add a real capture at assets/readme/board.png and link it here. -->
+![A SnappyRef board of public-domain reference images](assets/readme/board.png)
 
 ## What it does
 
