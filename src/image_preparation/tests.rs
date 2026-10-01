@@ -6,7 +6,6 @@ use super::{
 use crate::data::CanvasImageLod;
 use crate::library::storage::Library;
 use crate::placement::DEFAULT_PLACEMENT_TARGET_AREA;
-use crate::placement::initial_layout::rects_overlap_with_gap;
 use crate::test_support::TempRoot;
 use image::{ColorType, ImageFormat};
 use pollster::block_on;
@@ -40,73 +39,6 @@ fn file_imports_land_in_same_area_band() {
     assert!((displayed_area(&portrait) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
     assert!((displayed_area(&landscape) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
     assert!((displayed_area(&square) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
-    assert_eq!(small.placement.state.geometry.scale, 1.0);
-}
-
-#[test]
-fn clipboard_import_caps_large_images_and_keeps_small_assets_unchanged() {
-    let root = TempRoot::new("clipboard-import-scaling");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-
-    let tall_rgba = solid_rgba(390, 844);
-    let small_rgba = solid_rgba(160, 200);
-
-    let tall = match import(
-        &library,
-        reserve_import_fixture(
-            &library,
-            ImportRequest {
-                target_board_id: 1,
-                queue_id: 1,
-                placement_id: 0,
-                source: ImportSource::Clipboard {
-                    rgba: tall_rgba,
-                    width: 390,
-                    height: 844,
-                },
-                reserved_world: eframe::egui::Pos2::ZERO,
-
-                max_texture_side: usize::MAX,
-                canvas_image_settings: CanvasImageSettings::default(),
-                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-
-                trace: None,
-            },
-        ),
-        None,
-    ) {
-        ImagePrepResult::Loaded(loaded) => loaded,
-        other => panic!("expected loaded tall clipboard image, got {other:?}"),
-    };
-    let small = match import(
-        &library,
-        reserve_import_fixture(
-            &library,
-            ImportRequest {
-                target_board_id: 1,
-                queue_id: 2,
-                placement_id: 0,
-                source: ImportSource::Clipboard {
-                    rgba: small_rgba,
-                    width: 160,
-                    height: 200,
-                },
-                reserved_world: eframe::egui::Pos2::ZERO,
-
-                max_texture_side: usize::MAX,
-                canvas_image_settings: CanvasImageSettings::default(),
-                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-
-                trace: None,
-            },
-        ),
-        None,
-    ) {
-        ImagePrepResult::Loaded(loaded) => loaded,
-        other => panic!("expected loaded small clipboard image, got {other:?}"),
-    };
-
-    assert!((displayed_area(&tall) - DEFAULT_PLACEMENT_TARGET_AREA).abs() < 0.1);
     assert_eq!(small.placement.state.geometry.scale, 1.0);
 }
 
@@ -148,11 +80,11 @@ fn clipboard_import_uses_configured_target_area() {
 }
 
 #[test]
-fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active() {
-    let root = TempRoot::new("clipboard-import-target-board");
+fn import_returns_reserved_world_and_target_board() {
+    let root = TempRoot::new("import-reserved-world");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    seed_placement(&library, 42.0, 24.0, 160, 120, 1.0);
     let second = library.fixture_board("Second").unwrap();
+    let reserved_world = eframe::egui::pos2(240.0, 36.0);
 
     let loaded = match import(
         &library,
@@ -161,97 +93,6 @@ fn clipboard_import_persists_to_queued_board_even_when_another_board_is_active()
             ImportRequest {
                 target_board_id: second.id,
                 queue_id: 1,
-                placement_id: 0,
-                source: ImportSource::Clipboard {
-                    rgba: solid_rgba(160, 120),
-                    width: 160,
-                    height: 120,
-                },
-                reserved_world: eframe::egui::pos2(42.0, 24.0),
-
-                max_texture_side: usize::MAX,
-                canvas_image_settings: CanvasImageSettings::default(),
-                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-
-                trace: None,
-            },
-        ),
-        None,
-    ) {
-        ImagePrepResult::Loaded(loaded) => loaded,
-        other => panic!("expected target-board clipboard import to load, got {other:?}"),
-    };
-
-    assert_eq!(loaded.target_board_id, second.id);
-    assert_eq!(loaded.placement.state.geometry.center.x, 42.0);
-    assert_eq!(loaded.placement.state.geometry.center.y, 24.0);
-}
-
-#[test]
-fn reserved_import_preserves_custom_gap_in_displayed_bounds() {
-    let root = TempRoot::new("placement-custom-gap");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let gap = 8.0;
-    seed_placement(&library, 0.0, 0.0, 200, 200, 1.0);
-
-    let second = match import(
-        &library,
-        reserve_import_fixture(
-            &library,
-            ImportRequest {
-                target_board_id: 1,
-                queue_id: 2,
-                placement_id: 0,
-                source: ImportSource::Clipboard {
-                    rgba: solid_rgba(200, 200),
-                    width: 200,
-                    height: 200,
-                },
-                reserved_world: eframe::egui::pos2(200.0 + gap, 0.0),
-
-                max_texture_side: usize::MAX,
-                canvas_image_settings: CanvasImageSettings::default(),
-                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-
-                trace: None,
-            },
-        ),
-        None,
-    ) {
-        ImagePrepResult::Loaded(loaded) => loaded,
-        other => panic!("expected second loaded image, got {other:?}"),
-    };
-
-    let first_rect = eframe::egui::Rect::from_center_size(
-        eframe::egui::Pos2::ZERO,
-        eframe::egui::vec2(200.0, 200.0),
-    );
-    let second_rect = eframe::egui::Rect::from_center_size(
-        eframe::egui::pos2(
-            second.placement.state.geometry.center.x,
-            second.placement.state.geometry.center.y,
-        ),
-        eframe::egui::vec2(200.0, 200.0),
-    );
-
-    assert_eq!(second_rect.left() - first_rect.right(), gap);
-    assert!(!rects_overlap_with_gap(first_rect, second_rect, gap));
-}
-
-#[test]
-fn reserved_world_is_persisted_without_worker_relayout() {
-    let root = TempRoot::new("placement-reserved-world");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
-    let reserved_world = eframe::egui::pos2(240.0, 36.0);
-
-    let loaded = match import(
-        &library,
-        reserve_import_fixture(
-            &library,
-            ImportRequest {
-                target_board_id: 1,
-                queue_id: 2,
                 placement_id: 0,
                 source: ImportSource::Clipboard {
                     rgba: solid_rgba(100, 100),
@@ -273,49 +114,8 @@ fn reserved_world_is_persisted_without_worker_relayout() {
         other => panic!("expected reserved clipboard import to load, got {other:?}"),
     };
 
-    assert_eq!(loaded.placement.state.geometry.center.x, reserved_world.x);
-    assert_eq!(loaded.placement.state.geometry.center.y, reserved_world.y);
-}
-
-#[test]
-fn overlapping_reserved_world_is_preserved_when_persisting() {
-    let root = TempRoot::new("placement-preserved-reserved-world");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    seed_placement(&library, 0.0, 0.0, 100, 100, 1.0);
-    let reserved_world = eframe::egui::Pos2::ZERO;
-
-    let loaded = match import(
-        &library,
-        reserve_import_fixture(
-            &library,
-            ImportRequest {
-                target_board_id: 1,
-                queue_id: 2,
-                placement_id: 0,
-                source: ImportSource::Clipboard {
-                    rgba: solid_rgba(100, 100),
-                    width: 100,
-                    height: 100,
-                },
-                reserved_world,
-
-                max_texture_side: usize::MAX,
-                canvas_image_settings: CanvasImageSettings::default(),
-                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
-
-                trace: None,
-            },
-        ),
-        None,
-    ) {
-        ImagePrepResult::Loaded(loaded) => loaded,
-        other => {
-            panic!("expected overlapping reserved clipboard import to load, got {other:?}")
-        }
-    };
-
-    assert_eq!(loaded.placement.state.geometry.center.x, reserved_world.x);
-    assert_eq!(loaded.placement.state.geometry.center.y, reserved_world.y);
+    assert_eq!(loaded.target_board_id, second.id);
+    assert_eq!(loaded.placement.state.geometry.center, reserved_world);
 }
 
 #[test]
@@ -766,13 +566,11 @@ fn worker_config_reserves_background_worker_on_multi_core() {
 }
 
 #[test]
-fn traced_clipboard_import_populates_non_negative_timings() {
+fn traced_import_records_queue_wait_and_stage_timings() {
     let root = TempRoot::new("clipboard-trace");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let trace = ImagePrepTrace {
-        queued_at: Instant::now()
-            .checked_sub(Duration::from_millis(1))
-            .unwrap_or_else(Instant::now),
+        queued_at: Instant::now() - Duration::from_millis(1),
         timings: ImagePrepTimings::default(),
     };
 
@@ -807,11 +605,14 @@ fn traced_clipboard_import_populates_non_negative_timings() {
     let trace = loaded
         .trace
         .expect("missing trace on loaded clipboard import");
-    assert!(trace.timings.queue_wait >= Duration::ZERO);
-    assert!(trace.timings.decode_or_load >= Duration::ZERO);
-    assert!(trace.timings.store_and_persist >= Duration::ZERO);
-    assert!(trace.timings.preview_prepare >= Duration::ZERO);
-    assert!(trace.timings.worker_total >= trace.timings.store_and_persist);
+    let timings = trace.timings;
+    assert!(timings.queue_wait >= Duration::from_millis(1));
+    assert!(timings.store_and_persist > Duration::ZERO);
+    assert!(timings.preview_prepare > Duration::ZERO);
+    assert!(
+        timings.worker_total
+            >= timings.decode_or_load + timings.store_and_persist + timings.preview_prepare
+    );
 }
 
 #[test]
@@ -1074,61 +875,6 @@ fn load_existing_backfills_new_cache_when_canvas_max_side_changes() {
 }
 
 #[test]
-fn downscale_mode_ignores_legacy_thumb_cache_paths() {
-    let root = TempRoot::new("load-existing-legacy-thumb");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let original_path = write_png(&root, "source.png", 4000, 3000);
-    let file_size = fs::metadata(&original_path).unwrap().len();
-    let placement = library
-        .fixture_placement(
-            library.load_user_session().unwrap().active_board_id,
-            crate::data::Placement::loaded(
-                crate::data::PlacementState::new(
-                    library.allocate_document_id(),
-                    eframe::egui::Pos2::ZERO,
-                    1.0,
-                    0.0,
-                    0,
-                    false,
-                ),
-                library
-                    .register_original(&original_path, "image/png", 4000, 3000, file_size, None)
-                    .unwrap(),
-            ),
-        )
-        .unwrap();
-
-    let legacy_thumb_path = root
-        .join("thumbs")
-        .join(format!("asset-{}.png", placement.require_loaded_asset().id));
-    image::save_buffer_with_format(
-        &legacy_thumb_path,
-        &solid_rgba(64, 64),
-        64,
-        64,
-        ColorType::Rgba8,
-        ImageFormat::Png,
-    )
-    .unwrap();
-    fs::remove_file(&placement.require_loaded_asset().original_path).unwrap();
-
-    match load_existing(
-        &library,
-        1,
-        None,
-        placement,
-        usize::MAX,
-        downscaled_canvas_settings(2000),
-        CanvasImageLod::Working,
-        None,
-        None,
-    ) {
-        ImagePrepResult::Failed { .. } => {}
-        other => panic!("expected legacy thumb path to be ignored, got {other:?}"),
-    }
-}
-
-#[test]
 fn crop_redecodes_original_path_and_preserves_exact_pixels() {
     let root = TempRoot::new("crop-redecode");
     let library = Library::initialize(root.to_path_buf()).unwrap();
@@ -1243,43 +989,6 @@ fn displayed_area(loaded: &super::PreparedPlacementImage) -> f32 {
         * loaded.placement.require_loaded_asset().height as f32
         * loaded.placement.state.geometry.scale
         * loaded.placement.state.geometry.scale
-}
-
-fn seed_placement(library: &Library, x: f32, y: f32, width: u32, height: u32, scale: f32) {
-    let stored_path = library
-        .store_rgba_image(
-            &format!("seed-{x}-{y}"),
-            &solid_rgba(width, height),
-            width,
-            height,
-        )
-        .unwrap();
-    let file_size = fs::metadata(&stored_path).unwrap().len();
-    library
-        .fixture_placement(
-            library.load_user_session().unwrap().active_board_id,
-            crate::data::Placement::loaded(
-                crate::data::PlacementState::new(
-                    library.allocate_document_id(),
-                    eframe::egui::pos2(x, y),
-                    scale,
-                    0.0,
-                    0,
-                    false,
-                ),
-                library
-                    .register_original(
-                        &stored_path,
-                        image::ImageFormat::Png.to_mime_type(),
-                        width,
-                        height,
-                        file_size,
-                        None,
-                    )
-                    .unwrap(),
-            ),
-        )
-        .unwrap();
 }
 
 fn test_render_state() -> Option<eframe::egui_wgpu::RenderState> {

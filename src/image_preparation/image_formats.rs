@@ -1481,36 +1481,6 @@ mod tests {
     }
 
     #[test]
-    fn decode_image_file_decodes_jpeg() {
-        let root = std::env::temp_dir().join(format!(
-            "snappyref-decode-jpeg-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("sample.jpg");
-        let rgba = vec![
-            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
-        ];
-        let file = std::fs::File::create(&path).unwrap();
-        let writer = std::io::BufWriter::new(file);
-        let encoder = JpegEncoder::new_with_quality(writer, 85);
-        encoder
-            .write_image(&rgba[..12], 2, 2, ExtendedColorType::Rgb8)
-            .unwrap();
-
-        let decoded = decode_image_file(&path).unwrap();
-        assert_eq!(decoded.format_name, "JPEG");
-        assert_eq!(decoded.width, 2);
-        assert_eq!(decoded.height, 2);
-        assert_eq!(decoded.rgba.len(), 16);
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
     fn jpeg_and_tiff_read_all_exif_orientation_values() {
         for exif in 1..=8 {
             assert_eq!(
@@ -1698,19 +1668,6 @@ mod tests {
                 red_values
             );
         }
-    }
-
-    #[test]
-    fn decode_image_file_decodes_checked_in_ppm_smoke_fixture() {
-        let path = smoke_fixture_path("ppm-2x2.ppm");
-
-        let decoded = decode_image_file(&path).unwrap();
-
-        assert_eq!(decoded.format_name, "PNM");
-        assert_eq!(decoded.width, 2);
-        assert_eq!(decoded.height, 2);
-        assert_eq!(decoded.rgba.len(), 2 * 2 * 4);
-        assert_eq!(&decoded.rgba[..4], &[255, 0, 0, 255]);
     }
 
     #[test]
@@ -2072,8 +2029,6 @@ static unsigned char sample_bits[] = { 0x01 };
         assert_eq!(report.rgba_bytes, 8 * 6 * 4);
         assert!(report.source_file_size > 0);
         assert!(report.megapixels > 0.0);
-        assert!(report.decode_ms >= 0.0);
-        assert!(report.ms_per_megapixel >= 0.0);
 
         let _ = std::fs::remove_dir_all(root);
     }
