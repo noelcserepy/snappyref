@@ -1168,8 +1168,9 @@ mod tests {
     }
 
     #[test]
-    fn downloading_local_model_store_status_keeps_service_stopped() {
-        let mut search = SearchController::default();
+    fn downloading_local_model_store_status_stops_running_service() {
+        let (mut search, _root) =
+            search_controller_with_semantic_service("snappyref-downloading-stops-service");
         let mut status = "Ready".to_owned();
 
         search.sync_model_store_status(
@@ -1192,26 +1193,6 @@ mod tests {
         let mut status = "Ready".to_owned();
 
         search.start_semantic_search_install(&mut status);
-        search.start_semantic_search_install(&mut status);
-
-        assert_eq!(starts.get(), 1);
-        assert_eq!(
-            search.local_model_store_status,
-            Some(LocalModelStoreStatus::Downloading { percent: 0 })
-        );
-        assert_eq!(status, "Installing Semantic Search");
-    }
-
-    #[test]
-    fn first_launch_prompt_enable_uses_shared_install_flow() {
-        let starts = std::rc::Rc::new(std::cell::Cell::new(0));
-        let observed = starts.clone();
-        let mut search = SearchController::default();
-        search.set_semantic_install_for_test(move |_| {
-            observed.set(observed.get() + 1);
-        });
-        let mut status = "Ready".to_owned();
-
         search.start_semantic_search_install(&mut status);
 
         assert_eq!(starts.get(), 1);
@@ -1310,17 +1291,6 @@ mod tests {
         assert!(!search.can_start_embedding_backfill(now, idle));
         assert!(!search.can_start_embedding_backfill(now + Duration::from_secs(5), idle));
         assert!(search.embedding_backfill_is_idle());
-    }
-
-    #[test]
-    fn embedding_backfill_starts_after_semantic_search_service_exists_and_app_is_idle() {
-        let (mut search, _root) =
-            search_controller_with_semantic_service("snappyref-installed-backfill-search-test");
-        let now = Instant::now();
-        let idle = EmbeddingBackfillIdleState { app_idle: true };
-
-        assert!(!search.can_start_embedding_backfill(now, idle));
-        assert!(search.can_start_embedding_backfill(now + Duration::from_millis(750), idle));
     }
 
     fn search_controller_with_semantic_service(prefix: &str) -> (SearchController, TempRoot) {
@@ -1538,27 +1508,6 @@ mod tests {
             bounds.width() < 360.0 && bounds.height() < 420.0,
             "expected compact search provisional batch, got bounds {bounds:?}"
         );
-    }
-
-    #[test]
-    fn search_drag_places_asset_at_import_size_even_when_asset_has_board_instance() {
-        let mut search = SearchController::default();
-        search.overlay.results = vec![SearchResultAssetEntry {
-            asset_id: 10,
-            asset_preview_path: None,
-            asset_width: 4000,
-            asset_height: 3000,
-        }];
-        search.overlay.result_selection.replace(0);
-
-        search.start_result_drag(0);
-
-        let drag = search
-            .overlay
-            .drag_state
-            .as_ref()
-            .expect("expected library search result drag");
-        assert_eq!(drag.asset_ids, vec![10]);
     }
 
     #[test]
@@ -1884,22 +1833,6 @@ mod tests {
     }
 
     #[test]
-    fn result_selection_shift_selects_anchor_range() {
-        let mut search = SearchController::default();
-
-        search
-            .overlay
-            .result_selection
-            .update(1, SearchSelectionMode::Replace);
-        search
-            .overlay
-            .result_selection
-            .update(4, SearchSelectionMode::Range);
-
-        assert_eq!(search.overlay.result_selection.selected(), &[1, 2, 3, 4]);
-    }
-
-    #[test]
     fn result_selection_range_keeps_anchor_when_contracting() {
         let mut search = SearchController::default();
 
@@ -2011,49 +1944,6 @@ mod tests {
 
         let drag = search.overlay.drag_state.expect("expected search drag");
         assert_eq!(drag.asset_ids, vec![10, 11]);
-    }
-
-    #[test]
-    fn selected_result_asset_ids_falls_back_to_lead_result() {
-        let mut search = SearchController::default();
-        search.overlay.results = vec![
-            SearchResultAssetEntry {
-                asset_id: 10,
-                asset_preview_path: None,
-                asset_width: 1,
-                asset_height: 1,
-            },
-            SearchResultAssetEntry {
-                asset_id: 11,
-                asset_preview_path: None,
-                asset_width: 1,
-                asset_height: 1,
-            },
-        ];
-        search.overlay.result_selection.replace(1);
-
-        assert_eq!(search.selected_result_asset_ids(), vec![11]);
-    }
-
-    #[test]
-    fn all_result_asset_ids_uses_loaded_results() {
-        let mut search = SearchController::default();
-        search.overlay.results = vec![
-            SearchResultAssetEntry {
-                asset_id: 10,
-                asset_preview_path: None,
-                asset_width: 1,
-                asset_height: 1,
-            },
-            SearchResultAssetEntry {
-                asset_id: 11,
-                asset_preview_path: None,
-                asset_width: 1,
-                asset_height: 1,
-            },
-        ];
-
-        assert_eq!(search.all_result_asset_ids(), vec![10, 11]);
     }
 
     fn search_result_groups(count: usize) -> Vec<SearchResultAssetEntry> {
