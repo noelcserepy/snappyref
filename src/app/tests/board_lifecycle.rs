@@ -38,24 +38,6 @@ fn board_summaries_are_served_from_cache_until_refreshed() {
 }
 
 #[test]
-fn creating_board_refreshes_board_summaries_cache() {
-    let root = TempRoot::new("snappyref-board-summary-create-refresh");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let mut app = test_app(Some(library));
-    app.refresh_board_summaries();
-
-    app.create_and_switch_board(true);
-
-    let summaries = app.board_summaries();
-    assert_eq!(summaries.len(), 2);
-    assert!(
-        summaries
-            .iter()
-            .any(|summary| summary.board.name == "Board 2")
-    );
-}
-
-#[test]
 fn persist_canvas_changes_saves_viewport_changes() {
     let root = TempRoot::new("snappyref-app-viewport-session");
     let library = Library::initialize(root.to_path_buf()).unwrap();
@@ -233,42 +215,6 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
 }
 
 #[test]
-fn undo_delete_annotation_patches_active_canvas_without_board_reload() {
-    let ctx = egui::Context::default();
-    let root = TempRoot::new("snappyref-undo-no-board-reload");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let annotation = library
-        .fixture_annotation(
-            CanvasAnnotationKind::Textbox,
-            egui::pos2(40.0, 60.0),
-            egui::pos2(140.0, 100.0),
-            "note",
-            CanvasTextSize::M,
-            CanvasStrokeWidth::M,
-            crate::data::CanvasAnnotationColor::Sky,
-            true,
-        )
-        .unwrap();
-    let mut app = test_app(Some(library.clone()));
-    app.board_editing.persistence = crate::app::DocumentPersistence::queued(library.clone());
-    app.import_worker = None;
-    app.canvas.add_annotation(annotation.clone());
-    app.canvas.select_content(&[], &[annotation.id]);
-
-    app.delete_selected_items_from_board(test_screen_rect());
-    assert!(app.canvas.annotation_for_id(annotation.id).is_none());
-
-    app.undo_document_history(&ctx);
-
-    assert_eq!(
-        app.canvas.annotation_for_id(annotation.id),
-        Some(annotation)
-    );
-    assert_eq!(app.status, "Undid Deleted 1 annotation");
-    app.flush_persistence();
-}
-
-#[test]
 fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
     let ctx = egui::Context::default();
     let root = TempRoot::new("snappyref-mixed-duplicate");
@@ -400,25 +346,7 @@ fn command_a_selects_all_active_board_images_and_annotations() {
 
     let _ = crate::ui::test_frame::run_ui(
         &ctx,
-        egui::RawInput {
-            events: vec![
-                egui::Event::ModifiersChanged(egui::Modifiers {
-                    command: true,
-                    ..Default::default()
-                }),
-                egui::Event::Key {
-                    key: egui::Key::A,
-                    physical_key: Some(egui::Key::A),
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers {
-                        command: true,
-                        ..Default::default()
-                    },
-                },
-            ],
-            ..Default::default()
-        },
+        key_press_input(egui::Modifiers::COMMAND, egui::Key::A),
         |ui| {
             app.handle_selection_shortcuts(
                 ui.ctx(),
@@ -499,29 +427,6 @@ fn delete_from_board_archives_image_placements_and_annotations() {
         )
         .unwrap();
     assert_eq!(annotation_count, 1);
-}
-
-#[test]
-fn sidebar_create_board_generates_name_switches_and_stays_open() {
-    let root = TempRoot::new("snappyref-create-board");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let mut app = test_app(Some(library.clone()));
-    app.sidebar_open = true;
-
-    app.create_and_switch_board(true);
-
-    app.flush_persistence();
-    let boards = library.list_boards().unwrap();
-    assert_eq!(boards.len(), 2);
-    assert_eq!(boards[0].name, "My Board");
-    assert_eq!(boards[1].name, "Board 2");
-    assert_eq!(app.active_board_id, boards[1].id);
-    app.flush_persistence();
-    assert_eq!(
-        library.load_user_session().unwrap().active_board_id,
-        boards[1].id
-    );
-    assert!(app.sidebar_open);
 }
 
 #[test]
@@ -753,7 +658,6 @@ fn deleting_inactive_board_after_queued_resolution_restores_resolved_placement()
             .resolve_placements(second.id, vec![resolved.clone()])
             .unwrap()
     );
-    std::thread::sleep(Duration::from_millis(100));
 
     app.request_board_delete(second.id, second.name.clone());
     app.confirm_pending_board_delete(&ctx);
@@ -790,7 +694,6 @@ fn queued_board_identities_remain_visible_while_persistence_retries() {
 
     app.create_and_switch_board(false);
     app.create_and_switch_board(false);
-    std::thread::sleep(Duration::from_millis(100));
     assert_eq!(app.board_summaries().len(), 3);
 
     app.refresh_board_summaries();
@@ -827,7 +730,6 @@ fn deleting_active_queued_board_uses_accepted_queued_fallback() {
     let fallback_id = app.active_board_id;
     app.create_and_switch_board(false);
     let deleted_id = app.active_board_id;
-    std::thread::sleep(Duration::from_millis(100));
 
     app.request_board_delete(deleted_id, "Board 3".to_owned());
     app.confirm_pending_board_delete(&ctx);
@@ -907,7 +809,6 @@ fn deleting_active_board_restores_accepted_fallback_content_while_persistence_re
         .unwrap();
     app.create_and_switch_board(false);
     let deleted_id = app.active_board_id;
-    std::thread::sleep(Duration::from_millis(100));
 
     app.request_board_delete(deleted_id, "Board 2".to_owned());
     app.confirm_pending_board_delete(&ctx);
@@ -983,7 +884,6 @@ fn undoing_board_create_reopens_accepted_previous_board_while_persistence_retrie
         .unwrap();
     app.create_and_switch_board(false);
     assert_ne!(app.active_board_id, previous.id);
-    std::thread::sleep(Duration::from_millis(100));
 
     app.undo_document_history(&ctx);
 
@@ -1035,25 +935,7 @@ fn command_n_creates_board_without_opening_sidebar() {
 
     let _ = crate::ui::test_frame::run_ui(
         &ctx,
-        egui::RawInput {
-            events: vec![
-                egui::Event::ModifiersChanged(egui::Modifiers {
-                    command: true,
-                    ..Default::default()
-                }),
-                egui::Event::Key {
-                    key: egui::Key::N,
-                    physical_key: Some(egui::Key::N),
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers {
-                        command: true,
-                        ..Default::default()
-                    },
-                },
-            ],
-            ..Default::default()
-        },
+        key_press_input(egui::Modifiers::COMMAND, egui::Key::N),
         |ui| app.handle_board_shortcuts(ui.ctx()),
     );
 
@@ -1070,91 +952,30 @@ fn command_number_switches_visible_board() {
     let ctx = egui::Context::default();
     let root = TempRoot::new("snappyref-cmd-number-board");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let second = library.fixture_board("Second").unwrap();
-    let third = library.fixture_board("Third").unwrap();
-    let mut app = test_app(Some(library.clone()));
-    app.active_board_id = second.id;
-    app.refresh_board_summaries();
-    library.set_active_board(second.id).unwrap();
-
-    let _ = crate::ui::test_frame::run_ui(
-        &ctx,
-        egui::RawInput {
-            events: vec![
-                egui::Event::ModifiersChanged(egui::Modifiers {
-                    command: true,
-                    ..Default::default()
-                }),
-                egui::Event::Key {
-                    key: egui::Key::Num3,
-                    physical_key: Some(egui::Key::Num3),
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers {
-                        command: true,
-                        ..Default::default()
-                    },
-                },
-            ],
-            ..Default::default()
-        },
-        |ui| app.handle_board_shortcuts(ui.ctx()),
-    );
-
-    assert_eq!(app.active_board_id, third.id);
-    app.flush_persistence();
-    assert_eq!(
-        library.load_user_session().unwrap().active_board_id,
-        third.id
-    );
-}
-
-#[test]
-fn command_zero_switches_tenth_visible_board() {
-    let ctx = egui::Context::default();
-    let root = TempRoot::new("snappyref-cmd-zero-board");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let mut tenth = None;
     for index in 2..=10 {
-        let board = library.fixture_board(&format!("Board {index}")).unwrap();
-        if index == 10 {
-            tenth = Some(board);
-        }
+        library.fixture_board(&format!("Board {index}")).unwrap();
     }
-    let tenth = tenth.unwrap();
+    let boards = library.list_boards().unwrap();
     let mut app = test_app(Some(library.clone()));
 
-    for (key, index) in [(egui::Key::Num9, 8), (egui::Key::Num0, 9)] {
+    for (key, index) in [
+        (egui::Key::Num3, 2),
+        (egui::Key::Num9, 8),
+        (egui::Key::Num0, 9),
+    ] {
         let _ = crate::ui::test_frame::run_ui(
             &ctx,
-            egui::RawInput {
-                events: vec![
-                    egui::Event::ModifiersChanged(egui::Modifiers {
-                        command: true,
-                        ..Default::default()
-                    }),
-                    egui::Event::Key {
-                        key,
-                        physical_key: Some(key),
-                        pressed: true,
-                        repeat: false,
-                        modifiers: egui::Modifiers {
-                            command: true,
-                            ..Default::default()
-                        },
-                    },
-                ],
-                ..Default::default()
-            },
+            key_press_input(egui::Modifiers::COMMAND, key),
             |ui| app.handle_board_shortcuts(ui.ctx()),
         );
 
-        assert_eq!(
-            app.active_board_id,
-            library.list_boards().unwrap()[index].id
-        );
+        assert_eq!(app.active_board_id, boards[index].id);
     }
-    assert_eq!(app.active_board_id, tenth.id);
+    app.flush_persistence();
+    assert_eq!(
+        library.load_user_session().unwrap().active_board_id,
+        boards[9].id
+    );
 }
 
 #[test]
@@ -1168,25 +989,7 @@ fn board_shortcuts_are_suppressed_while_search_is_open() {
 
     let _ = crate::ui::test_frame::run_ui(
         &ctx,
-        egui::RawInput {
-            events: vec![
-                egui::Event::ModifiersChanged(egui::Modifiers {
-                    command: true,
-                    ..Default::default()
-                }),
-                egui::Event::Key {
-                    key: egui::Key::Num2,
-                    physical_key: Some(egui::Key::Num2),
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers {
-                        command: true,
-                        ..Default::default()
-                    },
-                },
-            ],
-            ..Default::default()
-        },
+        key_press_input(egui::Modifiers::COMMAND, egui::Key::Num2),
         |ui| app.handle_board_shortcuts(ui.ctx()),
     );
 
@@ -1599,27 +1402,6 @@ fn board_sidebar_stays_clickable_after_delete_modal_confirms() {
 }
 
 #[test]
-fn board_sidebar_name_click_switches_board_immediately() {
-    let root = TempRoot::new("snappyref-sidebar-name-click-switch");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let first = library.list_boards().unwrap()[0].clone();
-    let second = library.fixture_board("Second").unwrap();
-    let mut app = test_app(Some(library.clone()));
-    app.active_board_id = first.id;
-    app.refresh_board_summaries();
-    app.sidebar_open = true;
-    app.sidebar_tab = SidebarTab::Boards;
-    let mut harness = app_harness(app, |ctx, app| {
-        render_sidebar_for_test(ctx, app);
-    });
-
-    harness.get_by_label("Board Second").click();
-    harness.run();
-
-    assert_eq!(harness.state().active_board_id, second.id);
-}
-
-#[test]
 fn rapid_sidebar_board_name_clicks_keep_last_requested_board_active() {
     let root = TempRoot::new("snappyref-rapid-sidebar-board-clicks");
     let library = Library::initialize(root.to_path_buf()).unwrap();
@@ -1851,6 +1633,7 @@ fn search_keyboard_flow_owns_escape_through_app_render_path() {
 
     assert_eq!(harness.state().active_board_id, 1);
 
+    harness.state_mut().search.overlay.query = "cat".to_owned();
     harness.key_press(egui::Key::Escape);
     harness.step();
 

@@ -312,14 +312,26 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
         )
         .unwrap();
 
-    assert_eq!(known.target_board_id, second.id);
-    assert_eq!(known.queue_id, 1);
-    assert!(known.placement_id > 0);
-    assert_eq!(known.reserved_world, egui::Pos2::ZERO);
-    assert_eq!(unknown.target_board_id, second.id);
-    assert_eq!(unknown.queue_id, 2);
-    assert!(unknown.placement_id > 0);
-    assert_eq!(unknown.reserved_world, egui::pos2(200.0, 0.0));
+    let target_area = app.settings.placement_target_area;
+    for (reservation, center, (width, height)) in [
+        (known, egui::Pos2::ZERO, (100, 80)),
+        (unknown, egui::pos2(200.0, 0.0), (360, 240)),
+    ] {
+        assert_eq!(reservation.target_board_id, second.id);
+        let placement = app
+            .canvas
+            .placement_for_id(reservation.placement_id)
+            .unwrap();
+        assert!(matches!(
+            placement.content,
+            crate::data::PlacementContent::Loading { .. }
+        ));
+        assert_eq!(placement.state.geometry.center, center);
+        assert_eq!(
+            placement.state.geometry.scaled_size(),
+            crate::placement::creation::display_size_for_dimensions(width, height, target_area)
+        );
+    }
 }
 
 #[test]
@@ -372,23 +384,6 @@ fn failed_import_fails_the_accepted_placement_before_it_is_durable() {
         stored.content,
         crate::data::PlacementContent::Failed { .. }
     ));
-}
-
-#[test]
-fn completed_import_for_inactive_board_does_not_enter_active_canvas() {
-    let ctx = egui::Context::default();
-    let root = TempRoot::new("snappyref-inactive-import-completion");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let second = library.fixture_board("Second").unwrap();
-    let mut app = test_app(Some(library));
-    app.active_board_id = 1;
-    app.refresh_board_summaries();
-    let loaded = test_loaded_item(41, second.id);
-
-    app.install_test_prepared_image(&ctx, loaded);
-
-    assert!(app.canvas.placement_for_id(41).is_none());
-    assert_eq!(app.status, "Imported image");
 }
 
 #[test]

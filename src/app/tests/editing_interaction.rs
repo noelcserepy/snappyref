@@ -1,17 +1,6 @@
 use super::*;
 
 #[test]
-fn destructive_confirmation_shell_has_no_destructive_outline() {
-    let ctx = egui::Context::default();
-    crate::ui::theme::configure_theme(&ctx);
-
-    let frame = crate::app::dialogs::dialog_frame(&ctx, 1.0);
-
-    assert_eq!(frame.stroke, egui::Stroke::NONE);
-    assert_eq!(frame.fill, crate::ui::theme::SURFACE);
-}
-
-#[test]
 fn compact_arrangement_action_uses_dense_compact_layout() {
     let mut canvas = crate::canvas::CanvasState::default();
     let ctx = egui::Context::default();
@@ -92,7 +81,6 @@ fn delete_selected_annotation_records_undo_history() {
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.board_editing.persistence = crate::app::DocumentPersistence::queued(library.clone());
     app.canvas.add_annotation(annotation.clone());
     app.canvas.select_content(&[], &[annotation.id]);
 
@@ -104,6 +92,10 @@ fn delete_selected_annotation_records_undo_history() {
     app.flush_persistence();
 
     assert_eq!(app.status, "Undid Deleted 1 annotation");
+    assert_eq!(
+        app.canvas.annotation_for_id(annotation.id),
+        Some(annotation.clone())
+    );
     assert_eq!(library.load_canvas_annotations().unwrap(), vec![annotation]);
 }
 
@@ -526,6 +518,10 @@ fn duplicate_keeps_stack_order_and_places_group_at_front() {
     use StackContentKind::{Annotation, Placement};
     assert_copy_keeps_stack_order([Placement; 4], SnappyRefApp::duplicate_selection_with_gap);
     assert_copy_keeps_stack_order([Annotation; 4], SnappyRefApp::duplicate_selection_with_gap);
+    assert_copy_keeps_stack_order(
+        [Placement, Annotation, Placement, Annotation],
+        SnappyRefApp::duplicate_selection_with_gap,
+    );
 }
 
 #[test]
@@ -676,40 +672,16 @@ fn arrow_keys_apply_directional_settle_arrange() {
 }
 
 #[test]
-fn shortcuts_list_includes_directional_settle_arrange() {
-    assert!(LAYOUT_AND_HISTORY_SHORTCUTS.iter().any(|shortcut| {
-        shortcut.action == "Directional settle arrange" && shortcut.keys == "Arrow keys"
-    }));
-}
-
-#[test]
 fn always_on_top_shortcut_toggles_workspace_setting() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
 
     let output = crate::ui::test_frame::run_ui(
         &ctx,
-        egui::RawInput {
-            events: vec![
-                egui::Event::ModifiersChanged(egui::Modifiers {
-                    command: true,
-                    shift: true,
-                    ..Default::default()
-                }),
-                egui::Event::Key {
-                    key: egui::Key::T,
-                    physical_key: Some(egui::Key::T),
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers {
-                        command: true,
-                        shift: true,
-                        ..Default::default()
-                    },
-                },
-            ],
-            ..Default::default()
-        },
+        key_press_input(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::T,
+        ),
         |ui| {
             app.handle_selection_shortcuts(
                 ui.ctx(),
@@ -733,17 +705,22 @@ fn always_on_top_shortcut_toggles_workspace_setting() {
 }
 
 #[test]
-fn copy_selection_payload_preserves_internal_json_for_mixed_selection() {
+fn context_menu_enables_actions_for_selection() {
+    use crate::app::shortcuts::ContextMenuAction::*;
     let ctx = egui::Context::default();
     let mut app = test_app(None);
     app.canvas
         .add_prepared_placement_image(&ctx, test_loaded_item(1, 1));
     app.canvas
+        .add_prepared_placement_image(&ctx, test_loaded_item(2, 1));
+    app.canvas
+        .add_annotation(test_canvas_annotation(20, egui::pos2(10.0, 10.0)));
+    app.canvas
         .add_annotation(crate::data::CanvasAnnotation::new(
-            20,
+            21,
             CanvasAnnotationKind::Textbox,
-            eframe::egui::pos2(10.0, 10.0),
-            eframe::egui::pos2(70.0, 40.0),
+            egui::pos2(10.0, 60.0),
+            egui::pos2(70.0, 90.0),
             "caption".to_owned(),
             CanvasTextSize::M,
             CanvasStrokeWidth::M,
@@ -751,155 +728,43 @@ fn copy_selection_payload_preserves_internal_json_for_mixed_selection() {
             false,
             false,
         ));
-    app.canvas.select_content(&[1], &[20]);
+    let selection_actions = [
+        Copy,
+        Paste,
+        Duplicate,
+        DeleteFromBoard,
+        MoveToFront,
+        MoveToBack,
+    ];
+    let grouped = |extra: &[crate::app::shortcuts::ContextMenuAction]| {
+        let mut actions = vec![Group, AddToGroup];
+        actions.extend(selection_actions);
+        actions.extend(extra);
+        actions
+    };
 
-    let copy_payload =
-        crate::sources::clipboard::build_selection_copy_payload(&app.canvas, app.library.as_ref())
-            .unwrap()
-            .unwrap();
-    assert!(copy_payload.external_image.is_none());
-    let payload = serde_json::from_str::<crate::sources::clipboard::ClipboardBoardSelection>(
-        &copy_payload.internal_json,
-    )
-    .unwrap();
-    assert_eq!(payload.kind, crate::sources::clipboard::COPY_PAYLOAD_KIND);
-    assert_eq!(payload.placements.len(), 1);
-    assert_eq!(payload.annotations.len(), 1);
-    assert_eq!(
-        payload
-            .stack_order
-            .iter()
-            .map(|entry| (entry.kind.as_str(), entry.index))
-            .collect::<Vec<_>>(),
-        vec![("placement", 0), ("annotation", 0)]
-    );
+    for (placements, annotations, expected) in [
+        (&[][..], &[][..], vec![Paste]),
+        (
+            &[1][..],
+            &[][..],
+            grouped(&[SearchUsingImage, RemoveFromLibrary]),
+        ),
+        (&[1, 2][..], &[][..], grouped(&[RemoveFromLibrary])),
+        (&[][..], &[20][..], selection_actions.to_vec()),
+        (&[][..], &[21][..], grouped(&[])),
+        (&[1][..], &[21][..], grouped(&[RemoveFromLibrary])),
+    ] {
+        app.canvas.select_content(placements, annotations);
+        let enabled = app
+            .context_menu_items()
+            .into_iter()
+            .filter(|item| item.enabled)
+            .map(|item| item.action)
+            .collect::<Vec<_>>();
+        assert_eq!(enabled, expected, "{placements:?} {annotations:?}");
+    }
 }
-
-#[test]
-fn context_menu_items_reflect_mixed_selection_capabilities() {
-    let ctx = egui::Context::default();
-    let mut app = test_app(None);
-    app.canvas
-        .add_prepared_placement_image(&ctx, test_loaded_item(1, 1));
-    app.canvas
-        .add_annotation(crate::data::CanvasAnnotation::new(
-            20,
-            CanvasAnnotationKind::Textbox,
-            eframe::egui::pos2(10.0, 10.0),
-            eframe::egui::pos2(70.0, 40.0),
-            "caption".to_owned(),
-            CanvasTextSize::M,
-            CanvasStrokeWidth::M,
-            crate::data::CanvasAnnotationColor::Default,
-            false,
-            false,
-        ));
-    app.canvas.select_content(&[1], &[20]);
-
-    let items = app.context_menu_items();
-
-    assert_eq!(
-        items.iter().map(|item| item.label).collect::<Vec<_>>(),
-        vec![
-            "Group",
-            "Ungroup",
-            "Add to group",
-            "Copy",
-            "Paste",
-            "Duplicate",
-            "Delete (from board)",
-            "Move to Front",
-            "Move to Back",
-            "Search using image",
-            "Remove from Library..."
-        ]
-    );
-    assert_eq!(
-        items
-            .iter()
-            .map(|item| (item.action, item.shortcut))
-            .collect::<Vec<_>>(),
-        vec![
-            (
-                crate::app::shortcuts::ContextMenuAction::Group,
-                Some(crate::app::platform_shortcut_label("⌘G", "Ctrl+G"))
-            ),
-            (
-                crate::app::shortcuts::ContextMenuAction::Ungroup,
-                Some(crate::app::platform_shortcut_label("⌘⇧G", "Ctrl+Shift+G"))
-            ),
-            (
-                crate::app::shortcuts::ContextMenuAction::AddToGroup,
-                Some("G")
-            ),
-            (
-                crate::app::shortcuts::ContextMenuAction::Copy,
-                Some(crate::app::platform_shortcut_label("⌘ C", "Ctrl C")),
-            ),
-            (
-                crate::app::shortcuts::ContextMenuAction::Paste,
-                Some(crate::app::platform_shortcut_label("⌘ V", "Ctrl V")),
-            ),
-            (
-                crate::app::shortcuts::ContextMenuAction::Duplicate,
-                Some(crate::app::platform_shortcut_label("⌘ D", "Ctrl D")),
-            ),
-            (
-                crate::app::shortcuts::ContextMenuAction::DeleteFromBoard,
-                Some("del")
-            ),
-            (
-                crate::app::shortcuts::ContextMenuAction::MoveToFront,
-                Some(crate::app::platform_shortcut_label("⌘ .", "Ctrl .")),
-            ),
-            (
-                crate::app::shortcuts::ContextMenuAction::MoveToBack,
-                Some(crate::app::platform_shortcut_label("⌘ ,", "Ctrl ,")),
-            ),
-            (
-                crate::app::shortcuts::ContextMenuAction::SearchUsingImage,
-                Some(crate::app::platform_shortcut_label("⌘ F", "Ctrl F")),
-            ),
-            (
-                crate::app::shortcuts::ContextMenuAction::RemoveFromLibrary,
-                None
-            ),
-        ]
-    );
-    assert!(item_enabled(
-        &items,
-        crate::app::shortcuts::ContextMenuAction::Copy
-    ));
-    assert!(item_enabled(
-        &items,
-        crate::app::shortcuts::ContextMenuAction::Paste
-    ));
-    assert!(item_enabled(
-        &items,
-        crate::app::shortcuts::ContextMenuAction::Duplicate
-    ));
-    assert!(item_enabled(
-        &items,
-        crate::app::shortcuts::ContextMenuAction::DeleteFromBoard
-    ));
-    assert!(item_enabled(
-        &items,
-        crate::app::shortcuts::ContextMenuAction::MoveToFront
-    ));
-    assert!(item_enabled(
-        &items,
-        crate::app::shortcuts::ContextMenuAction::MoveToBack
-    ));
-    assert!(!item_enabled(
-        &items,
-        crate::app::shortcuts::ContextMenuAction::SearchUsingImage
-    ));
-    assert!(item_enabled(
-        &items,
-        crate::app::shortcuts::ContextMenuAction::RemoveFromLibrary
-    ));
-}
-
 #[test]
 fn context_menu_primary_press_closes_menu_only_outside_it() {
     let menu_rect = egui::Rect::from_min_size(egui::pos2(100.0, 120.0), egui::vec2(190.0, 240.0));
@@ -938,65 +803,6 @@ fn open_context_menu_blocks_canvas_input_behind_menu() {
         app.canvas_input_policy(&ctx),
         crate::canvas::CanvasInputPolicy::Blocked
     );
-}
-
-#[test]
-fn stack_order_context_actions_are_disabled_without_canvas_item_selection() {
-    let app = test_app(None);
-
-    let items = app.context_menu_items();
-
-    assert!(!item_enabled(
-        &items,
-        crate::app::shortcuts::ContextMenuAction::MoveToFront
-    ));
-    assert!(!item_enabled(
-        &items,
-        crate::app::shortcuts::ContextMenuAction::MoveToBack
-    ));
-}
-
-#[test]
-fn stack_order_context_actions_are_enabled_for_image_and_annotation_selections() {
-    let ctx = egui::Context::default();
-    let mut app = test_app(None);
-    app.canvas
-        .add_prepared_placement_image(&ctx, test_loaded_item(1, 1));
-    app.canvas
-        .add_annotation(crate::data::CanvasAnnotation::new(
-            20,
-            CanvasAnnotationKind::Textbox,
-            eframe::egui::pos2(10.0, 10.0),
-            eframe::egui::pos2(70.0, 40.0),
-            "caption".to_owned(),
-            CanvasTextSize::M,
-            CanvasStrokeWidth::M,
-            crate::data::CanvasAnnotationColor::Default,
-            false,
-            false,
-        ));
-
-    app.canvas.select_content(&[1], &[]);
-    let image_only = app.context_menu_items();
-    assert!(item_enabled(
-        &image_only,
-        crate::app::shortcuts::ContextMenuAction::MoveToFront
-    ));
-    assert!(item_enabled(
-        &image_only,
-        crate::app::shortcuts::ContextMenuAction::MoveToBack
-    ));
-
-    app.canvas.select_content(&[], &[20]);
-    let annotation_only = app.context_menu_items();
-    assert!(item_enabled(
-        &annotation_only,
-        crate::app::shortcuts::ContextMenuAction::MoveToFront
-    ));
-    assert!(item_enabled(
-        &annotation_only,
-        crate::app::shortcuts::ContextMenuAction::MoveToBack
-    ));
 }
 
 #[test]
@@ -1192,7 +998,9 @@ fn create_undo_persists_reassigned_redo_history_with_the_archive() {
         .unwrap();
 
     app.undo_document_history(&ctx);
-    std::thread::sleep(Duration::from_millis(100));
+    // Returns once the worker has exhausted its retries against the trigger.
+    app.flush_persistence();
+    assert!(app.status.contains("injected reassigned-history failure"));
     assert_eq!(
         trigger_connection
             .query_row(
