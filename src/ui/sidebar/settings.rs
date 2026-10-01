@@ -139,9 +139,7 @@ fn paint_semantic_search_settings_section(
     action
 }
 
-pub(super) fn semantic_search_status_copy(
-    status: &SemanticSearchSettingsStatus,
-) -> (String, &'static str) {
+fn semantic_search_status_copy(status: &SemanticSearchSettingsStatus) -> (String, &'static str) {
     match status {
         SemanticSearchSettingsStatus::Installed => {
             ("Installed".to_owned(), "Local search assets are ready.")

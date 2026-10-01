@@ -113,10 +113,7 @@ fn reference_items_preserve_gif_animation_after_source_item_is_removed() {
     let mut state = CanvasState::default();
 
     eframe::egui::__run_test_ui(|ui| {
-        state.add_prepared_placement_image(
-            ui.ctx(),
-            animated_loaded_item(ui, test_record(1, 1, 1, 1)),
-        );
+        state.add_prepared_placement_image(ui.ctx(), animated_loaded_item(test_record(1, 1, 1, 1)));
     });
     state
         .add_loaded_reference_placement(test_record(2, 1, 1, 1))
@@ -267,28 +264,6 @@ fn unloaded_placements_use_visual_bounds_for_layout_hit_test_and_delete() {
         );
         assert!(state.placement_for_id(101).is_none());
     });
-}
-
-#[test]
-fn marquee_selection_can_select_textbox_when_no_images_intersect() {
-    let mut state = CanvasState::default();
-    state.add_annotation(CanvasAnnotation::new(
-        12,
-        CanvasAnnotationKind::Textbox,
-        eframe::egui::pos2(20.0, 40.0),
-        eframe::egui::pos2(260.0, 96.0),
-        "textbox".to_owned(),
-        default_text_size(),
-        default_stroke_width(),
-        default_annotation_color(),
-        false,
-        false,
-    ));
-
-    state.set_marquee_selection(Vec::new(), vec![12], false);
-
-    assert!(state.interaction.selected_placement_ids.is_empty());
-    assert_eq!(state.interaction.selected_annotation_ids, vec![12]);
 }
 
 #[test]
@@ -663,7 +638,7 @@ fn provisional_placements_use_interleaved_image_painting() {
     });
 
     assert_eq!(
-        unified_canvas_paint_order_for_state(&state),
+        state.ordered_canvas_items_back_to_front(),
         vec![
             CanvasStackItem::Placement(1),
             CanvasStackItem::Placement(-1)

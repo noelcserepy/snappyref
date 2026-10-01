@@ -143,13 +143,6 @@ pub struct CanvasImagePreview {
     pub texture_size: egui::Vec2,
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default)]
-struct AnnotationPaintStats {
-    considered: usize,
-    drawn: usize,
-}
-
 #[derive(Clone)]
 pub(crate) struct PlacementScaleStart {
     placement_id: i64,

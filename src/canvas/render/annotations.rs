@@ -7,8 +7,6 @@ use crate::canvas::interaction::{
     annotation_screen_points, annotation_screen_rect, pending_annotation_from_draft,
 };
 use crate::canvas::{ANNOTATION_CULL_MARGIN_SCREEN, ActiveGesture, CanvasState, PendingAnnotation};
-#[cfg(test)]
-use crate::canvas::{AnnotationPaintStats, CanvasDocumentState};
 use crate::data::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationGeometry, CanvasAnnotationKind,
     CanvasStrokeWidth, CanvasTextSize,
@@ -223,31 +221,4 @@ fn paint_arrow_segment(
     let right = end - unit * head + egui::vec2(unit.y, -unit.x) * (head * 0.5);
     painter.line_segment([end, left], stroke);
     painter.line_segment([end, right], stroke);
-}
-#[cfg(test)]
-pub(crate) fn annotation_paint_stats_for_annotations(
-    annotations: &[CanvasAnnotation],
-    rect: egui::Rect,
-    pan: egui::Vec2,
-    zoom: f32,
-    cull_offscreen: bool,
-) -> AnnotationPaintStats {
-    let state = CanvasState {
-        pan,
-        zoom,
-        document: CanvasDocumentState {
-            annotations: annotations.to_vec(),
-            ..Default::default()
-        },
-        ..CanvasState::default()
-    };
-    let cull_rect = rect.expand(ANNOTATION_CULL_MARGIN_SCREEN);
-    let mut stats = AnnotationPaintStats::default();
-    for annotation in annotations {
-        stats.considered += 1;
-        if !cull_offscreen || annotation_should_paint(&state, rect, cull_rect, annotation) {
-            stats.drawn += 1;
-        }
-    }
-    stats
 }

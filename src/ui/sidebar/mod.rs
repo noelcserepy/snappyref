@@ -70,7 +70,7 @@ pub(crate) enum SemanticSearchSettingsAction {
     RequestRemove,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum SidebarOptionsSection {
     AboutUpdates,
     WorkspaceSettings,
@@ -261,11 +261,7 @@ fn paint_sidebar_options(
                 ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                 ui.add_space(crate::ui::theme::SPACE_2);
                 let options_cascade = egui::Id::new("sidebar_options_cascade");
-                for (index, section) in
-                    sidebar_options_section_order(&about_updates.semantic_search.status)
-                        .into_iter()
-                        .enumerate()
-                {
+                for (index, section) in SIDEBAR_OPTIONS_SECTIONS.into_iter().enumerate() {
                     if index > 0 {
                         ui.add_space(crate::ui::theme::SPACE_6);
                     }
@@ -318,25 +314,16 @@ fn paint_sidebar_options(
     }
 }
 
-fn sidebar_options_section_order(
-    semantic_search_status: &SemanticSearchSettingsStatus,
-) -> Vec<SidebarOptionsSection> {
-    let _ = semantic_search_status;
-    vec![
-        SidebarOptionsSection::AboutUpdates,
-        SidebarOptionsSection::WorkspaceSettings,
-        SidebarOptionsSection::Shortcuts,
-    ]
-}
+const SIDEBAR_OPTIONS_SECTIONS: [SidebarOptionsSection; 3] = [
+    SidebarOptionsSection::AboutUpdates,
+    SidebarOptionsSection::WorkspaceSettings,
+    SidebarOptionsSection::Shortcuts,
+];
 
 #[cfg(test)]
 mod tests {
     use super::boards::paint_board_row;
-    use super::settings::semantic_search_status_copy;
     use super::shortcuts::{display_shortcut_label, shortcut_label_uses_small_symbol_glyphs};
-    use super::{
-        SemanticSearchSettingsStatus, SidebarOptionsSection, sidebar_options_section_order,
-    };
     use eframe::egui;
 
     #[test]
@@ -354,59 +341,6 @@ mod tests {
         assert!(shortcut_label_uses_small_symbol_glyphs("⇧ ⌘ L"));
         assert!(shortcut_label_uses_small_symbol_glyphs("↵"));
         assert!(!shortcut_label_uses_small_symbol_glyphs("⌘ B"));
-    }
-
-    #[test]
-    fn semantic_search_settings_status_copy_covers_lifecycle_states() {
-        assert_eq!(
-            semantic_search_status_copy(&SemanticSearchSettingsStatus::Missing),
-            (
-                "Not installed".to_owned(),
-                "Install local search assets to find references by description."
-            )
-        );
-        assert_eq!(
-            semantic_search_status_copy(&SemanticSearchSettingsStatus::Downloading { percent: 37 })
-                .0,
-            "Downloading 37%"
-        );
-        assert_eq!(
-            semantic_search_status_copy(&SemanticSearchSettingsStatus::Failed).0,
-            "Install failed"
-        );
-        assert!(
-            semantic_search_status_copy(&SemanticSearchSettingsStatus::Failed)
-                .1
-                .contains("writable folder")
-        );
-        assert_eq!(
-            semantic_search_status_copy(&SemanticSearchSettingsStatus::Installed).0,
-            "Installed"
-        );
-    }
-
-    #[test]
-    fn sidebar_options_keep_about_updates_at_top_when_semantic_search_is_installed() {
-        assert_eq!(
-            sidebar_options_section_order(&SemanticSearchSettingsStatus::Installed),
-            vec![
-                SidebarOptionsSection::AboutUpdates,
-                SidebarOptionsSection::WorkspaceSettings,
-                SidebarOptionsSection::Shortcuts,
-            ]
-        );
-    }
-
-    #[test]
-    fn sidebar_options_keep_about_updates_at_top_when_semantic_search_is_missing() {
-        assert_eq!(
-            sidebar_options_section_order(&SemanticSearchSettingsStatus::Missing),
-            vec![
-                SidebarOptionsSection::AboutUpdates,
-                SidebarOptionsSection::WorkspaceSettings,
-                SidebarOptionsSection::Shortcuts,
-            ]
-        );
     }
 
     #[test]

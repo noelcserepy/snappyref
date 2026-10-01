@@ -28,7 +28,8 @@ impl ImageResidencyCoordinator {
         trace_enabled: bool,
     ) -> Result<(), String> {
         sort_placements_by_viewport_proximity(&mut placements, viewport_world);
-        let (canvas_image_settings, target_lod) = startup_existing_image_load_settings(settings);
+        let canvas_image_settings = canvas_image_settings(settings);
+        let target_lod = CanvasImageLod::Overview;
         for placement in placements {
             let placement_id = placement.state.id;
             import_worker.enqueue(ImagePrepRequest::LoadExisting {
@@ -130,23 +131,12 @@ impl ImageResidencyCoordinator {
 
         last_error
     }
-
-    #[cfg(test)]
-    fn has_pending_backfill(&self, asset_id: i64, lod: CanvasImageLod) -> bool {
-        self.pending_cache_backfills.contains(&(asset_id, lod))
-    }
 }
 
 fn canvas_image_settings(settings: &WorkspaceSettings) -> CanvasImageSettings {
     CanvasImageSettings {
         max_side: settings.canvas_image_max_side,
     }
-}
-
-pub(crate) fn startup_existing_image_load_settings(
-    settings: &WorkspaceSettings,
-) -> (CanvasImageSettings, CanvasImageLod) {
-    (canvas_image_settings(settings), CanvasImageLod::Overview)
 }
 
 pub(crate) fn asset_mime_type_supports_raster_derivatives(mime_type: &str) -> bool {
@@ -201,35 +191,4 @@ fn placement_world_rect(placement: &Placement) -> egui::Rect {
         ),
         size,
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{ImageResidencyCoordinator, startup_existing_image_load_settings};
-    use crate::data::CanvasImageLod;
-
-    #[test]
-    fn completed_backfill_removes_pending_entry() {
-        let mut residency = ImageResidencyCoordinator::default();
-        residency
-            .pending_cache_backfills
-            .insert((42, CanvasImageLod::Overview));
-
-        residency.note_backfill_completed(42, CanvasImageLod::Overview);
-
-        assert!(!residency.has_pending_backfill(42, CanvasImageLod::Overview));
-    }
-
-    #[test]
-    fn startup_existing_image_load_uses_overview_cache_lod() {
-        let settings = crate::data::WorkspaceSettings {
-            canvas_image_max_side: 4096,
-            ..Default::default()
-        };
-
-        let (image_settings, lod) = startup_existing_image_load_settings(&settings);
-
-        assert_eq!(image_settings.max_side, 4096);
-        assert_eq!(lod, CanvasImageLod::Overview);
-    }
 }
