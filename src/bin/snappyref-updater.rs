@@ -12,8 +12,8 @@
 //!    overwriting any prior backup;
 //! 5. moves the staged bundle into the current bundle's location, moving the
 //!    backup back if that fails;
-//! 6. relaunches the new app with the original launch args;
-//! 7. removes the staging directory.
+//! 6. relaunches the new app, or the restored one, with the original launch args;
+//! 7. removes the staging directory after a successful swap.
 //!
 //! Failures are written to stderr and exit with a non-zero code, never to a
 //! GUI dialog — the helper is a console process. Exit code 2 means the
@@ -67,6 +67,8 @@ mod macos {
     enum Failure {
         /// The installed path holds what it held before the helper ran.
         Failed(String),
+        /// Promotion failed and the prior app is back at the installed path.
+        Recovered(String),
         /// Promotion and restore both failed. The prior app is only at
         /// `backup`, which the helper leaves in place.
         RecoveryRequired { backup: PathBuf, reason: String },
@@ -81,7 +83,7 @@ mod macos {
     pub(super) fn main() -> ExitCode {
         match run() {
             Ok(()) => ExitCode::SUCCESS,
-            Err(Failure::Failed(reason)) => {
+            Err(Failure::Failed(reason) | Failure::Recovered(reason)) => {
                 eprintln!("snappyref-updater: {reason}");
                 ExitCode::FAILURE
             }
@@ -100,7 +102,17 @@ mod macos {
         let descriptor = descriptor::read(&descriptor_path).map_err(|error| error.to_string())?;
         let timeout = resolve_parent_wait_timeout();
         wait_for_parent_exit(descriptor.parent_pid, timeout);
-        apply_swap(&descriptor, |from, to| std::fs::rename(from, to))?;
+        match apply_swap(&descriptor, |from, to| std::fs::rename(from, to)) {
+            Ok(()) => {}
+            // The user clicked Restart, so bring back the restored app.
+            Err(Failure::Recovered(reason)) => {
+                return Err(Failure::Recovered(match relaunch(&descriptor) {
+                    Ok(()) => reason,
+                    Err(error) => format!("{reason}; {error}"),
+                }));
+            }
+            Err(failure) => return Err(failure),
+        }
         relaunch(&descriptor)?;
         cleanup_staging(&descriptor.staging_dir);
         Ok(())
@@ -216,7 +228,7 @@ mod macos {
             return Err(Failure::Failed(reason));
         }
         match rename(&backup_path, &descriptor.current_bundle) {
-            Ok(()) => Err(Failure::Failed(format!("{reason}; prior app restored"))),
+            Ok(()) => Err(Failure::Recovered(format!("{reason}; prior app restored"))),
             Err(restore_error) => Err(Failure::RecoveryRequired {
                 backup: backup_path,
                 reason: format!("{reason}; restoring prior app failed: {restore_error}"),

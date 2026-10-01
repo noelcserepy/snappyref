@@ -319,7 +319,8 @@ fn helper_rejects_malformed_descriptor() {
 }
 
 /// Moving the current bundle also removes this deliberately nested source path,
-/// causing the actual promotion rename to fail after backup succeeds.
+/// causing the actual promotion rename to fail after backup succeeds. The
+/// helper restores the prior app and relaunches it.
 #[test]
 fn helper_restores_current_bundle_when_promotion_fails() {
     let fixture = Fixture::new("9.9.9");
@@ -336,9 +337,12 @@ fn helper_restores_current_bundle_when_promotion_fails() {
     };
     let path = descriptor::default_path(&fixture.install_root);
     descriptor::write(&path, &value).unwrap();
+    let relaunch_script =
+        write_relaunch_override_script(&fixture.install_root, &fixture.relaunch_marker);
     let output = Command::new(env!("CARGO_BIN_EXE_snappyref-updater"))
         .arg(path)
         .env("SNAPPYREF_UPDATER_PARENT_WAIT_TIMEOUT_MS", "0")
+        .env("SNAPPYREF_UPDATER_RELAUNCH_PROGRAM", &relaunch_script)
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
@@ -346,6 +350,11 @@ fn helper_restores_current_bundle_when_promotion_fails() {
     assert_eq!(
         fs::read(fixture.current_bundle.join("Contents/MacOS/snappyref")).unwrap(),
         b"old-binary"
+    );
+    // The restored app relaunches in place of the new one.
+    assert!(
+        wait_for_marker(&fixture.relaunch_marker, Duration::from_secs(5)),
+        "restored app was not relaunched"
     );
     assert!(!fixture.backup_path().exists());
     assert_eq!(
