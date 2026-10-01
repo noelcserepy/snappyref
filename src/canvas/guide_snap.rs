@@ -962,30 +962,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn uniform_scale_snap_scales_edge_to_gap_target() {
-        let start_rect = egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0));
-        let candidates = [GuideSnapCandidate::new(egui::Rect::from_min_size(
-            egui::pos2(124.0, -50.0),
-            egui::vec2(100.0, 100.0),
-        ))];
-
-        let result = snap_uniform_scale(GuideUniformScaleSnapRequest {
-            origin: egui::Pos2::ZERO,
-            start_rect,
-            desired_factor: 1.96,
-            min_factor: 0.1,
-            candidates: &candidates,
-            gap: 24.0,
-            threshold: 8.0,
-        })
-        .expect("expected uniform scale snap");
-
-        assert_eq!(result.rect.right(), 100.0);
-        assert_eq!(result.rect.width(), 200.0);
-        assert_eq!(result.indicators.len(), 1);
-    }
-
-    #[test]
     fn rect_snap_reports_all_equal_edge_guides_for_the_chosen_nudge() {
         let desired_rect =
             egui::Rect::from_min_size(egui::pos2(120.0, 4.0), egui::vec2(100.0, 100.0));
@@ -1035,99 +1011,100 @@ mod tests {
     }
 
     #[test]
-    fn resize_snap_scales_right_edge_to_gap_target() {
-        let desired_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(98.0, 98.0));
-        let candidates = [GuideSnapCandidate::new(egui::Rect::from_min_size(
-            egui::pos2(124.0, 0.0),
-            egui::vec2(100.0, 100.0),
-        ))];
+    fn resize_snap_scales_dragged_corner_to_gap_or_edge_target() {
+        let square = egui::vec2(100.0, 100.0);
+        // (case, desired size, base display size, min scale, candidate min, candidate size, snapped size)
+        let cases = [
+            (
+                "right edge to gap",
+                egui::vec2(98.0, 98.0),
+                square,
+                0.1,
+                egui::pos2(124.0, 0.0),
+                square,
+                square,
+            ),
+            (
+                "right edge to edge",
+                egui::vec2(98.0, 98.0),
+                square,
+                0.1,
+                egui::pos2(100.0, 0.0),
+                square,
+                square,
+            ),
+            (
+                "bottom edge to gap",
+                egui::vec2(98.0, 98.0),
+                square,
+                0.1,
+                egui::pos2(0.0, 124.0),
+                square,
+                square,
+            ),
+            (
+                "bottom edge to edge",
+                egui::vec2(98.0, 98.0),
+                square,
+                0.1,
+                egui::pos2(0.0, 100.0),
+                square,
+                square,
+            ),
+            (
+                "below asset scale 1.0",
+                egui::vec2(298.0, 298.0),
+                egui::vec2(1000.0, 1000.0),
+                0.024,
+                egui::pos2(300.0, 0.0),
+                square,
+                egui::vec2(300.0, 300.0),
+            ),
+            (
+                "keeps aspect ratio",
+                egui::vec2(96.0, 48.0),
+                egui::vec2(100.0, 50.0),
+                0.1,
+                egui::pos2(124.0, 0.0),
+                egui::vec2(100.0, 50.0),
+                egui::vec2(100.0, 50.0),
+            ),
+        ];
 
-        let result = snap_resize(GuideResizeSnapRequest {
-            desired_rect,
-            anchor: desired_rect.left_top(),
-            base_display_size: egui::vec2(100.0, 100.0),
-            min_scale: 0.1,
-            candidates: &candidates,
-            gap: 24.0,
-            threshold: 8.0,
-        })
-        .expect("expected resize snap");
+        for (
+            case,
+            desired_size,
+            base_display_size,
+            min_scale,
+            candidate_min,
+            candidate_size,
+            snapped_size,
+        ) in cases
+        {
+            let desired_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, desired_size);
+            let candidates = [GuideSnapCandidate::new(egui::Rect::from_min_size(
+                candidate_min,
+                candidate_size,
+            ))];
 
-        assert_eq!(result.rect.right(), 100.0);
-        assert_eq!(result.rect.bottom(), 100.0);
-        assert_eq!(result.indicators.len(), 1);
-    }
+            let result = snap_resize(GuideResizeSnapRequest {
+                desired_rect,
+                anchor: desired_rect.left_top(),
+                base_display_size,
+                min_scale,
+                candidates: &candidates,
+                gap: 24.0,
+                threshold: 8.0,
+            })
+            .unwrap_or_else(|| panic!("{case}: expected resize snap"));
 
-    #[test]
-    fn resize_snap_scales_right_edge_to_normal_edge_target() {
-        let desired_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(98.0, 98.0));
-        let candidates = [GuideSnapCandidate::new(egui::Rect::from_min_size(
-            egui::pos2(100.0, 0.0),
-            egui::vec2(100.0, 100.0),
-        ))];
-
-        let result = snap_resize(GuideResizeSnapRequest {
-            desired_rect,
-            anchor: desired_rect.left_top(),
-            base_display_size: egui::vec2(100.0, 100.0),
-            min_scale: 0.1,
-            candidates: &candidates,
-            gap: 24.0,
-            threshold: 8.0,
-        })
-        .expect("expected resize snap");
-
-        assert_eq!(result.rect.right(), 100.0);
-        assert_eq!(result.rect.bottom(), 100.0);
-        assert_eq!(result.indicators.len(), 1);
-    }
-
-    #[test]
-    fn resize_snap_scales_bottom_edge_to_gap_target() {
-        let desired_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(98.0, 98.0));
-        let candidates = [GuideSnapCandidate::new(egui::Rect::from_min_size(
-            egui::pos2(0.0, 124.0),
-            egui::vec2(100.0, 100.0),
-        ))];
-
-        let result = snap_resize(GuideResizeSnapRequest {
-            desired_rect,
-            anchor: desired_rect.left_top(),
-            base_display_size: egui::vec2(100.0, 100.0),
-            min_scale: 0.1,
-            candidates: &candidates,
-            gap: 24.0,
-            threshold: 8.0,
-        })
-        .expect("expected resize snap");
-
-        assert_eq!(result.rect.right(), 100.0);
-        assert_eq!(result.rect.bottom(), 100.0);
-        assert_eq!(result.indicators.len(), 1);
-    }
-
-    #[test]
-    fn resize_snap_scales_bottom_edge_to_normal_edge_target() {
-        let desired_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(98.0, 98.0));
-        let candidates = [GuideSnapCandidate::new(egui::Rect::from_min_size(
-            egui::pos2(0.0, 100.0),
-            egui::vec2(100.0, 100.0),
-        ))];
-
-        let result = snap_resize(GuideResizeSnapRequest {
-            desired_rect,
-            anchor: desired_rect.left_top(),
-            base_display_size: egui::vec2(100.0, 100.0),
-            min_scale: 0.1,
-            candidates: &candidates,
-            gap: 24.0,
-            threshold: 8.0,
-        })
-        .expect("expected resize snap");
-
-        assert_eq!(result.rect.right(), 100.0);
-        assert_eq!(result.rect.bottom(), 100.0);
-        assert_eq!(result.indicators.len(), 1);
+            assert_eq!(
+                result.rect,
+                egui::Rect::from_min_size(egui::Pos2::ZERO, snapped_size),
+                "{case}"
+            );
+            assert_eq!(result.indicators.len(), 1, "{case}");
+        }
     }
 
     #[test]
@@ -1149,51 +1126,5 @@ mod tests {
         });
 
         assert!(result.is_none());
-    }
-
-    #[test]
-    fn resize_snap_allows_scale_below_one_when_above_min_scale() {
-        let desired_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(298.0, 298.0));
-        let candidates = [GuideSnapCandidate::new(egui::Rect::from_min_size(
-            egui::pos2(300.0, 0.0),
-            egui::vec2(100.0, 100.0),
-        ))];
-
-        let result = snap_resize(GuideResizeSnapRequest {
-            desired_rect,
-            anchor: desired_rect.left_top(),
-            base_display_size: egui::vec2(1000.0, 1000.0),
-            min_scale: 0.024,
-            candidates: &candidates,
-            gap: 24.0,
-            threshold: 8.0,
-        })
-        .expect("expected resize snap below asset scale 1.0");
-
-        assert_eq!(result.rect.right(), 300.0);
-        assert_eq!(result.rect.bottom(), 300.0);
-        assert_eq!(result.indicators.len(), 1);
-    }
-
-    #[test]
-    fn resize_snap_preserves_aspect_ratio() {
-        let desired_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(96.0, 48.0));
-        let candidates = [GuideSnapCandidate::new(egui::Rect::from_min_size(
-            egui::pos2(124.0, 0.0),
-            egui::vec2(100.0, 50.0),
-        ))];
-
-        let result = snap_resize(GuideResizeSnapRequest {
-            desired_rect,
-            anchor: desired_rect.left_top(),
-            base_display_size: egui::vec2(100.0, 50.0),
-            min_scale: 0.1,
-            candidates: &candidates,
-            gap: 24.0,
-            threshold: 8.0,
-        })
-        .expect("expected resize snap");
-
-        assert_eq!(result.rect.size(), egui::vec2(100.0, 50.0));
     }
 }

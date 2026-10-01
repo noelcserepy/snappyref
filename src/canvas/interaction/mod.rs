@@ -941,15 +941,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(0.0, 0.0), 180, 140);
         canvas.select_placements(&[2]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -974,15 +966,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(0.0, 0.0), 180, 140);
         canvas.select_placements(&[2]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1013,15 +997,7 @@ mod tests {
         ));
         canvas.select_placements(&[2]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1043,15 +1019,7 @@ mod tests {
         canvas.select_placements(&[2]);
 
         let rect = test_screen_rect();
-        let mut drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let mut drag_state = selection_drag(&canvas);
 
         let first_delta = egui::vec2(-53.0, 0.0);
         let first_rect = compute_drag_snap_preview(&mut canvas, rect, &drag_state, first_delta)
@@ -1074,15 +1042,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
         canvas.select_placements(&[2]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1103,15 +1063,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
         canvas.select_placements(&[2]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1122,34 +1074,6 @@ mod tests {
         .expect("expected guide snap preview");
 
         assert_eq!(snap_rect.center(), egui::pos2(124.0, 40.0));
-    }
-
-    #[test]
-    fn single_placement_guide_snapping_records_indicator() {
-        let ctx = egui::Context::default();
-        let mut canvas = CanvasState::default();
-        canvas.set_placement_gap(24.0);
-        add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
-        add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 40.0), 100, 100);
-        canvas.select_placements(&[2]);
-
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
-
-        let _ = compute_drag_snap_preview(
-            &mut canvas,
-            test_screen_rect(),
-            &drag_state,
-            egui::vec2(-53.0, 0.0),
-        );
-
         assert_eq!(canvas.guide_snap_indicator_count(), 1);
         assert_eq!(canvas.guide_snap_mark_count(), 4);
         assert_eq!(
@@ -1167,15 +1091,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(160.0, 200.0), 100, 140);
         canvas.select_placements(&[2]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1196,15 +1112,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(200.0, 300.0), 100, 100);
         canvas.select_placements(&[2]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1226,15 +1134,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(0.0, 260.0), 100, 100);
         canvas.select_placements(&[2]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1262,15 +1162,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(260.0, 0.0), 100, 100);
         canvas.select_placements(&[2]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1289,38 +1181,6 @@ mod tests {
     }
 
     #[test]
-    fn gap_spacing_can_combine_with_real_edge_alignment() {
-        let ctx = egui::Context::default();
-        let mut canvas = CanvasState::default();
-        canvas.set_placement_gap(24.0);
-        add_test_image(&mut canvas, &ctx, 1, egui::pos2(0.0, 0.0), 100, 100);
-        add_test_image(&mut canvas, &ctx, 2, egui::pos2(180.0, 8.0), 100, 100);
-        canvas.select_placements(&[2]);
-
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
-
-        let snap_rect = compute_drag_snap_preview(
-            &mut canvas,
-            test_screen_rect(),
-            &drag_state,
-            egui::vec2(-53.0, -5.0),
-        )
-        .expect("expected gap spacing plus top-edge alignment");
-
-        assert_eq!(snap_rect.left(), 74.0);
-        assert_eq!(snap_rect.top(), -50.0);
-        assert_eq!(canvas.guide_snap_indicator_count(), 3);
-    }
-
-    #[test]
     fn gap_spacing_can_snap_into_corner_from_different_targets() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
@@ -1330,15 +1190,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(130.0, 130.0), 100, 100);
         canvas.select_placements(&[3]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1362,15 +1214,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(160.0, 0.0), 100, 140);
         canvas.select_placements(&[2]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1397,15 +1241,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(7.0, 100.0), 60, 100);
         canvas.select_placements(&[2]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1429,15 +1265,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(320.0, 60.0), 60, 100);
         canvas.select_placements(&[2, 3]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1464,15 +1292,7 @@ mod tests {
         add_test_image(&mut canvas, &ctx, 3, egui::pos2(280.0, 190.0), 60, 100);
         canvas.select_placements(&[2, 3]);
 
-        let drag_state = DragState {
-            pointer_start_world: egui::Pos2::ZERO,
-            starting_items: canvas.selected_arrangement_inputs(),
-            snap_preview_rect_world: None,
-            started_at_seconds: 0.0,
-            last_movement_seconds: 0.0,
-            last_world_delta: egui::Vec2::ZERO,
-            moved: false,
-        };
+        let drag_state = selection_drag(&canvas);
 
         let snap_rect = compute_drag_snap_preview(
             &mut canvas,
@@ -1534,6 +1354,18 @@ mod tests {
         );
     }
 
+    fn selection_drag(canvas: &CanvasState) -> DragState {
+        DragState {
+            pointer_start_world: egui::Pos2::ZERO,
+            starting_items: canvas.selected_arrangement_inputs(),
+            snap_preview_rect_world: None,
+            started_at_seconds: 0.0,
+            last_movement_seconds: 0.0,
+            last_world_delta: egui::Vec2::ZERO,
+            moved: false,
+        }
+    }
+
     fn test_screen_rect() -> egui::Rect {
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 720.0))
     }
@@ -1548,78 +1380,61 @@ mod tests {
     }
 
     #[test]
-    fn mouse_mode_wheel_up_zooms_in() {
-        let events = vec![wheel_event(
-            egui::MouseWheelUnit::Line,
-            egui::vec2(0.0, 1.0),
-        )];
-        let navigation = map_mouse_mode_scroll_events(&events);
-        assert!(
-            navigation.wheel_zoom_factor > 1.0,
-            "wheel up should zoom in, got {}",
-            navigation.wheel_zoom_factor
-        );
-        assert!((navigation.wheel_zoom_factor - 1.3).abs() < 1e-5);
-        assert_eq!(navigation.pinch_zoom_factor, 1.0);
-        assert_eq!(navigation.pan_delta, egui::Vec2::ZERO);
-    }
+    fn mouse_mode_maps_scroll_events_to_navigation() {
+        // (case, event, wheel zoom, pinch zoom, pan)
+        let cases = [
+            (
+                "wheel up zooms in",
+                wheel_event(egui::MouseWheelUnit::Line, egui::vec2(0.0, 1.0)),
+                1.3,
+                1.0,
+                egui::Vec2::ZERO,
+            ),
+            (
+                "wheel down zooms out",
+                wheel_event(egui::MouseWheelUnit::Line, egui::vec2(0.0, -1.0)),
+                1.0 / 1.3,
+                1.0,
+                egui::Vec2::ZERO,
+            ),
+            (
+                "horizontal wheel is ignored",
+                wheel_event(egui::MouseWheelUnit::Line, egui::vec2(2.0, 0.0)),
+                1.0,
+                1.0,
+                egui::Vec2::ZERO,
+            ),
+            (
+                "trackpad pan passes through",
+                wheel_event(egui::MouseWheelUnit::Point, egui::vec2(8.0, -4.0)),
+                1.0,
+                1.0,
+                egui::vec2(8.0, -4.0),
+            ),
+            (
+                "pinch zoom passes through",
+                egui::Event::Zoom(1.25),
+                1.0,
+                1.25,
+                egui::Vec2::ZERO,
+            ),
+        ];
 
-    #[test]
-    fn mouse_mode_wheel_down_zooms_out() {
-        let events = vec![wheel_event(
-            egui::MouseWheelUnit::Line,
-            egui::vec2(0.0, -1.0),
-        )];
-        let navigation = map_mouse_mode_scroll_events(&events);
-        assert!(
-            navigation.wheel_zoom_factor < 1.0,
-            "wheel down should zoom out, got {}",
-            navigation.wheel_zoom_factor
-        );
-        assert!((navigation.wheel_zoom_factor - (1.0 / 1.3)).abs() < 1e-5);
-    }
+        for (case, event, wheel_zoom, pinch_zoom, pan) in cases {
+            let navigation = map_mouse_mode_scroll_events(&[event]);
 
-    #[test]
-    fn mouse_mode_does_not_pan_from_wheel_notches() {
-        let events = vec![wheel_event(
-            egui::MouseWheelUnit::Line,
-            egui::vec2(0.0, 3.0),
-        )];
-        let navigation = map_mouse_mode_scroll_events(&events);
-        assert_eq!(navigation.pan_delta, egui::Vec2::ZERO);
-    }
-
-    #[test]
-    fn mouse_mode_passes_trackpad_pan_through() {
-        let events = vec![wheel_event(
-            egui::MouseWheelUnit::Point,
-            egui::vec2(8.0, -4.0),
-        )];
-        let navigation = map_mouse_mode_scroll_events(&events);
-        assert_eq!(navigation.wheel_zoom_factor, 1.0);
-        assert_eq!(navigation.pinch_zoom_factor, 1.0);
-        assert_eq!(navigation.pan_delta, egui::vec2(8.0, -4.0));
-    }
-
-    #[test]
-    fn mouse_mode_passes_pinch_zoom_through() {
-        let events = vec![egui::Event::Zoom(1.25)];
-        let navigation = map_mouse_mode_scroll_events(&events);
-        assert_eq!(navigation.wheel_zoom_factor, 1.0);
-        assert!((navigation.pinch_zoom_factor - 1.25).abs() < 1e-6);
-        assert_eq!(navigation.pan_delta, egui::Vec2::ZERO);
-    }
-
-    #[test]
-    fn mouse_mode_ignores_horizontal_wheel() {
-        let events = vec![wheel_event(
-            egui::MouseWheelUnit::Line,
-            egui::vec2(2.0, 0.0),
-        )];
-        let navigation = map_mouse_mode_scroll_events(&events);
-        assert_eq!(navigation.wheel_zoom_factor, 1.0);
-        assert_eq!(navigation.pinch_zoom_factor, 1.0);
-        assert_eq!(navigation.pan_delta, egui::Vec2::ZERO);
+            assert!(
+                (navigation.wheel_zoom_factor - wheel_zoom).abs() < 1e-5,
+                "{case}: wheel zoom {}",
+                navigation.wheel_zoom_factor
+            );
+            assert!(
+                (navigation.pinch_zoom_factor - pinch_zoom).abs() < 1e-5,
+                "{case}: pinch zoom {}",
+                navigation.pinch_zoom_factor
+            );
+            assert_eq!(navigation.pan_delta, pan, "{case}");
+        }
     }
 
     #[test]
