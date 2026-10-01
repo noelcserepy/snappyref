@@ -92,9 +92,17 @@ jobs:
           cache-bin: false
           save-if: true
 
+      # The source ref may predate the action, so load it from this workflow's commit.
+      - uses: actions/checkout@v4
+        if: ${{ inputs.build_profile == 'release' }}
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: workflow-actions
+          sparse-checkout: .github/actions
+
       - name: Install libjpeg-turbo
         if: ${{ inputs.build_profile == 'release' }}
-        uses: ./.github/actions/install-turbojpeg-windows
+        uses: ./workflow-actions/.github/actions/install-turbojpeg-windows
 
       - name: Resolve Semantic Search descriptor
         shell: bash

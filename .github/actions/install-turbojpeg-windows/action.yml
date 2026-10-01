@@ -7,7 +7,12 @@ runs:
       run: |
         $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
         $vcpkgTriplet = "x64-windows-static-md"
-        git clone https://github.com/microsoft/vcpkg.git $vcpkgRoot
+        # Pinned to libjpeg-turbo 3.1.4.1. Later ports link PNG support against
+        # separate libspng and zlib libraries that turbojpeg-sys does not link.
+        $vcpkgCommit = "81b02e92500190bbcce345a06aa86f396074e20e"
+        git init --quiet $vcpkgRoot
+        git -C $vcpkgRoot fetch --quiet --depth 1 https://github.com/microsoft/vcpkg.git $vcpkgCommit
+        git -C $vcpkgRoot checkout --quiet FETCH_HEAD
         & "$vcpkgRoot\bootstrap-vcpkg.bat"
         & "$vcpkgRoot\vcpkg.exe" install "libjpeg-turbo:$vcpkgTriplet"
         "TURBOJPEG_SOURCE=explicit" | Out-File -FilePath $env:GITHUB_ENV -Append
