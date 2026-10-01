@@ -9,7 +9,6 @@ from pathlib import Path
 import re
 import subprocess
 import textwrap
-import urllib.request
 
 import semantic_model
 
@@ -65,11 +64,12 @@ def onnx_runtime_section(packages: list[dict]) -> str:
     if len(versions) != 1:
         raise ValueError(f'expected one ONNX Runtime version in ort-sys {ort_sys["version"]}, found {versions}')
     version = versions.pop()
-    texts = []
-    for name in ('LICENSE', 'ThirdPartyNotices.txt'):
-        url = f'https://raw.githubusercontent.com/microsoft/onnxruntime/v{version}/{name}'
-        with urllib.request.urlopen(url, timeout=60) as response:
-            texts.append(response.read().decode().strip())
+    vendored = LICENSES / f'onnxruntime-{version}'
+    if not vendored.is_dir():
+        raise ValueError(f'ort-sys {ort_sys["version"]} links ONNX Runtime {version}, but {vendored} is missing. '
+                         f'Replace the onnxruntime-* folder with LICENSE and ThirdPartyNotices.txt '
+                         f'from microsoft/onnxruntime v{version}.')
+    texts = [(vendored / name).read_text(encoding='utf-8').strip() for name in ('LICENSE', 'ThirdPartyNotices.txt')]
     return f'ONNX Runtime {version}, statically linked through the ort crate\n\n' + '\n\n'.join(texts)
 
 

@@ -17,8 +17,9 @@ ordinary app release zips.
   so an updated install keeps the notices file from its first install.
 - `scripts/third_party_notices.py` writes the notices during packaging from
   `cargo metadata --locked`, so they follow `Cargo.lock` without a regeneration
-  step. It needs network access for the ONNX Runtime notices and fails when a
-  crate ships no license file and offers no license in `assets/licenses/`.
+  step. It fails when a crate ships no license file and offers no license in
+  `assets/licenses/`, or when ort-sys links an ONNX Runtime version other than
+  the vendored `assets/licenses/onnxruntime-<version>/`.
 - Release zips must not contain `library/`, `models/`, `UPDATE.txt`, or any
   user-owned data.
 - The **Local Model Store** is acquired separately by Semantic Search install
