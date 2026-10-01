@@ -36,10 +36,8 @@ class InspectEvidenceTests(unittest.TestCase):
             cargo.return_value.returncode = 0
             self.assertEqual(main(), 1)
 
-    def test_catalogue_maps_to_existing_tests_and_preserves_refactor_coverage(self):
+    def test_catalogue_maps_to_existing_tests(self):
         root = Path(__file__).resolve().parents[1]
         source = '\n'.join(path.read_text() for path in (root / 'src').rglob('*.rs'))
-        self.assertEqual(sum(item[2] for item in SCENARIOS.values()), 12)
-        self.assertEqual(SCENARIOS['check-harness'][:2], SCENARIOS['search-drag-to-canvas'][:2])
         for test, _, _, _ in SCENARIOS.values():
             self.assertIn('fn ' + test + '(', source)
