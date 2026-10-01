@@ -121,3 +121,6 @@ rules. Product contracts live under [.specs/](.specs/).
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+Third-party licenses are in `THIRD_PARTY_NOTICES.txt`, next to `snappyref.exe`
+on Windows and in `SnappyRef.app/Contents/Resources` on macOS.

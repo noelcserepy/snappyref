@@ -23,8 +23,9 @@ class ReleasePackagingTests(unittest.TestCase):
                 with zipfile.ZipFile(root / f'snappyref-{platform}-app.zip', 'w') as archive:
                     if platform == 'windows':
                         archive.writestr('SnappyRef/snappyref.exe', b'fixture executable' + struct.pack('<IIII', 0xFEEF04BD, 0x10000, 2, 0))
+                        archive.writestr('SnappyRef/THIRD_PARTY_NOTICES.txt', b'fixture')
                     else:
-                        for name in ('MacOS/snappyref', 'MacOS/snappyref-updater'):
+                        for name in ('MacOS/snappyref', 'MacOS/snappyref-updater', 'Resources/THIRD_PARTY_NOTICES.txt'):
                             archive.writestr('SnappyRef/SnappyRef.app/Contents/' + name, b'fixture')
                         archive.writestr('SnappyRef/SnappyRef.app/Contents/Info.plist', plistlib.dumps(dict(CFBundleVersion='0.2.0', CFBundleShortVersionString='0.2.0')))
                         archive.write(ROOT / 'assets/app-icon/snappyref.icns', 'SnappyRef/SnappyRef.app/Contents/Resources/snappyref.icns')
@@ -48,8 +49,8 @@ class ReleasePackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             archive_path = Path(scratch) / 'app.zip'
             prefix = 'SnappyRef/SnappyRef.app/Contents/'
-            required = ['MacOS/snappyref', 'MacOS/snappyref-updater',
-                        'Info.plist', 'Resources/snappyref.icns']
+            required = ['MacOS/snappyref', 'MacOS/snappyref-updater', 'Info.plist',
+                        'Resources/snappyref.icns', 'Resources/THIRD_PARTY_NOTICES.txt']
             for missing in required:
                 with zipfile.ZipFile(archive_path, 'w') as archive:
                     for name in required:
@@ -108,10 +109,11 @@ class DescriptorUrlTests(unittest.TestCase):
             root = Path(scratch)
             archive = root / 'input.zip'
             output = root / 'output.zip'
-            for names, valid in ((['SnappyRef/snappyref.exe'], True), (['snappyref.exe'], False),
-                                 (['SnappyRef/snappyref.exe', 'SnappyRef/UPDATE.txt'], False),
-                                 (['SnappyRef/snappyref.exe', 'SnappyRef/../outside'], False),
-                                 *[(['SnappyRef/snappyref.exe', name], False) for name in
+            app = ['SnappyRef/snappyref.exe', 'SnappyRef/THIRD_PARTY_NOTICES.txt']
+            for names, valid in ((app, True), (['snappyref.exe'], False), (app[:1], False),
+                                 ([*app, 'SnappyRef/UPDATE.txt'], False),
+                                 ([*app, 'SnappyRef/../outside'], False),
+                                 *[([*app, name], False) for name in
                                    ('SnappyRef/library.db', 'SnappyRef/library/item',
                                     'SnappyRef/originals/item', 'SnappyRef/thumbs/item',
                                     'SnappyRef/models/model', 'SnappyRef/snappyref.exe',
@@ -143,6 +145,8 @@ class ModelBundleTests(unittest.TestCase):
             semantic_model.check(output)
             with zipfile.ZipFile(output) as archive:
                 entries = {name: archive.read(name) for name in archive.namelist()}
+            for name in ('LICENSE', 'NOTICE'):
+                self.assertTrue(entries[f'models/{semantic_model.MODEL_KEY}/{name}'])
             asset = f'models/{semantic_model.MODEL_KEY}/tokenizer.json'
             for replacement in (None, b'changed'):
                 with zipfile.ZipFile(output, 'w') as archive:
