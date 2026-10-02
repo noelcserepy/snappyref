@@ -95,8 +95,9 @@ pub(crate) const TOGGLE_SIDEBAR: Shortcut = &[Key::Command, Key::Named("B")];
 
 pub(crate) const NEW_BOARD: Shortcut = &[Key::Command, Key::Named("N")];
 pub(crate) const TOGGLE_ALWAYS_ON_TOP: Shortcut = &[Key::Command, Key::Shift, Key::Named("T")];
-/// Command plus a board's digit switches to it.
-pub(crate) const SWITCH_BOARD: Shortcut = &[Key::Command, Key::Gesture("digit")];
+/// Command plus a board's digit switches to it. The Boards header shows
+/// this modifier; each row's digit cap shows the rest.
+pub(crate) const SWITCH_BOARD: Shortcut = &[Key::Command];
 /// Board N's digit in sidebar order; the tenth board takes 0.
 pub(crate) const BOARD_DIGITS: [Key; 10] = [
     Key::Named("1"),

@@ -22,8 +22,8 @@ pub(crate) enum Key {
     Down,
     /// A key named by its cap: a letter, digit, punctuation mark, or word.
     Named(&'static str),
-    /// A pointer gesture held with the keys, or a family of keys such as
-    /// "digit". It follows a bare "+", unchipped.
+    /// A pointer gesture held with the keys. It follows a bare "+",
+    /// unchipped.
     Gesture(&'static str),
 }
 
