@@ -812,7 +812,7 @@ fn context_click_uses_frontmost_mixed_canvas_stack_item() {
 }
 
 #[test]
-fn selected_canvas_item_moves_to_absolute_front_and_back() {
+fn selected_canvas_items_bring_to_front_and_send_to_back() {
     let mut state = CanvasState::default();
     eframe::egui::__run_test_ui(|ui| {
         push_test_image(ui, &mut state, 1, 80, 80, 1.0, eframe::egui::pos2(0.0, 0.0));
@@ -837,7 +837,7 @@ fn selected_canvas_item_moves_to_absolute_front_and_back() {
     ]);
     state.select_content(&[1], &[]);
 
-    assert!(state.move_selected_canvas_items_to_front());
+    assert!(state.bring_selection_to_front());
     assert_eq!(
         state.ordered_canvas_items_back_to_front(),
         vec![
@@ -847,7 +847,7 @@ fn selected_canvas_item_moves_to_absolute_front_and_back() {
         ]
     );
 
-    assert!(state.move_selected_canvas_items_to_back());
+    assert!(state.send_selection_to_back());
     assert_eq!(
         state.ordered_canvas_items_back_to_front(),
         vec![
@@ -889,7 +889,7 @@ fn mixed_selected_canvas_items_move_as_ordered_block() {
     ]);
     state.select_content(&[3, 1], &[20]);
 
-    assert!(state.move_selected_canvas_items_to_front());
+    assert!(state.bring_selection_to_front());
     assert_eq!(
         state.ordered_canvas_items_back_to_front(),
         vec![
@@ -901,7 +901,7 @@ fn mixed_selected_canvas_items_move_as_ordered_block() {
         ]
     );
 
-    assert!(state.move_selected_canvas_items_to_back());
+    assert!(state.send_selection_to_back());
     assert_eq!(
         state.ordered_canvas_items_back_to_front(),
         vec![

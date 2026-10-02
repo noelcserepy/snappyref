@@ -166,7 +166,7 @@ impl BoardEditing {
         context.reload(outcome.reload)?;
         Ok(outcome.status)
     }
-    pub(crate) fn move_selection_in_stack(
+    pub(crate) fn restack_selection(
         &mut self,
         canvas: &mut crate::canvas::CanvasState,
         board_id: i64,
@@ -174,18 +174,18 @@ impl BoardEditing {
     ) -> Result<(), String> {
         let before = canvas.canvas_stack_order();
         let changed = if front {
-            canvas.move_selected_canvas_items_to_front()
+            canvas.bring_selection_to_front()
         } else {
-            canvas.move_selected_canvas_items_to_back()
+            canvas.send_selection_to_back()
         };
         if changed {
             self.history.record_applied(
                 board_id,
                 HistoryAction::document(
                     if front {
-                        "Move selection to front"
+                        "Bring selection to front"
                     } else {
-                        "Move selection to back"
+                        "Send selection to back"
                     }
                     .to_owned(),
                     Vec::new(),
