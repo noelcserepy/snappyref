@@ -445,6 +445,7 @@ impl CanvasState {
     }
 
     pub(super) fn show_group_picker(&mut self, ctx: &egui::Context) {
+        use crate::ui::shortcut::{self, Key};
         use crate::ui::theme;
         let Some(mut picker) = self.interaction.group_picker.take() else {
             return;
@@ -468,16 +469,7 @@ impl CanvasState {
             ))
             .show(ctx, |ui| {
                 ui.set_opacity(entrance);
-                egui::Frame::new()
-                    .fill(theme::PALETTE_SURFACE)
-                    .stroke(egui::Stroke::NONE)
-                    .corner_radius(theme::RADIUS_PANEL)
-                    .shadow(egui::epaint::Shadow {
-                        offset: [0, 12],
-                        blur: 40,
-                        spread: 0,
-                        color: egui::Color32::from_black_alpha(180),
-                    })
+                crate::ui::card::frame()
                     .inner_margin(theme::SPACE_4)
                     .show(ui, |ui| {
                         ui.set_width(width - theme::SPACE_4 * 2.0);
@@ -579,12 +571,9 @@ impl CanvasState {
                         }
                         ui.separator();
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new("↑ ↓  choose    enter  confirm")
-                                    .monospace()
-                                    .small()
-                                    .color(theme::TEXT_SUBTLE),
-                            );
+                            ui.spacing_mut().item_spacing.x = shortcut::HINT_GAP;
+                            shortcut::hint(ui, &[Key::Up, Key::Down], "Choose");
+                            shortcut::hint(ui, &[Key::Enter], "Confirm");
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {

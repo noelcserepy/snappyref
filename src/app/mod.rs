@@ -37,7 +37,8 @@ use shortcuts::{
     delete_shortcut_pressed, settle_direction_pressed, shortcut_pressed,
 };
 pub(crate) use shortcuts::{
-    CORE_SHORTCUTS, LAYOUT_AND_HISTORY_SHORTCUTS, SupportedShortcut, platform_shortcut_label,
+    BOARD_SHORTCUTS, CORE_SHORTCUTS, LAYOUT_AND_HISTORY_SHORTCUTS, SupportedShortcut,
+    TOGGLE_SIDEBAR, UNGROUP,
 };
 
 #[derive(Clone, Debug)]

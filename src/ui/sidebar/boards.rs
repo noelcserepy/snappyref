@@ -1,11 +1,13 @@
 use eframe::egui;
 
-use super::{SidebarBoardAction, shortcuts};
+use super::SidebarBoardAction;
+use crate::app::BOARD_SHORTCUTS;
+use crate::ui::shortcut::{self, Shortcut};
 
 /// Paints the Boards Tab navigation list.
 ///
 /// Board rows are a product-specific navigation pattern: text-first, compact,
-/// active rail + quiet fill, bare shortcut metadata, and a destructive delete
+/// active rail + quiet fill, shortcut key chips, and a destructive delete
 /// affordance that stays quiet until the row is hot. Do not reuse this row
 /// painter for generic lists; it assumes board switching, renaming, deletion,
 /// and stable row geometry are all part of the same interaction.
@@ -38,7 +40,7 @@ pub(super) fn paint_sidebar_boards(
                             if index > 0 {
                                 ui.add_space(crate::ui::theme::SPACE_1);
                             }
-                            let shortcut = board_shortcut_hint(index);
+                            let shortcut = BOARD_SHORTCUTS.get(index).copied();
                             let active = summary.board.id == active_board_id;
                             let reveal = crate::ui::motion::cascade_reveal_on_appear(
                                 ui.ctx(),
@@ -55,7 +57,7 @@ pub(super) fn paint_sidebar_boards(
                                         &summary.board.name,
                                         &placement_count_label(summary.placement_count),
                                         active,
-                                        shortcut.as_deref(),
+                                        shortcut,
                                         forced_hover_index == Some(index),
                                         reveal.rise,
                                     )
@@ -138,7 +140,7 @@ pub(super) fn paint_board_row(
     name: &str,
     detail: &str,
     active: bool,
-    shortcut: Option<&str>,
+    shortcut: Option<Shortcut>,
     forced_hover: bool,
     rise: f32,
 ) -> Option<BoardRowAction> {
@@ -276,19 +278,14 @@ pub(super) fn paint_board_row(
             egui::TextStyle::Small.resolve(ui.style()),
             crate::ui::theme::DESTRUCTIVE,
         );
-    } else if let Some(shortcut) = shortcut {
-        let font = ui.style().text_styles[&egui::TextStyle::Small].clone();
-        let galley = ui.painter().layout_no_wrap(
-            shortcuts::display_shortcut_label(shortcut),
-            font,
-            crate::ui::theme::TEXT_SUBTLE,
+    } else if let Some(keys) = shortcut {
+        shortcut::paint(
+            ui.painter(),
+            egui::pos2(action_rect.right(), rect.center().y + rise + press * 0.5),
+            egui::Align2::RIGHT_CENTER,
+            keys,
+            crate::ui::theme::TEXT_MUTED,
         );
-        let pos = egui::pos2(
-            action_rect.right() - galley.size().x,
-            rect.center().y - galley.size().y * 0.5 + rise + press * 0.5,
-        );
-        ui.painter()
-            .galley(pos, galley, crate::ui::theme::TEXT_SUBTLE);
     }
     if delete_hot && delete_response.clicked() {
         Some(BoardRowAction::Delete)
@@ -353,14 +350,5 @@ fn placement_count_label(count: usize) -> String {
     match count {
         1 => "1 image".to_owned(),
         _ => format!("{count} images"),
-    }
-}
-
-fn board_shortcut_hint(index: usize) -> Option<String> {
-    let modifier = shortcuts::platform_command_modifier_name();
-    match index {
-        0..=8 => Some(format!("{modifier}+{}", index + 1)),
-        9 => Some(format!("{modifier}+0")),
-        _ => None,
     }
 }

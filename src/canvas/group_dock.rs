@@ -1,14 +1,12 @@
-//! The Group card is 264 px wide with 12 px padding and 14 px section gaps; the
-//! member dock uses 34 px rows. Both use 30 px controls and a 14 px radius.
-//! Keep these local exceptions here; shared color and motion meanings come from ui.
+//! The Group card sets the shared card vocabulary in `ui::card`. Its width,
+//! align pad, and icon set are its own and stay here.
 use super::CanvasState;
 use crate::data::{GapMode, GroupFlow};
 use crate::grouping::{Board, Control, Dock, Member, MemberKind, Panel, State};
 use crate::placement::group_pixels::{Pixels, config};
-use crate::ui::{motion, theme};
+use crate::ui::card::{self, bed, cell, ink, tip};
+use crate::ui::{motion, shortcut, theme};
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Response, Sense, Stroke, Vec2};
-
-const SEPARATOR: Color32 = Color32::from_rgb(0x2a, 0x28, 0x26);
 
 impl CanvasState {
     pub(crate) fn current_group_dock(&self) -> Dock {
@@ -185,9 +183,9 @@ impl CanvasState {
             viewport.center().y,
         );
         // Short windows scroll the card instead of pushing controls offscreen.
-        let max_height = viewport.height() - 32.0 - 2.0 * CARD_PADDING;
+        let max_height = viewport.height() - 32.0 - 2.0 * card::PADDING;
         let bounds = overlay(ui.ctx(), pos, progress, active, |ui| {
-            panel(14).inner_margin(CARD_PADDING as i8).show(ui, |ui| {
+            card::frame().show(ui, |ui| {
                 ui.set_width(CARD_INNER);
                 // An Area offers last frame's size, which would never let the card grow back.
                 ui.set_max_height(max_height);
@@ -195,7 +193,7 @@ impl CanvasState {
                     .id_salt("group-card-scroll")
                     .show(ui, |ui| {
                         ui.set_width(CARD_INNER);
-                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+                        ui.spacing_mut().item_spacing = card::ITEM_SPACING;
                         match &absolute {
                             Some(absolute) => member_card(ui, &model, &group, absolute, &mut input),
                             None => group_card(ui, &model, &group, &mut input),
@@ -232,14 +230,12 @@ impl CanvasState {
 
 const CARD: &str = "group-card";
 const CARD_WIDTH: f32 = 264.0;
-const CARD_PADDING: f32 = 12.0;
-const CARD_INNER: f32 = CARD_WIDTH - 2.0 * CARD_PADDING;
+const CARD_INNER: f32 = CARD_WIDTH - 2.0 * card::PADDING;
 /// Two half-width fields on one card line, 6 pixels apart.
 const CARD_HALF: f32 = (CARD_INNER - 6.0) * 0.5;
 const CARD_SLIDE: f32 = 8.0;
 const PAD_SIZE: f32 = 70.0;
 const DOT: Color32 = Color32::from_rgb(74, 71, 68);
-const TIP: Color32 = Color32::from_rgb(0x2e, 0x2c, 0x2a);
 
 #[derive(Default)]
 struct DockInput {
@@ -269,7 +265,7 @@ fn overlay(
                 ui.disable();
             }
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-            ui.spacing_mut().interact_size.y = 30.0;
+            ui.spacing_mut().interact_size.y = theme::CONTROL_HEIGHT;
             contents(ui);
         })
         .response
@@ -286,19 +282,24 @@ fn group_card(
     let count = format!("{count} {}", if count == 1 { "item" } else { "items" });
     let ungroup = model.control_enabled(&Control::Ungroup);
     let ((name, focused), r) = card_header(ui, &count, "Ungroup", ungroup, |ui, width| {
-        field(ui, "Group name", &group.name, width, 22.0, true, 16.0)
+        field(
+            ui,
+            "Group name",
+            &group.name,
+            width,
+            22.0,
+            true,
+            theme::TYPE_TITLE,
+        )
     });
     input.text_focus |= focused;
     if let Some(name) = name {
         input.field_submissions.push(Control::Name(name));
     }
-    let shortcut = crate::app::platform_shortcut_label("⌘⇧G", "Ctrl+Shift+G");
-    if tip(r, shortcut).clicked() {
+    if tip(r, &shortcut::text(crate::app::UNGROUP)).clicked() {
         input.clicked_controls.push(Control::Ungroup);
     }
-    // Sections sit 14 pixels apart; their contents 8.
-    ui.add_space(6.0);
-    ui.label(theme::editorial_caption("Layout"));
+    card::section(ui, "Layout");
     bed(ui, |ui| {
         for flow in [
             GroupFlow::Row,
@@ -313,7 +314,7 @@ fn group_card(
             let r = cell(
                 ui,
                 name,
-                egui::vec2((CARD_INNER - 10.0) / 4.0, 30.0),
+                egui::vec2((CARD_INNER - 10.0) / 4.0, theme::CONTROL_HEIGHT),
                 selected,
                 enabled,
                 theme::SURFACE_PRESSED,
@@ -322,7 +323,7 @@ fn group_card(
                 ui.painter(),
                 r.rect.center(),
                 name,
-                content_color(selected, enabled, false),
+                ink(selected, enabled, false),
                 18.0,
             );
             if tip(r, &name.to_lowercase()).clicked() {
@@ -339,8 +340,7 @@ fn group_card(
             spread_bed(ui, model, group, input);
         });
     });
-    ui.add_space(6.0);
-    ui.label(theme::editorial_caption("Frame"));
+    card::section(ui, "Frame");
     ui.horizontal(|ui| {
         size_field(ui, model, group, input, 0);
         size_field(ui, model, group, input, 1);
@@ -356,7 +356,7 @@ fn group_card(
         );
         let enabled = model.control_enabled(&Control::Clip);
         if tip(
-            switch(ui, "Clip", CARD_HALF, group.layout.clip, enabled),
+            dock_switch(ui, "Clip", CARD_HALF, group.layout.clip, enabled),
             "hide overflow",
         )
         .clicked()
@@ -379,7 +379,7 @@ fn card_header<R>(
         ui.spacing_mut().item_spacing.x = 9.0;
         let (rule, _) = ui.allocate_exact_size(egui::vec2(3.0, 34.0), Sense::hover());
         ui.painter().rect_filled(rule, 1.5, theme::ACCENT);
-        let action_font = FontId::proportional(12.0);
+        let action_font = FontId::proportional(theme::TYPE_DETAIL);
         let action_width = ui
             .painter()
             .layout_no_wrap(action.into(), action_font.clone(), theme::TEXT)
@@ -387,7 +387,8 @@ fn card_header<R>(
             .x
             + 16.0;
         let title_width = CARD_INNER - 3.0 - 18.0 - action_width;
-        let subtitle_height = ui.fonts_mut(|f| f.row_height(&FontId::proportional(12.0)));
+        let subtitle_height =
+            ui.fonts_mut(|f| f.row_height(&FontId::proportional(theme::TYPE_DETAIL)));
         let title = ui
             .allocate_ui_with_layout(
                 egui::vec2(title_width, 22.0 + subtitle_height),
@@ -395,7 +396,11 @@ fn card_header<R>(
                 |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     let title = title(ui, title_width);
-                    label(ui, subtitle, 12.0, theme::TEXT_MUTED);
+                    ui.label(
+                        egui::RichText::new(subtitle)
+                            .size(theme::TYPE_DETAIL)
+                            .color(theme::TEXT_MUTED),
+                    );
                     title
                 },
             )
@@ -413,7 +418,7 @@ fn card_header<R>(
             Align2::CENTER_CENTER,
             action,
             action_font,
-            content_color(false, action_enabled, true),
+            ink(false, action_enabled, true),
         );
         (title, r)
     })
@@ -453,7 +458,7 @@ fn member_card(
             rect.left_center(),
             Align2::LEFT_CENTER,
             format!("‹ {}", group.name),
-            FontId::proportional(16.0),
+            FontId::proportional(theme::TYPE_TITLE),
             color,
         );
         tip(response, "back to group").clicked()
@@ -462,8 +467,7 @@ fn member_card(
     if tip(r, "leave the group").clicked() {
         input.clicked_controls.push(Control::Detach);
     }
-    ui.add_space(6.0);
-    ui.label(theme::editorial_caption("Frame"));
+    card::section(ui, "Frame");
     bed(ui, |ui| {
         for (a, name) in [(0, "Fill width"), (1, "Fill height")] {
             let c = Control::MemberMode(a, !member.fill[a]);
@@ -471,12 +475,12 @@ fn member_card(
             let r = cell(
                 ui,
                 name,
-                egui::vec2((CARD_INNER - 6.0) / 2.0, 30.0),
+                egui::vec2((CARD_INNER - 6.0) / 2.0, theme::CONTROL_HEIGHT),
                 member.fill[a],
                 enabled,
                 theme::SURFACE_PRESSED,
             );
-            let color = content_color(member.fill[a], enabled, false);
+            let color = ink(member.fill[a], enabled, false);
             paint_icon(
                 ui.painter(),
                 r.rect.left_center() + egui::vec2(20.0, 0.0),
@@ -488,7 +492,7 @@ fn member_card(
                 r.rect.left_center() + egui::vec2(34.0, 0.0),
                 Align2::LEFT_CENTER,
                 name,
-                FontId::proportional(13.0),
+                FontId::proportional(theme::TYPE_CONTROL),
                 color,
             );
             if tip(r, &name.to_lowercase()).clicked() {
@@ -498,7 +502,7 @@ fn member_card(
     });
     let enabled = model.control_enabled(absolute);
     if tip(
-        switch(ui, "Absolute", CARD_INNER, member.absolute, enabled),
+        dock_switch(ui, "Absolute", CARD_INNER, member.absolute, enabled),
         "place freely, outside the flow",
     )
     .clicked()
@@ -675,7 +679,7 @@ fn spread_bed(
             let r = cell(
                 ui,
                 name,
-                egui::vec2(38.0, 30.0),
+                egui::vec2(38.0, theme::CONTROL_HEIGHT),
                 selected,
                 enabled,
                 theme::SURFACE_PRESSED,
@@ -685,7 +689,7 @@ fn spread_bed(
                 r.rect.center(),
                 bars,
                 main == 1,
-                content_color(selected, enabled, false),
+                ink(selected, enabled, false),
             );
             if tip(r, tooltip).clicked() {
                 input.clicked_controls.push(c);
@@ -742,7 +746,7 @@ fn number_field(
         Control::RowGap(_) => Control::RowGap(n),
         _ => Control::Padding(n),
     };
-    field_row(ui, width, |ui| {
+    card::well(ui, width, |ui| {
         let tooltip = name.to_lowercase();
         if let Some(n) = scrub(
             ui,
@@ -761,9 +765,9 @@ fn number_field(
             name,
             &format!("{number:.0}"),
             width,
-            30.0,
+            theme::CONTROL_HEIGHT,
             enabled,
-            13.0,
+            theme::TYPE_CONTROL,
         );
         input.text_focus |= focused;
         if let Some(n) = value
@@ -790,7 +794,7 @@ fn size_field(
     let axis = ["W", "H"][a];
     let hugging = !group.layout.fixed[a];
     let size = group.container.scaled_size()[a];
-    field_row(ui, CARD_HALF, |ui| {
+    card::well(ui, CARD_HALF, |ui| {
         let enabled = model.control_enabled(&Control::Dimension(a, size));
         let name = (axis, ["width", "height"][a]);
         if let Some(n) = scrub(
@@ -805,14 +809,14 @@ fn size_field(
                     r.center(),
                     Align2::CENTER_CENTER,
                     axis,
-                    FontId::proportional(13.0),
+                    FontId::proportional(theme::TYPE_CONTROL),
                     color,
                 );
             },
         ) {
             input.field_submissions.push(Control::Dimension(a, n));
         }
-        let chip_font = FontId::proportional(11.0);
+        let chip_font = FontId::proportional(theme::TYPE_CHIP);
         let chip_width = ui
             .painter()
             .layout_no_wrap("Hug".into(), chip_font.clone(), theme::TEXT)
@@ -828,9 +832,9 @@ fn size_field(
             &format!("{axis} size"),
             &format!("{size:.0}"),
             width,
-            30.0,
+            theme::CONTROL_HEIGHT,
             true,
-            13.0,
+            theme::TYPE_CONTROL,
         );
         input.text_focus |= focused;
         if let Some(n) = value
@@ -847,19 +851,14 @@ fn size_field(
             egui::vec2(chip_width, 20.0),
             hugging,
             enabled,
-            SEPARATOR,
+            theme::SURFACE_RAISED,
         );
         ui.painter().text(
             r.rect.center(),
             Align2::CENTER_CENTER,
             "Hug",
             chip_font,
-            if hugging {
-                theme::BACKGROUND
-            } else {
-                theme::TEXT_MUTED
-            }
-            .gamma_multiply(if enabled { 1.0 } else { 0.4 }),
+            ink(hugging, enabled, true),
         );
         let tooltip = if !enabled {
             "wrap needs a width"
@@ -874,123 +873,10 @@ fn size_field(
     });
 }
 
-/// A named on/off row: icon and name on the left, track on the right.
-fn switch(ui: &mut egui::Ui, name: &str, width: f32, on: bool, enabled: bool) -> Response {
-    let response = hit(ui, name, egui::vec2(width, 30.0), on, enabled);
-    let r = response.rect;
-    let p = ui.painter();
-    p.rect_filled(r, 8, theme::SURFACE_ELEVATED);
-    if response.has_focus() {
-        p.rect_stroke(
-            r,
-            8,
-            Stroke::new(1.0_f32, theme::ACCENT),
-            egui::StrokeKind::Inside,
-        );
-    }
-    let fade = if enabled { 1.0 } else { 0.4 };
-    paint_icon(
-        p,
-        r.left_center() + egui::vec2(17.0, 0.0),
-        name,
-        theme::TEXT_MUTED.gamma_multiply(fade),
-        14.0,
-    );
-    p.text(
-        r.left_center() + egui::vec2(30.0, 0.0),
-        Align2::LEFT_CENTER,
-        name,
-        FontId::proportional(13.0),
-        theme::TEXT.gamma_multiply(fade),
-    );
-    let track = Rect::from_center_size(
-        r.right_center() - egui::vec2(25.0, 0.0),
-        egui::vec2(30.0, 18.0),
-    );
-    p.rect_filled(
-        track,
-        9,
-        if on { theme::ACCENT } else { SEPARATOR }.gamma_multiply(fade),
-    );
-    let knob = if on {
-        theme::BACKGROUND
-    } else if response.hovered() {
-        theme::TEXT
-    } else {
-        theme::TEXT_MUTED
-    };
-    p.circle_filled(
-        track.center() + egui::vec2(if on { 6.0 } else { -6.0 }, 0.0),
-        7.0,
-        knob.gamma_multiply(fade),
-    );
-    response
-}
-
-fn panel(radius: u8) -> egui::Frame {
-    egui::Frame::new()
-        .fill(theme::SURFACE)
-        .corner_radius(radius)
-        .shadow(egui::epaint::Shadow {
-            offset: [0, 12],
-            blur: 40,
-            spread: 0,
-            color: Color32::from_black_alpha(180),
-        })
-}
-/// A 30 pixel field row `width` wide.
-fn field_row(ui: &mut egui::Ui, width: f32, contents: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::new()
-        .fill(theme::SURFACE_ELEVATED)
-        .corner_radius(8)
-        .inner_margin(egui::Margin::symmetric(10, 0))
-        .show(ui, |ui| {
-            let inner = width - 20.0;
-            ui.allocate_ui_with_layout(
-                egui::vec2(inner, 30.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.set_min_width(inner);
-                    contents(ui);
-                },
-            );
-        });
-}
-fn bed(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::new()
-        .fill(theme::SURFACE_PRESSED)
-        .corner_radius(10)
-        .inner_margin(2)
-        .show(ui, |ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(0.0, 30.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    contents(ui);
-                },
-            );
-        });
-}
-fn label(ui: &mut egui::Ui, text: &str, size: f32, color: Color32) {
-    ui.label(egui::RichText::new(text).size(size).color(color));
-}
-/// Card tooltips sit above their control on a lighter tone, because the
-/// global popup fill matches the card and would vanish against it.
-fn tip(response: Response, text: &str) -> Response {
-    let mut tooltip = if response.enabled() {
-        egui::Tooltip::for_enabled(&response)
-    } else {
-        egui::Tooltip::for_disabled(&response)
-    };
-    tooltip.popup = tooltip.popup.align(egui::RectAlign::TOP).gap(8.0).frame(
-        egui::Frame::new()
-            .fill(TIP)
-            .corner_radius(6)
-            .inner_margin(egui::Margin::symmetric(8, 4)),
-    );
-    tooltip.show(|ui| label(ui, text, 12.0, theme::TEXT));
-    response
+fn dock_switch(ui: &mut egui::Ui, name: &str, width: f32, on: bool, enabled: bool) -> Response {
+    card::switch(ui, name, width, on, enabled, |p, center, color| {
+        paint_icon(p, center, name, color, 14.0);
+    })
 }
 /// Dragging a field's icon or letter scrubs its value one unit per pixel,
 /// never below `min`. Returns the scrubbed value while it differs from `value`.
@@ -1049,61 +935,6 @@ fn scrub(
         );
     }
     scrubbed.filter(|n| *n != value)
-}
-/// Allocates a named, clickable control that reports its selected state.
-fn hit(ui: &mut egui::Ui, name: &str, size: Vec2, selected: bool, enabled: bool) -> Response {
-    ui.add_enabled_ui(enabled, |ui| {
-        let (_, response) = ui.allocate_exact_size(size, Sense::click());
-        response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, name)
-        });
-        response
-    })
-    .inner
-}
-fn cell(
-    ui: &mut egui::Ui,
-    name: &str,
-    size: Vec2,
-    selected: bool,
-    enabled: bool,
-    fill: Color32,
-) -> Response {
-    let response = hit(ui, name, size, selected, enabled);
-    let r = response.rect;
-    let color = if selected {
-        theme::ACCENT
-    } else if response.is_pointer_button_down_on() {
-        theme::SURFACE_PRESSED
-    } else if response.hovered() {
-        theme::SURFACE_ELEVATED
-    } else {
-        fill
-    };
-    ui.painter().rect_filled(r, 8, color);
-    if response.has_focus() {
-        ui.painter().rect_stroke(
-            r,
-            8,
-            Stroke::new(1.0_f32, theme::ACCENT),
-            egui::StrokeKind::Inside,
-        );
-    }
-    response
-}
-fn content_color(selected: bool, enabled: bool, muted: bool) -> Color32 {
-    let color = if selected {
-        theme::BACKGROUND
-    } else if muted {
-        theme::TEXT_MUTED
-    } else {
-        theme::TEXT
-    };
-    if enabled {
-        color
-    } else {
-        color.gamma_multiply(0.4)
-    }
 }
 fn field(
     ui: &mut egui::Ui,

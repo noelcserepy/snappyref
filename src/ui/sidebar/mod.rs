@@ -323,18 +323,7 @@ const SIDEBAR_OPTIONS_SECTIONS: [SidebarOptionsSection; 3] = [
 #[cfg(test)]
 mod tests {
     use super::boards::paint_board_row;
-    use super::shortcuts::display_shortcut_label;
     use eframe::egui;
-
-    #[test]
-    fn display_shortcut_label_spaces_compact_modifier_chords() {
-        assert_eq!(display_shortcut_label("⌘B"), "⌘ B");
-        assert_eq!(display_shortcut_label("⇧⌘L"), "⇧ ⌘ L");
-        assert_eq!(display_shortcut_label("Ctrl+B"), "Ctrl B");
-        assert_eq!(display_shortcut_label("Ctrl+Shift+L"), "Ctrl Shift L");
-        assert_eq!(display_shortcut_label("C + Drag"), "C + Drag");
-        assert_eq!(display_shortcut_label("R + Drag"), "R + Drag");
-    }
 
     #[test]
     fn board_rename_focus_is_present_in_accessibility_tree_on_double_click() {
@@ -375,7 +364,16 @@ mod tests {
                 let name_edit_id = ui.make_persistent_id(("board-name-edit", 1_i64));
                 ui.memory_mut(|memory| memory.request_focus(name_edit_id));
 
-                paint_board_row(ui, 1, "My Board", "96 images", true, Some("⌘1"), false, 0.0);
+                paint_board_row(
+                    ui,
+                    1,
+                    "My Board",
+                    "96 images",
+                    true,
+                    Some(crate::app::BOARD_SHORTCUTS[0]),
+                    false,
+                    0.0,
+                );
                 cursor_after_row = ui.cursor().min.y;
             },
         );

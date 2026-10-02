@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::{SidebarTab, shortcuts};
+use super::SidebarTab;
 
 pub(super) fn paint_sidebar_tabs(ui: &mut egui::Ui, sidebar_tab: &mut SidebarTab) {
     let bar_height = 32.0;
@@ -133,13 +133,13 @@ pub(super) fn paint_sidebar_subcard(ui: &mut egui::Ui, add_contents: impl FnOnce
 }
 
 /// Collapsed sidebar tab: a short pull tab on the left screen edge, level
-/// with the sidebar top and sized to its shortcut label.
+/// with the sidebar top and sized to its shortcut chips.
 pub(crate) fn show_sidebar_edge(
     ctx: &egui::Context,
     screen_rect: egui::Rect,
     sidebar_open: bool,
 ) -> bool {
-    use crate::ui::{motion, theme};
+    use crate::ui::{motion, shortcut, theme};
     if sidebar_open {
         return false;
     }
@@ -147,12 +147,11 @@ pub(crate) fn show_sidebar_edge(
         .order(egui::Order::Foreground)
         .fixed_pos(super::sidebar_rect(screen_rect).min)
         .show(ctx, |ui| {
-            let galley = ui.painter().layout_no_wrap(
-                shortcuts::sidebar_shortcut_label().to_owned(),
-                egui::FontId::proportional(13.0),
-                egui::Color32::PLACEHOLDER,
+            let keys = crate::app::TOGGLE_SIDEBAR;
+            let size = egui::vec2(
+                shortcut::width(ui.painter(), keys) + 2.0 * theme::SPACE_2,
+                theme::CONTROL_HEIGHT,
             );
-            let size = galley.size() + egui::vec2(2.0 * theme::SPACE_3, theme::SPACE_3);
             let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Toggle sidebar")
@@ -171,11 +170,16 @@ pub(crate) fn show_sidebar_edge(
                     sw: 0,
                     se: radius,
                 },
-                motion::mix(theme::SURFACE_ELEVATED, theme::TEXT_SUBTLE, hover * 0.25),
+                motion::mix(theme::SURFACE, theme::SURFACE_ELEVATED, hover),
             );
             let color = motion::mix(theme::TEXT_MUTED, theme::TEXT, hover);
-            ui.painter()
-                .galley(rect.center() - galley.size() * 0.5, galley, color);
+            shortcut::paint(
+                ui.painter(),
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                keys,
+                color,
+            );
             if response.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
@@ -231,7 +235,7 @@ pub(crate) fn show_status_message(
                     // across the canvas.
                     let galley = ui.painter().layout(
                         status.to_owned(),
-                        egui::TextStyle::Small.resolve(ui.style()),
+                        egui::FontId::proportional(crate::ui::theme::TYPE_DETAIL),
                         crate::ui::theme::TEXT_MUTED,
                         STATUS_MESSAGE_MAX_WIDTH,
                     );

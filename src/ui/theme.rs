@@ -8,7 +8,6 @@ const MODIFIER_KEYS: &[u8] = include_bytes!("../../assets/fonts/JetBrainsMono-Mo
 
 const SHELL_BG: egui::Color32 = color(0x0A, 0x0A, 0x0A);
 const PANEL_BG: egui::Color32 = color(0x16, 0x15, 0x14);
-const PANEL_BG_PALETTE: egui::Color32 = color(0x17, 0x16, 0x15);
 const PANEL_BG_ELEVATED: egui::Color32 = color(0x22, 0x21, 0x1F);
 const ACCENT_GOLD: egui::Color32 = color(0xE4, 0xCE, 0xB0);
 const DESTRUCTIVE_RED: egui::Color32 = color(0xCA, 0x3C, 0x25);
@@ -25,37 +24,56 @@ pub const SPACE_3: f32 = 12.0;
 pub const SPACE_4: f32 = 16.0;
 pub const SPACE_6: f32 = 24.0;
 
-/// Standard control height for compact toolbar and drawer controls.
-pub const CONTROL_HEIGHT: f32 = 28.0;
+/// Control height, set by the Group card: wells, segments, switches, and
+/// toolbar buttons.
+pub const CONTROL_HEIGHT: f32 = 30.0;
+
+/// Type scale, set by the Group card. Captions stay on [`editorial_caption`].
+///
+/// Usage:
+/// - `TYPE_TITLE` for card titles
+/// - `TYPE_CONTROL` for control labels, menu rows, and field values
+/// - `TYPE_DETAIL` for subtitles, hint labels, status lines, header actions, and tooltips
+/// - `TYPE_CHIP` for key chips and small toggle chips
+pub const TYPE_TITLE: f32 = 16.0;
+pub const TYPE_CONTROL: f32 = 13.0;
+pub const TYPE_DETAIL: f32 = 12.0;
+pub const TYPE_CHIP: f32 = 11.0;
 
 /// Radius roles.
 ///
 /// Usage:
 /// - `RADIUS_NONE` for structural fills, rules, underlines, and canvas geometry
 /// - `RADIUS_MICRO` for tiny marks, active dots, thumbnails, and swatches under 24px
-/// - `RADIUS_INLINE` for quiet inline setting controls where text stays primary
-/// - `RADIUS_COMPACT` for rows, chips, hints, and small grouped containers
-/// - `RADIUS_CONTROL` for explicit buttons and direct-manipulation toolbar targets
-/// - `RADIUS_PANEL` for floating panels, overlays, and major framed surfaces
+/// - `RADIUS_INLINE` for key chips and quiet inline setting controls
+/// - `RADIUS_COMPACT` for tooltips, toasts, and small grouped containers
+/// - `RADIUS_CONTROL` for card controls, menu rows, buttons, and toolbar targets
+/// - `RADIUS_PANEL` for menus, dialogs, and edge-docked panels: 8px rows plus 4px padding
+/// - `RADIUS_CARD` for floating cards: the Group card, search palette, and group picker
 pub const RADIUS_NONE: u8 = 0;
 pub const RADIUS_MICRO: u8 = 3;
 pub const RADIUS_INLINE: u8 = 4;
 pub const RADIUS_COMPACT: u8 = 6;
 pub const RADIUS_CONTROL: u8 = 8;
 pub const RADIUS_PANEL: u8 = 12;
+pub const RADIUS_CARD: u8 = 14;
 
 /// Surface roles.
 ///
 /// Usage:
 /// - `BACKGROUND` for the canvas and app-level backdrop
-/// - `SURFACE` for sidebars, drawers, resting controls, and grouped UI
-/// - `PALETTE_SURFACE` for the command palette panel (slightly warmer than `SURFACE`)
-/// - `SURFACE_ELEVATED` for hover states and selected surfaces that need separation
+/// - `SURFACE` for cards, sidebars, menus, and the search palette
+/// - `SURFACE_PRESSED` for segmented beds and pressed controls
+/// - `SURFACE_ELEVATED` for wells, hover states, and selected surfaces that need separation
+/// - `SURFACE_RAISED` for marks that sit on wells: key chips, resting toggle
+///   chips, the off switch track, and hairline rules inside cards
+/// - `TOOLTIP` for tooltips, a step above everything so they read over cards
 pub const BACKGROUND: egui::Color32 = SHELL_BG;
 pub const SURFACE: egui::Color32 = PANEL_BG;
-pub const PALETTE_SURFACE: egui::Color32 = PANEL_BG_PALETTE;
-pub const SURFACE_ELEVATED: egui::Color32 = PANEL_BG_ELEVATED;
 pub const SURFACE_PRESSED: egui::Color32 = color(0x1B, 0x1A, 0x19);
+pub const SURFACE_ELEVATED: egui::Color32 = PANEL_BG_ELEVATED;
+pub const SURFACE_RAISED: egui::Color32 = color(0x2A, 0x28, 0x26);
+pub const TOOLTIP: egui::Color32 = color(0x2E, 0x2C, 0x2A);
 
 /// Border and text roles.
 ///

@@ -3,7 +3,8 @@
 use eframe::egui;
 
 use super::SnappyRefApp;
-use super::shortcuts::{ContextMenuAction, ContextMenuItem, platform_shortcut_label};
+use super::shortcuts::{self, ContextMenuAction, ContextMenuItem};
+use crate::ui::{card, motion, shortcut, theme};
 
 pub(super) fn context_menu_should_close(
     action_clicked: bool,
@@ -23,11 +24,10 @@ pub(super) fn context_menu_should_close(
     pointer_pos.is_none_or(|pos| !menu_rect.contains(pos))
 }
 
+/// Menu rows: label left, shortcut chips right, on the card's row metrics.
 pub(super) fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response {
-    let row_height = 28.0;
-    let shortcut_width: f32 = 54.0;
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), row_height),
+        egui::vec2(ui.available_width(), theme::CONTROL_HEIGHT),
         if item.enabled {
             egui::Sense::click()
         } else {
@@ -38,7 +38,7 @@ pub(super) fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egu
         egui::WidgetInfo::labeled(egui::WidgetType::Button, item.enabled, item.label)
     });
 
-    let hover = crate::ui::motion::hover_amount(
+    let hover = motion::hover_amount(
         ui.ctx(),
         response.id.with("context-menu-row-hover"),
         response.hovered() && item.enabled,
@@ -46,45 +46,34 @@ pub(super) fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egu
     if hover > 0.0 {
         ui.painter().rect_filled(
             rect,
-            egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT),
-            egui::Color32::from_white_alpha((18.0 * hover) as u8),
+            theme::RADIUS_CONTROL,
+            theme::SURFACE_ELEVATED.gamma_multiply(hover),
         );
     }
 
-    let text_color = if item.enabled && item.action.is_destructive() {
-        crate::ui::theme::DESTRUCTIVE
-    } else if item.enabled {
-        crate::ui::theme::TEXT
+    let mut painter = ui.painter().clone();
+    if !item.enabled {
+        painter.multiply_opacity(0.4);
+    }
+    let text_color = if item.action.is_destructive() {
+        theme::DESTRUCTIVE
     } else {
-        crate::ui::theme::TEXT_MUTED
+        theme::TEXT
     };
-    let shortcut_color = if item.enabled {
-        crate::ui::theme::TEXT_SUBTLE
-    } else {
-        crate::ui::theme::TEXT_MUTED
-    };
-
-    let label_pos = egui::pos2(rect.left() + 8.0, rect.center().y - 7.5);
-    ui.painter().text(
-        label_pos,
-        egui::Align2::LEFT_TOP,
+    painter.text(
+        rect.left_center() + egui::vec2(theme::SPACE_2, 0.0),
+        egui::Align2::LEFT_CENTER,
         item.label,
-        egui::FontId::proportional(13.0),
+        egui::FontId::proportional(theme::TYPE_CONTROL),
         text_color,
     );
-
-    if let Some(shortcut) = item.shortcut {
-        let pill_size = egui::vec2(shortcut_width.min(rect.width() * 0.35), 20.0);
-        let pill_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.right() - 8.0 - pill_size.x * 0.5, rect.center().y),
-            pill_size,
-        );
-        ui.painter().text(
-            pill_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            shortcut,
-            egui::FontId::monospace(11.0),
-            shortcut_color,
+    if let Some(keys) = item.shortcut {
+        shortcut::paint(
+            &painter,
+            rect.right_center() - egui::vec2(theme::SPACE_2, 0.0),
+            egui::Align2::RIGHT_CENTER,
+            keys,
+            theme::TEXT_MUTED,
         );
     }
 
@@ -109,61 +98,61 @@ impl SnappyRefApp {
             ContextMenuItem {
                 action: ContextMenuAction::Group,
                 label: "Group",
-                shortcut: Some(platform_shortcut_label("⌘G", "Ctrl+G")),
+                shortcut: Some(shortcuts::GROUP),
                 enabled: has_group_member,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Ungroup,
                 label: "Ungroup",
-                shortcut: Some(platform_shortcut_label("⌘⇧G", "Ctrl+Shift+G")),
+                shortcut: Some(shortcuts::UNGROUP),
                 enabled: !self.canvas.selected_group_ids().is_empty(),
             },
             ContextMenuItem {
                 action: ContextMenuAction::AddToGroup,
                 label: "Add to group",
-                shortcut: Some("G"),
+                shortcut: Some(shortcuts::ADD_TO_GROUP),
                 enabled: has_group_member,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Copy,
                 label: "Copy",
-                shortcut: Some(platform_shortcut_label("⌘ C", "Ctrl C")),
+                shortcut: Some(shortcuts::COPY),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Paste,
                 label: "Paste",
-                shortcut: Some(platform_shortcut_label("⌘ V", "Ctrl V")),
+                shortcut: Some(shortcuts::PASTE),
                 enabled: true,
             },
             ContextMenuItem {
                 action: ContextMenuAction::Duplicate,
                 label: "Duplicate",
-                shortcut: Some(platform_shortcut_label("⌘ D", "Ctrl D")),
+                shortcut: Some(shortcuts::DUPLICATE),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::DeleteFromBoard,
                 label: "Delete (from board)",
-                shortcut: Some("del"),
+                shortcut: Some(shortcuts::DELETE),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::MoveToFront,
                 label: "Move to Front",
-                shortcut: Some(platform_shortcut_label("⌘ .", "Ctrl .")),
+                shortcut: Some(shortcuts::MOVE_TO_FRONT),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::MoveToBack,
                 label: "Move to Back",
-                shortcut: Some(platform_shortcut_label("⌘ ,", "Ctrl ,")),
+                shortcut: Some(shortcuts::MOVE_TO_BACK),
                 enabled: has_selection,
             },
             ContextMenuItem {
                 action: ContextMenuAction::SearchUsingImage,
                 label: "Search using image",
-                shortcut: Some(platform_shortcut_label("⌘ F", "Ctrl F")),
+                shortcut: Some(shortcuts::SEARCH_IMAGES),
                 enabled: exactly_one_image_only,
             },
             ContextMenuItem {
@@ -225,9 +214,8 @@ impl SnappyRefApp {
         let Some(pos) = self.context_menu_pos else {
             return;
         };
-        let entrance =
-            crate::ui::motion::entrance_on_appear(ctx, egui::Id::new("board_context_menu"));
-        let settle = crate::ui::motion::settle_offset(entrance);
+        let entrance = motion::entrance_on_appear(ctx, egui::Id::new("board_context_menu"));
+        let settle = motion::settle_offset(entrance);
 
         let mut close_menu = false;
         let menu_response = egui::Area::new(egui::Id::new("board_context_menu"))
@@ -235,12 +223,9 @@ impl SnappyRefApp {
             .fixed_pos(pos - egui::vec2(0.0, settle))
             .show(ctx, |ui| {
                 ui.set_opacity(entrance.clamp(0.0, 1.0));
-                egui::Frame::new()
-                    .fill(crate::ui::theme::SURFACE)
-                    .stroke(egui::Stroke::NONE)
-                    .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT))
-                    .shadow(ui.style().visuals.popup_shadow)
-                    .inner_margin(egui::Margin::same(crate::ui::theme::SPACE_1 as i8))
+                card::frame()
+                    .corner_radius(theme::RADIUS_PANEL)
+                    .inner_margin(theme::SPACE_1)
                     .show(ui, |ui| {
                         ui.set_width(250.0);
                         ui.spacing_mut().item_spacing.y = 2.0;
@@ -253,7 +238,7 @@ impl SnappyRefApp {
                         }
                     });
             });
-        crate::ui::motion::settle_layer_scale(ctx, menu_response.response.layer_id, pos, entrance);
+        motion::settle_layer_scale(ctx, menu_response.response.layer_id, pos, entrance);
 
         let should_close = ctx.input(|input| {
             context_menu_should_close(

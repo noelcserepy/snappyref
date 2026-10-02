@@ -1,5 +1,7 @@
 use eframe::egui;
 
+use crate::ui::shortcut::{Key, Shortcut};
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ArrangementAction {
     Compact,
@@ -47,7 +49,7 @@ impl ContextMenuAction {
 pub(super) struct ContextMenuItem {
     pub(super) action: ContextMenuAction,
     pub(super) label: &'static str,
-    pub(super) shortcut: Option<&'static str>,
+    pub(super) shortcut: Option<Shortcut>,
     pub(super) enabled: bool,
 }
 
@@ -72,83 +74,97 @@ pub(super) struct PendingLibraryRemove {
 #[derive(Clone, Copy)]
 pub(crate) struct SupportedShortcut {
     pub action: &'static str,
-    /// Key label for the running platform; see `platform_shortcut_label`.
-    pub keys: &'static str,
+    pub keys: Shortcut,
     pub(super) binding: Option<ShortcutBinding>,
     pub(super) shortcut_action: Option<SupportedShortcutAction>,
 }
 
-/// Picks the shortcut label for the running platform: macOS symbol glyphs
-/// (`⌘V`), `Ctrl`-style text everywhere else.
-pub(crate) const fn platform_shortcut_label(
-    mac: &'static str,
-    windows: &'static str,
-) -> &'static str {
-    if cfg!(target_os = "macos") {
-        mac
-    } else {
-        windows
-    }
-}
+// Shortcuts shown in more than one place: the sidebar list, the context
+// menu, the Group card, and the sidebar edge.
+pub(crate) const GROUP: Shortcut = &[Key::Command, Key::Named("G")];
+pub(crate) const UNGROUP: Shortcut = &[Key::Command, Key::Shift, Key::Named("G")];
+pub(crate) const ADD_TO_GROUP: Shortcut = &[Key::Named("G")];
+pub(crate) const COPY: Shortcut = &[Key::Command, Key::Named("C")];
+pub(crate) const PASTE: Shortcut = &[Key::Command, Key::Named("V")];
+pub(crate) const SEARCH_IMAGES: Shortcut = &[Key::Command, Key::Named("F")];
+pub(crate) const DELETE: Shortcut = &[Key::Delete];
+pub(crate) const DUPLICATE: Shortcut = &[Key::Command, Key::Named("D")];
+pub(crate) const MOVE_TO_FRONT: Shortcut = &[Key::Command, Key::Named(".")];
+pub(crate) const MOVE_TO_BACK: Shortcut = &[Key::Command, Key::Named(",")];
+pub(crate) const TOGGLE_SIDEBAR: Shortcut = &[Key::Command, Key::Named("B")];
+
+/// Board N in sidebar order; the tenth board takes 0.
+pub(crate) const BOARD_SHORTCUTS: [Shortcut; 10] = [
+    &[Key::Command, Key::Named("1")],
+    &[Key::Command, Key::Named("2")],
+    &[Key::Command, Key::Named("3")],
+    &[Key::Command, Key::Named("4")],
+    &[Key::Command, Key::Named("5")],
+    &[Key::Command, Key::Named("6")],
+    &[Key::Command, Key::Named("7")],
+    &[Key::Command, Key::Named("8")],
+    &[Key::Command, Key::Named("9")],
+    &[Key::Command, Key::Named("0")],
+];
 
 pub(crate) const CORE_SHORTCUTS: &[SupportedShortcut] = &[
     SupportedShortcut {
         action: "Group selection",
-        keys: platform_shortcut_label("⌘G", "Ctrl+G"),
+        keys: GROUP,
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Ungroup selection",
-        keys: platform_shortcut_label("⌘⇧G", "Ctrl+Shift+G"),
+        keys: UNGROUP,
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Add to group",
-        keys: "G",
+        keys: ADD_TO_GROUP,
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Copy selection",
-        keys: platform_shortcut_label("⌘C", "Ctrl+C"),
+        keys: COPY,
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Paste image",
-        keys: platform_shortcut_label("⌘V", "Ctrl+V"),
+        keys: PASTE,
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Search images",
-        keys: platform_shortcut_label("⌘F", "Ctrl+F"),
+        keys: SEARCH_IMAGES,
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Crop image",
-        keys: "C + Drag",
+        keys: &[Key::Named("C"), Key::Gesture("Drag")],
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Draw arrow",
-        keys: "A + Drag",
+        keys: &[Key::Named("A"), Key::Gesture("Drag")],
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Draw line",
-        keys: "L + Drag",
+        keys: &[Key::Named("L"), Key::Gesture("Drag")],
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Draw textbox",
-        keys: "T + Click/Drag",
+        keys: &[Key::Named("T"), Key::Gesture("Click/Drag")],
         binding: None,
         shortcut_action: None,
     },
@@ -157,19 +173,19 @@ pub(crate) const CORE_SHORTCUTS: &[SupportedShortcut] = &[
 pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     SupportedShortcut {
         action: "Rotate selection",
-        keys: "R + Drag",
+        keys: &[Key::Named("R"), Key::Gesture("Drag")],
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Scale selection",
-        keys: platform_shortcut_label("⌘⌥ Drag", "Ctrl+Alt+Drag"),
+        keys: &[Key::Command, Key::Alt, Key::Gesture("Drag")],
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Focus selection",
-        keys: "Space",
+        keys: &[Key::Named("Space")],
         binding: Some(ShortcutBinding {
             key: egui::Key::Space,
             command: false,
@@ -179,13 +195,13 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Delete selection",
-        keys: platform_shortcut_label("Backspace", "Delete"),
+        keys: DELETE,
         binding: None,
         shortcut_action: Some(SupportedShortcutAction::DeleteSelection),
     },
     SupportedShortcut {
         action: "Duplicate selection",
-        keys: platform_shortcut_label("⌘D", "Ctrl+D"),
+        keys: DUPLICATE,
         binding: Some(ShortcutBinding {
             key: egui::Key::D,
             command: true,
@@ -195,7 +211,7 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Move selection to front",
-        keys: platform_shortcut_label("⌘.", "Ctrl+."),
+        keys: MOVE_TO_FRONT,
         binding: Some(ShortcutBinding {
             key: egui::Key::Period,
             command: true,
@@ -205,7 +221,7 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Move selection to back",
-        keys: platform_shortcut_label("⌘,", "Ctrl+,"),
+        keys: MOVE_TO_BACK,
         binding: Some(ShortcutBinding {
             key: egui::Key::Comma,
             command: true,
@@ -215,7 +231,7 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Toggle sidebar",
-        keys: platform_shortcut_label("⌘B", "Ctrl+B"),
+        keys: TOGGLE_SIDEBAR,
         binding: Some(ShortcutBinding {
             key: egui::Key::B,
             command: true,
@@ -225,7 +241,7 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Toggle always on top",
-        keys: platform_shortcut_label("⇧⌘T", "Ctrl+Shift+T"),
+        keys: &[Key::Command, Key::Shift, Key::Named("T")],
         binding: Some(ShortcutBinding {
             key: egui::Key::T,
             command: true,
@@ -235,7 +251,7 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Compact arrange",
-        keys: "Q",
+        keys: &[Key::Named("Q")],
         binding: Some(ShortcutBinding {
             key: egui::Key::Q,
             command: false,
@@ -245,7 +261,7 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Row arrange",
-        keys: "W",
+        keys: &[Key::Named("W")],
         binding: Some(ShortcutBinding {
             key: egui::Key::W,
             command: false,
@@ -257,7 +273,7 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Column arrange",
-        keys: "E",
+        keys: &[Key::Named("E")],
         binding: Some(ShortcutBinding {
             key: egui::Key::E,
             command: false,
@@ -269,13 +285,13 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Directional settle arrange",
-        keys: "Arrow keys",
+        keys: &[Key::Named("Arrow keys")],
         binding: None,
         shortcut_action: None,
     },
     SupportedShortcut {
         action: "Dedupe library",
-        keys: "P",
+        keys: &[Key::Named("P")],
         binding: Some(ShortcutBinding {
             key: egui::Key::P,
             command: false,
@@ -285,7 +301,7 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Default avg area",
-        keys: platform_shortcut_label("⌘L", "Ctrl+L"),
+        keys: &[Key::Command, Key::Named("L")],
         binding: Some(ShortcutBinding {
             key: egui::Key::L,
             command: true,
@@ -295,7 +311,7 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Selection avg area",
-        keys: platform_shortcut_label("⇧⌘L", "Ctrl+Shift+L"),
+        keys: &[Key::Command, Key::Shift, Key::Named("L")],
         binding: Some(ShortcutBinding {
             key: egui::Key::L,
             command: true,
@@ -305,7 +321,7 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Undo",
-        keys: platform_shortcut_label("⌘Z", "Ctrl+Z"),
+        keys: &[Key::Command, Key::Named("Z")],
         binding: None,
         shortcut_action: None,
     },
