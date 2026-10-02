@@ -1236,13 +1236,15 @@ impl eframe::App for SnappyRefApp {
         self.handle_clipboard_paste(ui.ctx(), screen_rect);
         self.handle_hovered_files(ui, screen_rect);
         self.handle_dropped_files(ui, screen_rect);
-        self.search.handle_shortcut(
-            ui.ctx(),
-            self.library.as_ref(),
-            &mut self.canvas,
-            &mut self.status,
-            self.settings.canvas_image_max_side,
-        );
+        if !self.modal_open() {
+            self.search.handle_shortcut(
+                ui.ctx(),
+                self.library.as_ref(),
+                &mut self.canvas,
+                &mut self.status,
+                self.settings.canvas_image_max_side,
+            );
+        }
         self.handle_board_shortcuts(ui.ctx());
         self.handle_selection_shortcuts(ui.ctx(), screen_rect);
         let sidebar_open = self.sidebar_open;

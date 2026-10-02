@@ -174,6 +174,12 @@ fn inspect_semantic_search_install_accepts_prompt() {
             .should_show_semantic_search_first_launch_prompt(),
     );
     scenario.capture_screen("screen-prompt", &mut harness);
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::F);
+    harness.run();
+    scenario.assertion(
+        "search shortcut stays behind the open prompt",
+        !harness.state().search.is_open(),
+    );
     let enable_rect = harness.get_by_label("Enable").rect();
     scenario.target("snap.semantic-search.install.enable", "button", enable_rect);
     scenario.event("key", serde_json::json!({ "key": "Enter" }));
