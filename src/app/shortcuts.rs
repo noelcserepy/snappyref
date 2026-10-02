@@ -13,8 +13,8 @@ pub(super) enum ArrangementAction {
 pub(super) enum SupportedShortcutAction {
     DeleteSelection,
     DuplicateSelection,
-    MoveSelectionToFront,
-    MoveSelectionToBack,
+    BringSelectionToFront,
+    SendSelectionToBack,
     ToggleSidebar,
     ToggleAlwaysOnTop,
     FocusSelection,
@@ -33,8 +33,8 @@ pub(super) enum ContextMenuAction {
     Paste,
     Duplicate,
     DeleteFromBoard,
-    MoveToFront,
-    MoveToBack,
+    BringToFront,
+    SendToBack,
     SearchUsingImage,
     RemoveFromLibrary,
 }
@@ -89,8 +89,8 @@ pub(crate) const PASTE: Shortcut = &[Key::Command, Key::Named("V")];
 pub(crate) const SEARCH_IMAGES: Shortcut = &[Key::Command, Key::Named("F")];
 pub(crate) const DELETE: Shortcut = &[Key::Delete];
 pub(crate) const DUPLICATE: Shortcut = &[Key::Command, Key::Named("D")];
-pub(crate) const MOVE_TO_FRONT: Shortcut = &[Key::Command, Key::Named(".")];
-pub(crate) const MOVE_TO_BACK: Shortcut = &[Key::Command, Key::Named(",")];
+pub(crate) const BRING_TO_FRONT: Shortcut = &[Key::Command, Key::Named(".")];
+pub(crate) const SEND_TO_BACK: Shortcut = &[Key::Command, Key::Named(",")];
 pub(crate) const TOGGLE_SIDEBAR: Shortcut = &[Key::Command, Key::Named("B")];
 
 /// Board N in sidebar order; the tenth board takes 0.
@@ -210,24 +210,24 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
         shortcut_action: Some(SupportedShortcutAction::DuplicateSelection),
     },
     SupportedShortcut {
-        action: "Move selection to front",
-        keys: MOVE_TO_FRONT,
+        action: "Bring selection to front",
+        keys: BRING_TO_FRONT,
         binding: Some(ShortcutBinding {
             key: egui::Key::Period,
             command: true,
             shift: false,
         }),
-        shortcut_action: Some(SupportedShortcutAction::MoveSelectionToFront),
+        shortcut_action: Some(SupportedShortcutAction::BringSelectionToFront),
     },
     SupportedShortcut {
-        action: "Move selection to back",
-        keys: MOVE_TO_BACK,
+        action: "Send selection to back",
+        keys: SEND_TO_BACK,
         binding: Some(ShortcutBinding {
             key: egui::Key::Comma,
             command: true,
             shift: false,
         }),
-        shortcut_action: Some(SupportedShortcutAction::MoveSelectionToBack),
+        shortcut_action: Some(SupportedShortcutAction::SendSelectionToBack),
     },
     SupportedShortcut {
         action: "Toggle sidebar",

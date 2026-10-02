@@ -164,15 +164,15 @@ impl SnappyRefApp {
             ],
             vec![
                 item(
-                    ContextMenuAction::MoveToFront,
+                    ContextMenuAction::BringToFront,
                     "Bring to front",
-                    Some(shortcuts::MOVE_TO_FRONT),
+                    Some(shortcuts::BRING_TO_FRONT),
                     has_selection,
                 ),
                 item(
-                    ContextMenuAction::MoveToBack,
+                    ContextMenuAction::SendToBack,
                     "Send to back",
-                    Some(shortcuts::MOVE_TO_BACK),
+                    Some(shortcuts::SEND_TO_BACK),
                     has_selection,
                 ),
             ],
@@ -221,8 +221,8 @@ impl SnappyRefApp {
             ContextMenuAction::DeleteFromBoard => {
                 self.delete_selected_items_from_board(screen_rect);
             }
-            ContextMenuAction::MoveToFront => self.move_selected_canvas_items_to_front(),
-            ContextMenuAction::MoveToBack => self.move_selected_canvas_items_to_back(),
+            ContextMenuAction::BringToFront => self.bring_selection_to_front(),
+            ContextMenuAction::SendToBack => self.send_selection_to_back(),
             ContextMenuAction::SearchUsingImage => {
                 self.search.search_using_selected_image(
                     self.library.as_ref(),
@@ -398,12 +398,12 @@ fn paint_icon(p: &egui::Painter, center: egui::Pos2, action: ContextMenuAction, 
             line(&[(8.0, 5.0), (8.0, 11.0)]);
             line(&[(5.0, 8.0), (11.0, 8.0)]);
         }
-        A::MoveToFront => {
+        A::BringToFront => {
             line(&[(3.0, 2.5), (13.0, 2.5)]);
             line(&[(8.0, 14.0), (8.0, 6.0)]);
             line(&[(4.5, 9.5), (8.0, 6.0), (11.5, 9.5)]);
         }
-        A::MoveToBack => {
+        A::SendToBack => {
             line(&[(3.0, 13.5), (13.0, 13.5)]);
             line(&[(8.0, 2.0), (8.0, 10.0)]);
             line(&[(4.5, 6.5), (8.0, 10.0), (11.5, 6.5)]);

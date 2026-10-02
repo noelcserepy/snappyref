@@ -20,7 +20,7 @@ use crate::data::{
 use crate::placement::arrangement::PlacementArrangementInput;
 
 #[derive(Clone, Copy)]
-enum StackOrderMove {
+enum StackEnd {
     Front,
     Back,
 }
@@ -673,12 +673,12 @@ impl CanvasState {
         )
     }
 
-    pub fn move_selected_canvas_items_to_front(&mut self) -> bool {
-        self.move_selected_canvas_items(StackOrderMove::Front)
+    pub fn bring_selection_to_front(&mut self) -> bool {
+        self.restack_selection(StackEnd::Front)
     }
 
-    pub fn move_selected_canvas_items_to_back(&mut self) -> bool {
-        self.move_selected_canvas_items(StackOrderMove::Back)
+    pub fn send_selection_to_back(&mut self) -> bool {
+        self.restack_selection(StackEnd::Back)
     }
 
     pub fn delete_selected_annotations(&mut self) -> Vec<i64> {
@@ -956,31 +956,31 @@ impl CanvasState {
         }
     }
 
-    fn move_selected_canvas_items(&mut self, direction: StackOrderMove) -> bool {
+    fn restack_selection(&mut self, end: StackEnd) -> bool {
         let selected = self.selected_canvas_stack_items();
         if selected.is_empty() {
             return false;
         }
 
         let ordered = self.ordered_canvas_items_back_to_front();
-        let mut unmoved = Vec::with_capacity(ordered.len().saturating_sub(selected.len()));
-        let mut moved = Vec::with_capacity(selected.len());
+        let mut rest = Vec::with_capacity(ordered.len().saturating_sub(selected.len()));
+        let mut picked = Vec::with_capacity(selected.len());
         for item in ordered {
             if selected.contains(&item) {
-                moved.push(item);
+                picked.push(item);
             } else {
-                unmoved.push(item);
+                rest.push(item);
             }
         }
 
-        let next_order = match direction {
-            StackOrderMove::Front => {
-                unmoved.extend(moved);
-                unmoved
+        let next_order = match end {
+            StackEnd::Front => {
+                rest.extend(picked);
+                rest
             }
-            StackOrderMove::Back => {
-                moved.extend(unmoved);
-                moved
+            StackEnd::Back => {
+                picked.extend(rest);
+                picked
             }
         };
 

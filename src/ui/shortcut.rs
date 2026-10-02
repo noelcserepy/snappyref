@@ -158,16 +158,37 @@ pub(crate) fn paint(
         if key.drawn() {
             paint_glyph(painter, chip.center(), key, ink);
         } else {
-            painter.text(
-                chip.center(),
-                Align2::CENTER_CENTER,
-                key.label(),
-                key_font(key),
-                ink,
-            );
+            let galley = painter.layout_no_wrap(key.label().to_owned(), key_font(key), ink);
+            let pos = chip.center() - label_center(&galley, key);
+            painter.galley(pos, galley, ink);
         }
     }
     rect
+}
+
+/// The point of a key's label that sits on its chip's center. Letters and
+/// words center on the line box, so every chip shares one baseline.
+/// Punctuation sits on that baseline with no cap height above it, so it
+/// centers on its own ink instead.
+fn label_center(galley: &egui::Galley, key: Key) -> egui::Vec2 {
+    let ink = galley
+        .rows
+        .iter()
+        .flat_map(|row| {
+            row.row.glyphs.iter().map(move |glyph| {
+                Rect::from_min_size(
+                    row.pos + glyph.pos.to_vec2() + glyph.uv_rect.offset,
+                    glyph.uv_rect.size,
+                )
+            })
+        })
+        .reduce(Rect::union);
+    match ink {
+        Some(ink) if key.label().chars().all(|c| c.is_ascii_punctuation()) => {
+            ink.center().to_vec2()
+        }
+        _ => galley.size() * 0.5,
+    }
 }
 
 /// Allocates and paints `keys` in muted ink.

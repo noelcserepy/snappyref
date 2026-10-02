@@ -656,21 +656,20 @@ impl SnappyRefApp {
         };
     }
 
-    fn move_selected_canvas_items_to_front(&mut self) {
+    fn bring_selection_to_front(&mut self) {
         if let Err(error) =
             self.board_editing
-                .move_selection_in_stack(&mut self.canvas, self.active_board_id, true)
+                .restack_selection(&mut self.canvas, self.active_board_id, true)
         {
             self.status = error;
         }
     }
 
-    fn move_selected_canvas_items_to_back(&mut self) {
-        if let Err(error) = self.board_editing.move_selection_in_stack(
-            &mut self.canvas,
-            self.active_board_id,
-            false,
-        ) {
+    fn send_selection_to_back(&mut self) {
+        if let Err(error) =
+            self.board_editing
+                .restack_selection(&mut self.canvas, self.active_board_id, false)
+        {
             self.status = error;
         }
     }
@@ -783,7 +782,7 @@ impl SnappyRefApp {
                             self.pending_library_remove = None;
                         }
                         if ui
-                            .add(destructive_action_button("Remove from Library"))
+                            .add(destructive_action_button("Remove from library"))
                             .clicked()
                         {
                             self.confirm_pending_library_remove();
@@ -863,8 +862,8 @@ impl SnappyRefApp {
                 SupportedShortcutAction::DeleteSelection => delete_shortcut_pressed(ctx),
                 SupportedShortcutAction::FocusSelection
                 | SupportedShortcutAction::DuplicateSelection
-                | SupportedShortcutAction::MoveSelectionToFront
-                | SupportedShortcutAction::MoveSelectionToBack
+                | SupportedShortcutAction::BringSelectionToFront
+                | SupportedShortcutAction::SendSelectionToBack
                 | SupportedShortcutAction::ToggleSidebar
                 | SupportedShortcutAction::ToggleAlwaysOnTop
                 | SupportedShortcutAction::ApplyDefaultAverageArea
@@ -891,17 +890,17 @@ impl SnappyRefApp {
                     }
                     self.duplicate_selection_with_gap();
                 }
-                SupportedShortcutAction::MoveSelectionToFront => {
+                SupportedShortcutAction::BringSelectionToFront => {
                     if !self.canvas.has_selection() {
                         continue;
                     }
-                    self.move_selected_canvas_items_to_front();
+                    self.bring_selection_to_front();
                 }
-                SupportedShortcutAction::MoveSelectionToBack => {
+                SupportedShortcutAction::SendSelectionToBack => {
                     if !self.canvas.has_selection() {
                         continue;
                     }
-                    self.move_selected_canvas_items_to_back();
+                    self.send_selection_to_back();
                 }
                 SupportedShortcutAction::FocusSelection => {
                     if !self.canvas.has_selection() {
