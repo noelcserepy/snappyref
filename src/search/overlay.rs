@@ -134,6 +134,7 @@ impl SearchController {
                             Some(InstallAction::Cancel) => {
                                 self.cancel_semantic_search_install(status);
                             }
+                            Some(InstallAction::NotNow) => self.close_overlay(),
                             None => {}
                         }
                         return;

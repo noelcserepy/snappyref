@@ -1317,6 +1317,21 @@ fn inspect_search_composer_writes_artifact() {
         .transparent_pixels
         == 0;
 
+    harness
+        .state_mut()
+        .search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Missing);
+    settle(&mut harness);
+    let not_now = harness.get_by_label("Not now").rect();
+    scenario.action("click Not now on the install card", not_now.center());
+    inspect_click_at(&harness, not_now.center(), egui::Modifiers::NONE);
+    settle(&mut harness);
+    scenario.assertion(
+        "Not now closes search and leaves Semantic Search uninstalled",
+        !harness.state().search.overlay.open
+            && harness.state().search.local_model_store_status() == LocalModelStoreStatus::Missing,
+    );
+
     scenario.assertion("every composer frame is opaque", all_opaque);
     scenario.assertion("result previews decoded before capture", previews_ready);
     let report = scenario.finish();

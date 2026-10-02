@@ -565,39 +565,43 @@ pub(crate) fn paint_palette_no_results_state(ui: &mut egui::Ui, status: &SearchO
 pub(crate) enum InstallAction {
     Install,
     Cancel,
+    /// Leave Semantic Search uninstalled for now and close search.
+    NotNow,
 }
 
-/// The palette's install card for a missing, downloading, or failed model.
-/// Pointer only: Esc closes the palette as everywhere else, and a running
-/// download keeps going in the background.
+/// The palette's install card for a missing, downloading, or failed model:
+/// title and detail on the left, controls on the right, centered on them.
+/// Pointer only, with no key hints: Esc closes the palette as everywhere
+/// else, and a running download keeps going in the background.
 pub(crate) fn paint_palette_install_state(
     ui: &mut egui::Ui,
     model: &LocalModelStoreStatus,
 ) -> Option<InstallAction> {
     use crate::ui::{card, theme};
 
-    let (title, detail, detail_color) = match model {
-        LocalModelStoreStatus::Downloading { .. } => (
-            "Installing Semantic Search",
-            "Keeps downloading if you close search.".to_owned(),
-            theme::TEXT_MUTED,
-        ),
+    let (title, detail) = match model {
+        LocalModelStoreStatus::Downloading { .. } => ("Installing Semantic Search", None),
         LocalModelStoreStatus::Failed(error) => {
-            ("Install failed", error.clone(), theme::DESTRUCTIVE)
+            ("Install failed", Some((error.clone(), theme::DESTRUCTIVE)))
         }
         _ => {
             let megabytes =
                 crate::search::semantic::default_semantic_search_asset_descriptor().megabytes();
             (
                 "Install Semantic Search",
-                format!("Find references by describing them. One-time {megabytes} MB download."),
-                theme::TEXT_MUTED,
+                Some((
+                    format!(
+                        "Find references by describing them. One-time {megabytes} MB download."
+                    ),
+                    theme::TEXT_MUTED,
+                )),
             )
         }
     };
     let controls_width = match model {
         LocalModelStoreStatus::Downloading { .. } => 240.0,
-        _ => 96.0,
+        LocalModelStoreStatus::Failed(_) => 96.0,
+        _ => 180.0,
     };
 
     let mut action = None;
@@ -617,25 +621,24 @@ pub(crate) fn paint_palette_install_state(
                                 .size(theme::TYPE_TITLE)
                                 .color(theme::TEXT),
                         );
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(detail)
-                                    .size(theme::TYPE_DETAIL)
-                                    .color(detail_color),
-                            )
-                            .truncate(),
-                        );
+                        if let Some((detail, color)) = detail {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(detail)
+                                        .size(theme::TYPE_DETAIL)
+                                        .color(color),
+                                )
+                                .truncate(),
+                            );
+                        }
                     },
                 )
                 .response
                 .rect;
             let right = text_rect.left() + width;
-            let controls = egui::Rect::from_min_max(
-                egui::pos2(
-                    right - controls_width,
-                    text_rect.bottom() - theme::CONTROL_HEIGHT,
-                ),
-                egui::pos2(right, text_rect.bottom()),
+            let controls = egui::Rect::from_center_size(
+                egui::pos2(right - controls_width * 0.5, text_rect.center().y),
+                egui::vec2(controls_width, theme::CONTROL_HEIGHT),
             );
             ui.scope_builder(
                 egui::UiBuilder::new()
@@ -667,13 +670,17 @@ pub(crate) fn paint_palette_install_state(
                         card::progress(ui, ui.available_width(), f32::from(*percent) / 100.0);
                     }
                     LocalModelStoreStatus::Failed(_) => {
-                        if card::button(ui, "Retry", controls_width).clicked() {
+                        if card::button(ui, "Retry", 96.0).clicked() {
                             action = Some(InstallAction::Install);
                         }
                     }
                     _ => {
-                        if card::button(ui, "Install", controls_width).clicked() {
+                        ui.spacing_mut().item_spacing.x = theme::SPACE_2;
+                        if card::button(ui, "Install", 96.0).clicked() {
                             action = Some(InstallAction::Install);
+                        }
+                        if card::action(ui, "Not now", true).clicked() {
+                            action = Some(InstallAction::NotNow);
                         }
                     }
                 },
