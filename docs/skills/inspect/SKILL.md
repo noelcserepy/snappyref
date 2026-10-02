@@ -171,6 +171,10 @@ frames, and assert intermediate and final behavior. Write facts and artifacts
 through `InspectScenario` rather than unstructured terminal output. Use
 `harness.step()` instead of sleeps when frames can drive the work.
 
+Register the scenario in `SCENARIOS` in `scripts/inspect_scenarios.py` so
+`run-scenario.sh` can run it. `latest-artifact.sh <scenario>` prints the newest
+run directory.
+
 ## Search Palette Work
 
 Use `inspect_search_result_tile_center` for tile coordinates.
@@ -201,12 +205,9 @@ Be concise. The artifact is the detailed evidence.
 
 ## Refactor behavior evidence
 
-Run `cargo check --locked` after UI/app-inspection changes before trusting
-screenshots. For the refactor behavior gate, run
-`python3 scripts/check-refactor-behavior.py`. It runs the library suite
-sequentially, rejects stale or incomplete artifacts for the main interaction
-and persistence scenarios, then checks the actual release image-preparation
-subprocess. The report is `target/refactor-behavior.json`.
+`cargo test --locked` runs every inspect scenario except the two `#[ignore]`d
+ones, so it is the behavior gate for refactors. `image-format-gallery` needs
+`SNAPPYREF_MEDIA_FIXTURES`, and `semantic-search-real-install` is networked.
 
 Keep the existing tests that describe user-visible outcomes. Add a focused
 scenario only when the boundary being changed lacks coverage. Search ranking

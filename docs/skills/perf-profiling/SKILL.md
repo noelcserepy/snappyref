@@ -22,8 +22,7 @@ The checked-in baselines under `perf-assets/baselines/` come from the
 maintainer's M4 Pro. Numbers from another machine are not comparable to them;
 compare before and after runs from the same machine instead.
 
-Run [refactor behavior checks](../inspect/SKILL.md#refactor-behavior-evidence)
-first, then performance alone. Concurrent builds, tests,
+Run `cargo test --locked` first, then performance alone. Concurrent builds, tests,
 or other heavy work invalidate timing comparisons.
 
 ```sh

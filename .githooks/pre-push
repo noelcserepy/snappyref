@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Local pre-push checks: formatting, clippy, shipping-feature compilation, and
-# update preservation. Bypass with `git push --no-verify` if you really mean it.
+# Local lint before CI sees the push: formatting and clippy. CI runs these
+# plus the full test suite. Bypass with `git push --no-verify` if you mean it.
 #
 # Setup: README.md#development-checks
 
 set -euo pipefail
 
-# A push that only deletes remote refs (local sha all zeros) carries no code.
+# A push that only deletes remote refs (local sha all zeros) carries no code,
+# and neither does a code-free branch such as pr-assets.
+[[ -f Cargo.toml ]] || exit 0
 pushes_code=0
 while read -r _ local_sha _ _; do
   [[ "$local_sha" =~ ^0+$ ]] || pushes_code=1
@@ -18,11 +20,5 @@ cargo fmt --check
 
 echo "[pre-push] cargo clippy --locked --all-targets -- -D warnings"
 cargo clippy --locked --all-targets -- -D warnings
-
-echo "[pre-push] cargo check --locked"
-cargo check --locked
-
-echo "[pre-push] cargo test update_preservation_smoke"
-cargo test --locked update_preservation_smoke
 
 echo "[pre-push] ok"

@@ -27,18 +27,14 @@ another and corrupts test results.
 ```sh
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo check --locked
-cargo test --locked update_preservation_smoke
 cargo test --locked
-cargo build --locked --release
 docs/skills/inspect/scripts/run-scenario.sh --list
 docs/skills/inspect/scripts/run-scenario.sh <scenario>
-python3 scripts/check-refactor-behavior.py
 ```
 
-The first three commands are the [pre-push gate](.githooks/pre-push). The last
-runs the library suite and every refactor-covered scenario in one pass. Hook
-setup and CI are in the [README](README.md#development-checks).
+The [pre-push hook](.githooks/pre-push) runs fmt and clippy. CI runs those,
+`cargo test` (every non-ignored inspect scenario and the helper subprocess tests) and the
+`scripts/test_*.py` suite. Hook setup is in the [README](README.md#development-checks).
 
 When the user wants to test a build by hand, stop the previous instance and run
 `SNAPPYREF_DATA_ROOT="$HOME/dev/snappyref-dev-data" cargo run --locked --release --bin snappyref`
@@ -112,9 +108,11 @@ unclear, inspect the repo first, and otherwise ask one question at a time.
 
 ## UI work
 
-There is no design-system document. The code is the visual vocabulary:
+The code is the visual vocabulary. Reuse it before building new widgets:
 
 - start with `src/ui/theme.rs` for shared tokens, spacing, radius, type, color, and motion constants
+- `src/ui/card.rs` owns shared cards and controls
+- `src/ui/shortcut.rs` owns key chips and platform shortcut text; `src/app/dialogs.rs` owns the dialog
 - read `src/ui/motion.rs` for shared motion semantics
 - read the relevant component/module before changing a pattern
 - use inspect scenarios/artifacts as runtime visual evidence

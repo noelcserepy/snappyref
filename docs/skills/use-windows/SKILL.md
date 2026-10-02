@@ -19,8 +19,7 @@ checkout directly, or dispatch the `Build Windows App` workflow on a branch.
 
 Edit on Mac, then sync to the Windows execution checkout. Do not patch Windows
 files unless the user requests a one-off diagnostic experiment; bring real fixes
-back to Mac before testing. Use native checks before GitHub Actions unless the
-user asks otherwise.
+back to Mac before testing.
 
 Scripts load private machine values from gitignored `.env.windows`, using
 `.env.windows.example` as the tracked template. If missing, ask for the SSH
@@ -57,10 +56,9 @@ scripts/windows-check.sh
 
 Normal checks and tests use shipping default features. The Windows user needs
 libjpeg-turbo and the explicit `TURBOJPEG_*` environment settings used by the
-[CI install action](../../../.github/actions/install-turbojpeg-windows/action.yml). Keep local
+[install action](../../../.github/actions/install-turbojpeg-windows/action.yml). Keep local
 installation paths in that machine's user environment. The test wrapper runs
-serially, matching the canonical behavior gate; an explicit `--test-threads`
-option overrides that default.
+serially; an explicit `--test-threads` option overrides that default.
 
 ```sh
 scripts/windows-test.sh

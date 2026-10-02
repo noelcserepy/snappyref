@@ -12,8 +12,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# A ruleset on main requires these job names once the repo is public. Rename them
-# only together with the ruleset.
+# A ruleset on main requires this job name once the repo is public. Rename it
+# only together with the ruleset. Windows checks run natively through the
+# use-windows skill.
 jobs:
   macos:
     name: macOS
@@ -44,36 +45,9 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --locked --all-targets -- -D warnings
 
-      - name: cargo check
-        run: cargo check --locked
-
       - name: cargo test
         run: cargo test --locked
 
-  windows:
-    name: Windows
-    # Paused because it takes 8 to 12 minutes per push. A skipped job still
-    # satisfies the ruleset. Use the use-windows skill for platform changes.
-    if: false
-    runs-on: windows-latest
+      - name: script tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install libjpeg-turbo
-        uses: ./.github/actions/install-turbojpeg-windows
-
-      - name: cargo clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
-
-      - name: cargo check
-        run: cargo check --locked
-
-      - name: cargo test
-        run: cargo test --locked

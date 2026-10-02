@@ -105,14 +105,12 @@ Point git at the repo hooks once per clone:
 git config core.hooksPath .githooks
 ```
 
-The [pre-push hook](.githooks/pre-push) runs `cargo fmt --check`, clippy
-with warnings denied, `cargo check --locked`, and
-`cargo test --locked update_preservation_smoke`. `cargo test --locked`
-runs the full suite. CI runs fmt, clippy, `cargo check` and the full suite on
-macOS for every pull request. The Windows job is paused; run Windows checks
-with the [use-windows](docs/skills/use-windows/SKILL.md) skill. UI
-behavior is verified through inspect scenarios; list them with
-`docs/skills/inspect/scripts/run-scenario.sh --list`.
+The [pre-push hook](.githooks/pre-push) runs `cargo fmt --check` and clippy
+with warnings denied. CI runs those, `cargo test --locked` and the
+`scripts/test_*.py` suite on macOS for every pull request. `cargo test` covers
+every non-ignored inspect scenario; list them with
+`docs/skills/inspect/scripts/run-scenario.sh --list`. Run Windows checks with
+the [use-windows](docs/skills/use-windows/SKILL.md) skill.
 
 ## Code map
 
