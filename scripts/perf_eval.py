@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import shutil
 import signal
 import sqlite3
 import fcntl
@@ -451,7 +452,6 @@ def main():
                             quiescent_window_ms=None, metrics=list(FAST_METRICS),
                             cases=cases, repeats=args.repeats)
         data = directory / 'data'
-        import shutil
         shutil.copytree(args.models, data / 'models', copy_function=copy_file)
         report.update(contract=contract,
                       source=dict(commit=output('git', 'rev-parse', 'HEAD'),
@@ -484,6 +484,9 @@ def main():
                         initial = seed_library(seed / 'library', trial / 'library', *size, ready=not case.endswith('-backfill'))
                         write_json(trial / 'fixture.json', initial)
                     result = run_case(binary, assets, trial, data, 'startup' if size else case, args.timeout, size, profile)
+                    # Comparisons read only the reports. A failed trial keeps
+                    # its library for diagnosis, and the run stops there.
+                    shutil.rmtree(trial / 'library')
                     report['runs'].append(dict(case=case, repeat=repeat, artifact=str(trial), **result,
                                                timing=dict(**json.loads((trial / 'timing.json').read_text()),
                                                            including_fixture_seconds=time.monotonic() - trial_start)))
@@ -497,12 +500,14 @@ def main():
                     raise
                 report['cases'] = aggregate(report['runs'], profile)
                 write_json(report_path, report)
+        shutil.rmtree(seed / 'library', ignore_errors=True)
         report['valid'] = True
     except Exception as error:
         report['valid'] = False
         report['error'] = str(error)
         raise
     finally:
+        shutil.rmtree(directory / 'data', ignore_errors=True)
         report['timing'].setdefault('setup_seconds', time.monotonic() - prepared_start)
         # Write the complete report before measuring reporting overhead itself.
         write_json(report_path, report)

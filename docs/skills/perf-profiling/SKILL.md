@@ -194,6 +194,10 @@ per-case median/min/max. Raw trial directories contain:
   includes setup, seed, fixture construction, build and complete command time.
 - `fixture.json`: prelaunch cardinality and embedding readiness for scaling.
 
+The run deletes each trial's `library/` once that trial passes, the seed library
+once every trial passes, and the copied models in `data/` when it ends. A failed
+trial keeps its library for diagnosis.
+
 Format timing joins use import queue IDs. Repeated filenames remain separate
 imports. Per-format loading latency is not per-format paint latency. Worker
 phase events reach the UI in batches, so receipt-to-receipt inference timing

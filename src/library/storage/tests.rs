@@ -8,7 +8,6 @@ use eframe::egui;
 use rusqlite::Connection;
 use std::fs;
 use std::sync::{Arc, Barrier};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn loaded_placements_load_as_committed_loaded_content() {
@@ -346,14 +345,7 @@ fn existing_legacy_user_session_columns_backfill_payload() {
 
 #[test]
 fn existing_user_session_rows_migrate_to_default_preferences() {
-    let root = std::env::temp_dir().join(format!(
-        "snappyref-storage-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
+    let root = TempRoot::new("snappyref-storage-test");
 
     let db_path = root.join("library.db");
     let connection = Connection::open(&db_path).unwrap();
