@@ -8,8 +8,8 @@ use crate::ui::sidebar::{SemanticSearchSettingsAction, SemanticSearchSettingsSta
 
 use super::SnappyRefApp;
 use super::dialogs::{
-    destructive_action_button, destructive_dialog_width, dialog_body, dialog_frame, dialog_header,
-    primary_dialog_button, secondary_dialog_button, semantic_search_prompt_width,
+    DialogChoice, destructive_dialog_width, dialog_actions, dialog_detail, dialog_frame,
+    dialog_lead, dialog_title, semantic_search_prompt_width,
 };
 
 impl SnappyRefApp {
@@ -88,8 +88,9 @@ impl SnappyRefApp {
             return;
         }
 
-        let mut decline = false;
-        let mut enable = false;
+        let megabytes =
+            crate::search::semantic::default_semantic_search_asset_descriptor().megabytes();
+        let mut choice = None;
         let settle = crate::ui::motion::settle_offset(entrance);
         egui::Window::new("Enable Semantic Search?")
             .id(egui::Id::new("semantic_search_first_launch_prompt"))
@@ -97,48 +98,33 @@ impl SnappyRefApp {
             .collapsible(false)
             .resizable(false)
             .title_bar(false)
-            .frame(dialog_frame(ctx, entrance))
+            .frame(dialog_frame(entrance))
             .show(ctx, |ui| {
                 ui.multiply_opacity(entrance);
                 ui.set_width(semantic_search_prompt_width());
-                dialog_header(ui, "Enable Semantic Search?");
-                dialog_body(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(
-                            "Semantic Search can find references by description after a local download.",
-                        )
-                        .text_style(egui::TextStyle::Body)
-                        .color(crate::ui::theme::TEXT),
-                    );
-                    ui.add_space(crate::ui::theme::SPACE_2);
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(
-                                "Download about 200 MB of search assets now, or install later from Settings or the search palette with Command+F / Control+F.",
-                            )
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::ui::theme::TEXT_MUTED),
-                        )
-                        .wrap(),
-                    );
-                    ui.add_space(crate::ui::theme::SPACE_4);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.add(primary_dialog_button("Enable")).clicked() {
-                                enable = true;
-                            }
-                            if ui.add(secondary_dialog_button("Not Now")).clicked() {
-                                decline = true;
-                            }
-                        });
-                    });
+                ui.spacing_mut().item_spacing = crate::ui::card::ITEM_SPACING;
+                dialog_title(ui, "Enable Semantic Search?");
+                dialog_lead(
+                    ui,
+                    "Semantic Search can find references by description after a local download.",
+                );
+                dialog_detail(
+                    ui,
+                    &format!(
+                        "Download {megabytes} MB of search assets now, or install later from Settings or the search palette with Command+F / Control+F."
+                    ),
+                );
+                choice = dialog_actions(ui, "Not Now", |ui| {
+                    crate::ui::card::button(ui, "Enable", 0.0)
                 });
             });
 
-        if enable {
-            self.enable_semantic_search_from_first_launch_prompt(ctx);
-        } else if decline {
-            self.mark_semantic_search_first_launch_prompt_seen();
+        match choice {
+            Some(DialogChoice::Confirm) => {
+                self.enable_semantic_search_from_first_launch_prompt(ctx)
+            }
+            Some(DialogChoice::Cancel) => self.mark_semantic_search_first_launch_prompt_seen(),
+            None => {}
         }
     }
 
@@ -158,37 +144,27 @@ impl SnappyRefApp {
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
-            .frame(dialog_frame(ctx, entrance))
+            .frame(dialog_frame(entrance))
             .show(ctx, |ui| {
                 ui.multiply_opacity(entrance);
-                ui.set_min_width(destructive_dialog_width());
-                dialog_header(ui, "Remove Semantic Search?");
-                dialog_body(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(
-                                "Local search assets will be removed. Library data and saved search indexing stay intact.",
-                            )
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::ui::theme::TEXT_MUTED),
-                        )
-                        .wrap(),
-                    );
-                    ui.add_space(crate::ui::theme::SPACE_3);
-                    ui.horizontal(|ui| {
-                        if ui.add(secondary_dialog_button("Cancel")).clicked() {
-                            self.pending_semantic_search_remove = false;
-                        }
-                        if ui
-                            .add(destructive_action_button("Remove Semantic Search"))
-                            .clicked()
-                        {
-                            self.pending_semantic_search_remove = false;
-                            self.search
-                                .remove_semantic_search_assets_from_settings(&mut self.status);
-                        }
-                    });
-                });
+                ui.set_width(destructive_dialog_width());
+                ui.spacing_mut().item_spacing = crate::ui::card::ITEM_SPACING;
+                dialog_title(ui, "Remove Semantic Search?");
+                dialog_detail(
+                    ui,
+                    "Local search assets will be removed. Library data and saved search indexing stay intact.",
+                );
+                match dialog_actions(ui, "Cancel", |ui| {
+                    crate::ui::card::destructive_button(ui, "Remove Semantic Search", 0.0)
+                }) {
+                    Some(DialogChoice::Confirm) => {
+                        self.pending_semantic_search_remove = false;
+                        self.search
+                            .remove_semantic_search_assets_from_settings(&mut self.status);
+                    }
+                    Some(DialogChoice::Cancel) => self.pending_semantic_search_remove = false,
+                    None => {}
+                }
             });
     }
 

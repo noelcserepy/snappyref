@@ -1,28 +1,17 @@
 use eframe::egui;
 
-fn fade_frame(frame: egui::Frame, entrance: f32) -> egui::Frame {
+use crate::ui::{card, theme};
+
+/// A dialog is a floating card that fades in with its overlay entrance.
+/// Destructive dialogs keep the shell neutral: the red belongs on the
+/// irreversible action, not on the card behind it.
+pub(super) fn dialog_frame(entrance: f32) -> egui::Frame {
+    let frame = card::frame();
     let mut shadow = frame.shadow;
     shadow.color = shadow.color.gamma_multiply(entrance);
     frame
         .fill(frame.fill.gamma_multiply(entrance))
-        .stroke(egui::Stroke::new(
-            frame.stroke.width,
-            frame.stroke.color.gamma_multiply(entrance),
-        ))
         .shadow(shadow)
-}
-
-pub(super) fn dialog_frame(ctx: &egui::Context, entrance: f32) -> egui::Frame {
-    // Destructive dialogs keep the shell neutral. The destructive color belongs
-    // on the irreversible action, not on the panel edge behind the sidebar.
-    fade_frame(
-        egui::Frame::window(&ctx.global_style())
-            .fill(crate::ui::theme::SURFACE)
-            .stroke(egui::Stroke::NONE)
-            .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_PANEL))
-            .inner_margin(egui::Margin::same(0)),
-        entrance,
-    )
 }
 
 pub(super) fn destructive_dialog_width() -> f32 {
@@ -33,71 +22,59 @@ pub(super) fn semantic_search_prompt_width() -> f32 {
     380.0
 }
 
-pub(super) fn dialog_header(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(crate::ui::theme::SPACE_3);
-    ui.horizontal(|ui| {
-        ui.add_space(crate::ui::theme::SPACE_3);
-        ui.label(
-            egui::RichText::new(title)
-                .text_style(egui::TextStyle::Heading)
-                .color(crate::ui::theme::TEXT),
-        );
-    });
-    ui.add_space(crate::ui::theme::SPACE_2);
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-    ui.painter().hline(
-        rect.x_range(),
-        rect.center().y,
-        crate::ui::theme::stroke_subtle(),
+pub(super) fn dialog_title(ui: &mut egui::Ui, title: &str) {
+    ui.label(
+        egui::RichText::new(title)
+            .size(theme::TYPE_TITLE)
+            .color(theme::TEXT),
     );
 }
 
-pub(super) fn dialog_body(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::new()
-        .inner_margin(egui::Margin {
-            left: crate::ui::theme::SPACE_3 as i8,
-            right: crate::ui::theme::SPACE_3 as i8,
-            top: crate::ui::theme::SPACE_3 as i8,
-            bottom: crate::ui::theme::SPACE_3 as i8,
+/// The question a dialog asks, under its title.
+pub(super) fn dialog_lead(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        egui::RichText::new(text)
+            .size(theme::TYPE_CONTROL)
+            .color(theme::TEXT),
+    );
+}
+
+/// What the dialog's action does, wrapped under the lead.
+pub(super) fn dialog_detail(ui: &mut egui::Ui, text: &str) {
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(text)
+                .size(theme::TYPE_DETAIL)
+                .color(theme::TEXT_MUTED),
+        )
+        .wrap(),
+    );
+}
+
+pub(super) enum DialogChoice {
+    Confirm,
+    Cancel,
+}
+
+/// The dialog's closing row: the action on the right, Cancel quiet beside
+/// it. `action` draws the action button and returns its response.
+pub(super) fn dialog_actions(
+    ui: &mut egui::Ui,
+    cancel: &str,
+    action: impl FnOnce(&mut egui::Ui) -> egui::Response,
+) -> Option<DialogChoice> {
+    ui.add_space(theme::SPACE_3);
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if action(ui).clicked() {
+                Some(DialogChoice::Confirm)
+            } else if card::action(ui, cancel, true).clicked() {
+                Some(DialogChoice::Cancel)
+            } else {
+                None
+            }
         })
-        .show(ui, |ui| {
-            add_contents(ui);
-        });
-}
-
-pub(super) fn destructive_action_button(label: &str) -> egui::Button<'_> {
-    egui::Button::new(
-        egui::RichText::new(label)
-            .text_style(egui::TextStyle::Button)
-            .color(crate::ui::theme::TEXT),
-    )
-    .fill(crate::ui::theme::DESTRUCTIVE_FILL)
-    .stroke(egui::Stroke::new(
-        1.0_f32,
-        crate::ui::theme::DESTRUCTIVE_EDGE,
-    ))
-    .corner_radius(crate::ui::theme::RADIUS_INLINE)
-}
-
-pub(super) fn secondary_dialog_button(label: &str) -> egui::Button<'_> {
-    egui::Button::new(
-        egui::RichText::new(label)
-            .text_style(egui::TextStyle::Button)
-            .color(crate::ui::theme::TEXT),
-    )
-    .fill(crate::ui::theme::SURFACE_ELEVATED)
-    .stroke(crate::ui::theme::stroke_subtle())
-    .corner_radius(crate::ui::theme::RADIUS_INLINE)
-}
-
-pub(super) fn primary_dialog_button(label: &str) -> egui::Button<'_> {
-    egui::Button::new(
-        egui::RichText::new(label)
-            .text_style(egui::TextStyle::Button)
-            .color(crate::ui::theme::BACKGROUND),
-    )
-    .fill(crate::ui::theme::ACCENT)
-    .stroke(egui::Stroke::new(1.0_f32, crate::ui::theme::ACCENT))
-    .corner_radius(crate::ui::theme::RADIUS_INLINE)
+        .inner
+    })
+    .inner
 }

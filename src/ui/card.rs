@@ -1,7 +1,7 @@
 //! The Group card's vocabulary, shared by every floating card and its
 //! controls: the card frame, section captions, separators, inset wells,
-//! fields, segmented beds, navigation tabs, switches, the primary button,
-//! quiet text actions, progress tracks, status lines and panels, and
+//! fields, segmented beds, navigation tabs, switches, the primary and
+//! destructive buttons, quiet text actions, progress tracks, status lines and panels, and
 //! tooltips.
 //!
 //! Inside a card, controls are [`theme::CONTROL_HEIGHT`] tall and sit
@@ -21,7 +21,9 @@ pub(crate) const ITEM_SPACING: Vec2 = egui::vec2(6.0, 8.0);
 const STATUS_DOT: f32 = 6.0;
 const STATUS_INSET: f32 = STATUS_DOT + theme::SPACE_2;
 /// A bed's radius keeps its 8px cells concentric inside the 2px margin.
-const BED_RADIUS: u8 = 10;
+pub(crate) const BED_RADIUS: u8 = 10;
+/// A bed's margin around its cells, and the gap between them.
+pub(crate) const BED_INSET: f32 = 2.0;
 
 /// The floating card: surface fill, card radius, deep soft shadow, and
 /// padding. Menus tighten the padding and radius together; see `RADIUS_PANEL`.
@@ -90,13 +92,13 @@ pub(crate) fn bed(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(theme::SURFACE_PRESSED)
         .corner_radius(BED_RADIUS)
-        .inner_margin(2)
+        .inner_margin(BED_INSET)
         .show(ui, |ui| {
             ui.allocate_ui_with_layout(
                 egui::vec2(0.0, theme::CONTROL_HEIGHT),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.spacing_mut().item_spacing.x = BED_INSET;
                     contents(ui);
                 },
             );
@@ -140,12 +142,12 @@ pub(crate) fn tabs(
     let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
     ui.painter()
         .rect_filled(rect, BED_RADIUS, theme::SURFACE_PRESSED);
-    let inner = rect.shrink(2.0);
+    let inner = rect.shrink(BED_INSET);
     let count = names.len() as f32;
-    let width = (inner.width() - 2.0 * (count - 1.0)) / count;
+    let width = (inner.width() - BED_INSET * (count - 1.0)) / count;
     let tab = |i: usize| {
         Rect::from_min_size(
-            egui::pos2(inner.left() + i as f32 * (width + 2.0), inner.top()),
+            egui::pos2(inner.left() + i as f32 * (width + BED_INSET), inner.top()),
             egui::vec2(width, inner.height()),
         )
     };
@@ -277,10 +279,26 @@ pub(crate) fn switch(
 /// The card's primary action: a gold button with dark ink, at least
 /// `min_width` wide and wider when its label needs it. A card has at most one.
 pub(crate) fn button(ui: &mut egui::Ui, label: &str, min_width: f32) -> Response {
+    filled_button(ui, label, min_width, theme::ACCENT, theme::BACKGROUND)
+}
+
+/// [`button`] for an action that destroys data, like Delete board: red
+/// fill, light ink. It replaces the primary button, never sits beside one.
+pub(crate) fn destructive_button(ui: &mut egui::Ui, label: &str, min_width: f32) -> Response {
+    filled_button(ui, label, min_width, theme::DESTRUCTIVE, theme::TEXT)
+}
+
+fn filled_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    min_width: f32,
+    fill: Color32,
+    ink: Color32,
+) -> Response {
     let font = FontId::proportional(theme::TYPE_CONTROL);
     let text_width = ui
         .painter()
-        .layout_no_wrap(label.to_owned(), font.clone(), theme::BACKGROUND)
+        .layout_no_wrap(label.to_owned(), font.clone(), ink)
         .size()
         .x;
     let width = min_width.max(text_width + 2.0 * theme::SPACE_3);
@@ -288,21 +306,15 @@ pub(crate) fn button(ui: &mut egui::Ui, label: &str, min_width: f32) -> Response
         ui.allocate_exact_size(egui::vec2(width, theme::CONTROL_HEIGHT), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     let fill = if response.is_pointer_button_down_on() {
-        motion::mix(theme::ACCENT, theme::BACKGROUND, 0.15)
+        motion::mix(fill, theme::BACKGROUND, 0.15)
     } else if response.hovered() {
-        motion::mix(theme::ACCENT, theme::TEXT, 0.3)
+        motion::mix(fill, theme::TEXT, 0.3)
     } else {
-        theme::ACCENT
+        fill
     };
     let p = ui.painter();
     p.rect_filled(rect, theme::RADIUS_CONTROL, fill);
-    p.text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        label,
-        font,
-        theme::BACKGROUND,
-    );
+    p.text(rect.center(), Align2::CENTER_CENTER, label, font, ink);
     response
 }
 
@@ -333,11 +345,12 @@ pub(crate) fn action(ui: &mut egui::Ui, label: &str, enabled: bool) -> Response 
     response
 }
 
-/// A determinate progress track `width` wide: gold fill on the well tone.
+/// A determinate progress track `width` wide: gold fill on the raised tone,
+/// so the track reads on the card and on a [`status_panel`]'s bed alike.
 pub(crate) fn progress(ui: &mut egui::Ui, width: f32, fraction: f32) -> Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 4.0), Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, 2, theme::SURFACE_ELEVATED);
+    p.rect_filled(rect, 2, theme::SURFACE_RAISED);
     let mut filled = rect;
     filled.set_width(rect.width() * fraction.clamp(0.0, 1.0));
     p.rect_filled(filled, 2, theme::ACCENT);

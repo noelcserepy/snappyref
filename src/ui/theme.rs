@@ -45,11 +45,11 @@ pub const TYPE_CHIP: f32 = 11.0;
 /// Usage:
 /// - `RADIUS_NONE` for structural fills, rules, underlines, and canvas geometry
 /// - `RADIUS_MICRO` for tiny marks, active dots, thumbnails, and swatches under 24px
-/// - `RADIUS_INLINE` for key chips and dialog buttons
+/// - `RADIUS_INLINE` for key chips
 /// - `RADIUS_COMPACT` for tooltips, toasts, and small grouped containers
 /// - `RADIUS_CONTROL` for card controls, menu rows, buttons, and toolbar targets
-/// - `RADIUS_PANEL` for menus, dialogs, and edge-docked panels: 8px rows plus 4px padding
-/// - `RADIUS_CARD` for floating cards: the Group card, search palette, and group picker
+/// - `RADIUS_PANEL` for menus and edge-docked panels: 8px rows plus 4px padding
+/// - `RADIUS_CARD` for floating cards: the Group card, search palette, group picker, and dialogs
 pub const RADIUS_NONE: u8 = 0;
 pub const RADIUS_MICRO: u8 = 3;
 pub const RADIUS_INLINE: u8 = 4;
@@ -86,8 +86,8 @@ pub const TOOLTIP: egui::Color32 = color(0x2E, 0x2C, 0x2A);
 /// - `ACCENT` for active fills and the few states that need emphasis without adding a new hue
 /// - `ACCENT_*` color accents for canvas guides and other explicit color comparisons
 /// - `GREEN` for green guide and indexed/ready semantic-search status
-/// - `DESTRUCTIVE` for destructive labels and confirmation actions only
-/// - `DESTRUCTIVE_EDGE` / `DESTRUCTIVE_FILL` for destructive buttons and failed content states
+/// - `DESTRUCTIVE` for destructive labels and confirmation buttons only
+/// - `DESTRUCTIVE_EDGE` / `DESTRUCTIVE_FILL` for failed content states
 pub const BORDER: egui::Color32 = egui::Color32::from_rgba_premultiplied(20, 20, 20, 20);
 pub const BORDER_STRONG: egui::Color32 = egui::Color32::from_rgba_premultiplied(31, 31, 31, 31);
 pub const TEXT: egui::Color32 = color(0xF0, 0xF0, 0xF0);
@@ -176,12 +176,12 @@ fn configure_fonts(ctx: &egui::Context) {
 }
 
 fn apply_style(style: &mut egui::Style) {
-    // Editorial type scale: wider steps so size alone carries hierarchy
-    // (14 / 12 / 11 / 10) instead of borders or fills.
+    // egui's default widgets follow the type scale. `Small` exists only for
+    // `editorial_caption` microcaps.
     style.text_styles = [
-        (TextStyle::Heading, FontId::proportional(14.0)),
-        (TextStyle::Body, FontId::proportional(12.0)),
-        (TextStyle::Button, FontId::proportional(11.0)),
+        (TextStyle::Heading, FontId::proportional(TYPE_TITLE)),
+        (TextStyle::Body, FontId::proportional(TYPE_DETAIL)),
+        (TextStyle::Button, FontId::proportional(TYPE_CHIP)),
         (TextStyle::Small, FontId::proportional(10.0)),
         (TextStyle::Monospace, FontId::monospace(10.0)),
     ]

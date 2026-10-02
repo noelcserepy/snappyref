@@ -513,37 +513,24 @@ impl SnappyRefApp {
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
-            .frame(dialog_frame(ctx, entrance))
+            .frame(dialog_frame(entrance))
             .show(ctx, |ui| {
                 ui.multiply_opacity(entrance);
-                ui.set_min_width(destructive_dialog_width());
-                dialog_header(ui, "Delete board?");
-                dialog_body(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(format!("Delete \"{}\"?", pending.board_name))
-                            .color(crate::ui::theme::TEXT),
-                    );
-                    ui.add_space(crate::ui::theme::SPACE_1);
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(
-                                "Images stay in the shared Library. Placements, arrows, lines, and textboxes on this board will be removed.",
-                            )
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::ui::theme::TEXT_MUTED),
-                        )
-                        .wrap(),
-                    );
-                    ui.add_space(crate::ui::theme::SPACE_3);
-                    ui.horizontal(|ui| {
-                        if ui.add(secondary_dialog_button("Cancel")).clicked() {
-                            self.cancel_pending_board_delete();
-                        }
-                        if ui.add(destructive_action_button("Delete board")).clicked() {
-                            self.confirm_pending_board_delete(ctx);
-                        }
-                    });
-                });
+                ui.set_width(destructive_dialog_width());
+                ui.spacing_mut().item_spacing = crate::ui::card::ITEM_SPACING;
+                dialog_title(ui, "Delete board?");
+                dialog_lead(ui, &format!("Delete \"{}\"?", pending.board_name));
+                dialog_detail(
+                    ui,
+                    "Images stay in the shared Library. Placements, arrows, lines, and textboxes on this board will be removed.",
+                );
+                match dialog_actions(ui, "Cancel", |ui| {
+                    crate::ui::card::destructive_button(ui, "Delete board", 0.0)
+                }) {
+                    Some(DialogChoice::Confirm) => self.confirm_pending_board_delete(ctx),
+                    Some(DialogChoice::Cancel) => self.cancel_pending_board_delete(),
+                    None => {}
+                }
             });
     }
 
@@ -760,35 +747,23 @@ impl SnappyRefApp {
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
-            .frame(dialog_frame(ctx, entrance))
+            .frame(dialog_frame(entrance))
             .show(ctx, |ui| {
                 ui.multiply_opacity(entrance);
-                ui.set_min_width(destructive_dialog_width());
-                dialog_header(ui, title);
-                dialog_body(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(
-                                "Placements will be removed from all boards. Original files are kept.",
-                            )
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::ui::theme::TEXT_MUTED),
-                        )
-                        .wrap(),
-                    );
-                    ui.add_space(crate::ui::theme::SPACE_3);
-                    ui.horizontal(|ui| {
-                        if ui.add(secondary_dialog_button("Cancel")).clicked() {
-                            self.pending_library_remove = None;
-                        }
-                        if ui
-                            .add(destructive_action_button("Remove from library"))
-                            .clicked()
-                        {
-                            self.confirm_pending_library_remove();
-                        }
-                    });
-                });
+                ui.set_width(destructive_dialog_width());
+                ui.spacing_mut().item_spacing = crate::ui::card::ITEM_SPACING;
+                dialog_title(ui, title);
+                dialog_detail(
+                    ui,
+                    "Placements will be removed from all boards. Original files are kept.",
+                );
+                match dialog_actions(ui, "Cancel", |ui| {
+                    crate::ui::card::destructive_button(ui, "Remove from library", 0.0)
+                }) {
+                    Some(DialogChoice::Confirm) => self.confirm_pending_library_remove(),
+                    Some(DialogChoice::Cancel) => self.pending_library_remove = None,
+                    None => {}
+                }
             });
     }
 
@@ -1451,8 +1426,8 @@ impl eframe::App for SnappyRefApp {
 }
 
 use dialogs::{
-    destructive_action_button, destructive_dialog_width, dialog_body, dialog_frame, dialog_header,
-    secondary_dialog_button,
+    DialogChoice, destructive_dialog_width, dialog_actions, dialog_detail, dialog_frame,
+    dialog_lead, dialog_title,
 };
 
 fn apply_arrangement_action(

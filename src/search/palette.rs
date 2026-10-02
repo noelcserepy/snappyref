@@ -420,11 +420,7 @@ fn paint_image_pivot_pill(
     let dismiss_size = 14.0;
 
     egui::Frame::new()
-        .fill(egui::Color32::from_white_alpha(18))
-        .stroke(egui::Stroke::new(
-            1.0_f32,
-            egui::Color32::from_white_alpha(28),
-        ))
+        .fill(crate::ui::theme::SURFACE_ELEVATED)
         .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_COMPACT))
         .inner_margin(egui::Margin {
             left: crate::ui::theme::SPACE_1 as i8,
@@ -447,7 +443,7 @@ fn paint_image_pivot_pill(
                     ui.painter().rect_filled(
                         thumb_rect,
                         egui::CornerRadius::same(crate::ui::theme::RADIUS_MICRO),
-                        crate::ui::theme::SURFACE_ELEVATED,
+                        crate::ui::theme::SURFACE_RAISED,
                     );
                 }
 
@@ -512,7 +508,7 @@ pub(crate) fn paint_palette_divider(ui: &mut egui::Ui) {
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
     ui.painter()
-        .rect_filled(rect, 0, egui::Color32::from_white_alpha(14));
+        .rect_filled(rect, 0, crate::ui::theme::SURFACE_RAISED);
 }
 
 pub(crate) fn paint_palette_empty_state(
@@ -590,9 +586,8 @@ pub(crate) fn paint_palette_install_state(
             ("Install failed", error.clone(), theme::DESTRUCTIVE)
         }
         _ => {
-            let megabytes = crate::search::semantic::default_semantic_search_asset_descriptor()
-                .size
-                / 1_000_000;
+            let megabytes =
+                crate::search::semantic::default_semantic_search_asset_descriptor().megabytes();
             (
                 "Install Semantic Search",
                 format!("Find references by describing them. One-time {megabytes} MB download."),
@@ -725,7 +720,7 @@ fn paint_palette_empty_group(
         if active {
             ui.painter().rect_filled(
                 fill_rect,
-                crate::ui::theme::RADIUS_COMPACT,
+                crate::ui::theme::RADIUS_CONTROL,
                 crate::ui::motion::mix(
                     crate::ui::theme::SURFACE_ELEVATED,
                     crate::ui::theme::SURFACE_PRESSED,
@@ -735,7 +730,7 @@ fn paint_palette_empty_group(
         } else if hover > 0.0 || press > 0.0 {
             ui.painter().rect_filled(
                 fill_rect,
-                crate::ui::theme::RADIUS_COMPACT,
+                crate::ui::theme::RADIUS_CONTROL,
                 crate::ui::motion::mix(
                     crate::ui::theme::SURFACE.gamma_multiply(hover),
                     crate::ui::theme::SURFACE_PRESSED,
