@@ -427,7 +427,7 @@ fn paint_unloaded_placement(
             image_rect.center(),
             egui::Align2::CENTER_CENTER,
             label,
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(crate::ui::theme::TYPE_DETAIL),
             crate::ui::theme::TEXT_MUTED,
         );
     }

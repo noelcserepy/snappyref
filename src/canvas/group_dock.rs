@@ -505,7 +505,8 @@ fn align_pad(
     input: &mut DockInput,
 ) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(PAD_SIZE), Sense::hover());
-    ui.painter().rect_filled(rect, 10, theme::SURFACE_PRESSED);
+    ui.painter()
+        .rect_filled(rect, card::BED_RADIUS, theme::SURFACE_PRESSED);
     let grid = rect.shrink(4.0);
     let step = grid.width() / 3.0;
     let cell_at = |x: usize, y: usize| {
@@ -575,17 +576,21 @@ fn align_pad(
         let response = tip(response, &tooltip);
         let p = ui.painter();
         if (selected && spread) || response.hovered() {
-            p.rect_filled(target.shrink(1.0), 6, theme::SURFACE_ELEVATED);
+            p.rect_filled(
+                target.shrink(1.0),
+                theme::RADIUS_COMPACT,
+                theme::SURFACE_ELEVATED,
+            );
         }
         if response.has_focus() {
             p.rect_stroke(
                 target.shrink(1.0),
-                6,
+                theme::RADIUS_COMPACT,
                 Stroke::new(1.0_f32, theme::ACCENT),
                 egui::StrokeKind::Inside,
             );
         }
-        let fade = if enabled { 1.0 } else { 0.4 };
+        let fade = card::fade(enabled);
         if selected {
             paint_icon(
                 p,
