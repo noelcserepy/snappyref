@@ -176,8 +176,8 @@ fn inspect_semantic_search_install_accepts_prompt() {
     scenario.capture_screen("screen-prompt", &mut harness);
     let enable_rect = harness.get_by_label("Enable").rect();
     scenario.target("snap.semantic-search.install.enable", "button", enable_rect);
-    scenario.action("click semantic search enable", enable_rect.center());
-    harness.get_by_label("Enable").click();
+    scenario.event("key", serde_json::json!({ "key": "Enter" }));
+    harness.key_press(egui::Key::Enter);
     harness.run();
 
     scenario.fact(
@@ -190,7 +190,7 @@ fn inspect_semantic_search_install_accepts_prompt() {
         }),
     );
     harness.state_mut().flush_persistence();
-    scenario.assertion("install action started", starts.get() == 1);
+    scenario.assertion("Enter enables and starts the install", starts.get() == 1);
     scenario.assertion(
         "semantic search status is downloading",
         harness.state().search.local_model_store_status()
@@ -206,6 +206,22 @@ fn inspect_semantic_search_install_accepts_prompt() {
     );
 
     scenario.capture_screen("screen-install-started", &mut harness);
+
+    harness
+        .state_mut()
+        .search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+    harness.state_mut().pending_semantic_search_remove = true;
+    harness.run();
+    scenario.capture_screen("screen-remove-dialog", &mut harness);
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    scenario.assertion(
+        "Escape cancels Remove and keeps the model",
+        !harness.state().pending_semantic_search_remove
+            && harness.state().search.local_model_store_status()
+                == LocalModelStoreStatus::Installed,
+    );
 
     let report = scenario.finish();
     assert!(
@@ -557,6 +573,24 @@ fn inspect_delete_board_modal_flash_writes_artifact() {
     scenario.assertion(
         "sidebar remains open behind modal",
         harness.state().sidebar_open,
+    );
+
+    harness.key_press(egui::Key::Enter);
+    harness.step();
+    scenario.assertion(
+        "Enter does not confirm a destructive dialog",
+        harness.state().pending_board_delete.is_some(),
+    );
+    harness.key_press(egui::Key::Escape);
+    harness.step();
+    scenario.assertion(
+        "Escape cancels and keeps the board",
+        harness.state().pending_board_delete.is_none()
+            && library
+                .list_boards()
+                .unwrap()
+                .iter()
+                .any(|board| board.id == second.id),
     );
 
     let report = scenario.finish();

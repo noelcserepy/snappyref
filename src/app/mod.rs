@@ -498,41 +498,23 @@ impl SnappyRefApp {
     }
 
     fn show_board_delete_confirmation(&mut self, ctx: &egui::Context) {
-        let entrance = crate::ui::motion::overlay_entrance(
-            ctx,
-            egui::Id::new("board_delete_dialog_entrance"),
-            self.pending_board_delete.is_some(),
-        );
-        let Some(pending) = self.pending_board_delete.clone() else {
+        let Some(pending) = &self.pending_board_delete else {
             return;
         };
-
-        let settle = crate::ui::motion::settle_offset(entrance);
         let title = format!("Delete \"{}\"?", pending.board_name);
-        egui::Window::new(title.as_str())
-            .id(egui::Id::new("board_delete_dialog"))
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
-            .frame(dialog_frame(entrance))
-            .show(ctx, |ui| {
-                ui.multiply_opacity(entrance);
-                ui.set_width(destructive_dialog_width());
-                ui.spacing_mut().item_spacing = crate::ui::card::ITEM_SPACING;
-                dialog_title(ui, &title);
-                dialog_detail(
-                    ui,
-                    "The images stay in your library. Arrows, lines, and textboxes on this board are deleted.",
-                );
-                match dialog_actions(ui, "Cancel", |ui| {
-                    crate::ui::card::destructive_button(ui, "Delete board", 0.0)
-                }) {
-                    Some(DialogChoice::Confirm) => self.confirm_pending_board_delete(ctx),
-                    Some(DialogChoice::Cancel) => self.cancel_pending_board_delete(),
-                    None => {}
-                }
-            });
+        let choice = Dialog {
+            id: "delete-board",
+            title: &title,
+            detail: "The images stay in your library. Arrows, lines, and textboxes on this board are deleted.",
+            cancel: "Cancel",
+            action: DialogAction::Destructive("Delete board"),
+        }
+        .show(ctx);
+        match choice {
+            Some(DialogChoice::Confirm) => self.confirm_pending_board_delete(ctx),
+            Some(DialogChoice::Cancel) => self.cancel_pending_board_delete(),
+            None => {}
+        }
     }
 
     fn modal_open(&self) -> bool {
@@ -728,44 +710,32 @@ impl SnappyRefApp {
     }
 
     fn show_library_remove_confirmation(&mut self, ctx: &egui::Context) {
-        let entrance = crate::ui::motion::overlay_entrance(
-            ctx,
-            egui::Id::new("library_remove_dialog_entrance"),
-            self.pending_library_remove.is_some(),
-        );
-        let Some(pending) = self.pending_library_remove.clone() else {
+        let Some(pending) = &self.pending_library_remove else {
             return;
         };
-
-        let title = if pending.asset_ids.len() == 1 {
-            "Remove asset from Library?"
-        } else {
-            "Remove assets from Library?"
+        let (title, detail) = match pending.asset_ids.len() {
+            1 => (
+                "Remove 1 image from the library?".to_owned(),
+                "It disappears from every board. The original file on disk stays.",
+            ),
+            count => (
+                format!("Remove {count} images from the library?"),
+                "They disappear from every board. The original files on disk stay.",
+            ),
         };
-        let settle = crate::ui::motion::settle_offset(entrance);
-        egui::Window::new(title)
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
-            .frame(dialog_frame(entrance))
-            .show(ctx, |ui| {
-                ui.multiply_opacity(entrance);
-                ui.set_width(destructive_dialog_width());
-                ui.spacing_mut().item_spacing = crate::ui::card::ITEM_SPACING;
-                dialog_title(ui, title);
-                dialog_detail(
-                    ui,
-                    "Placements will be removed from all boards. Original files are kept.",
-                );
-                match dialog_actions(ui, "Cancel", |ui| {
-                    crate::ui::card::destructive_button(ui, "Remove from library", 0.0)
-                }) {
-                    Some(DialogChoice::Confirm) => self.confirm_pending_library_remove(),
-                    Some(DialogChoice::Cancel) => self.pending_library_remove = None,
-                    None => {}
-                }
-            });
+        let choice = Dialog {
+            id: "remove-from-library",
+            title: &title,
+            detail,
+            cancel: "Cancel",
+            action: DialogAction::Destructive("Remove"),
+        }
+        .show(ctx);
+        match choice {
+            Some(DialogChoice::Confirm) => self.confirm_pending_library_remove(),
+            Some(DialogChoice::Cancel) => self.pending_library_remove = None,
+            None => {}
+        }
     }
 
     #[cfg(test)]
@@ -788,7 +758,7 @@ impl SnappyRefApp {
     }
 
     fn handle_selection_shortcuts(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
-        if self.search.is_open() || self.canvas.group_picker_open() {
+        if self.modal_open() || self.search.is_open() || self.canvas.group_picker_open() {
             return;
         }
 
@@ -928,11 +898,7 @@ impl SnappyRefApp {
     }
 
     fn handle_board_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.pending_board_delete.is_some() || self.pending_library_remove.is_some() {
-            return;
-        }
-
-        if self.search.is_open() {
+        if self.modal_open() || self.search.is_open() {
             return;
         }
 
@@ -1426,10 +1392,7 @@ impl eframe::App for SnappyRefApp {
     }
 }
 
-use dialogs::{
-    DialogChoice, destructive_dialog_width, dialog_actions, dialog_detail, dialog_frame,
-    dialog_title,
-};
+use dialogs::{Dialog, DialogAction, DialogChoice};
 
 fn apply_arrangement_action(
     canvas: &mut crate::canvas::CanvasState,

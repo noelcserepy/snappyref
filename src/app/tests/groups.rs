@@ -1703,7 +1703,7 @@ fn scrub_survives_board_switch() {
 
 /// Captures the context menu over an empty board, a selected Group, a
 /// multi-image selection with one row hovered, and opened in the window's
-/// bottom-right corner.
+/// bottom-right corner, then the dialog its last row opens.
 #[test]
 fn inspect_context_menu_writes_artifact() {
     let mut scenario = InspectScenario::new("context-menu");
@@ -1781,6 +1781,16 @@ fn inspect_context_menu_writes_artifact() {
         last_row.max.x < corner.x && last_row.max.y < corner.y,
     );
     scenario.capture_screen("edge", &mut harness);
+
+    harness.get_by_label("Remove from library…").click();
+    for _ in 0..16 {
+        harness.step();
+    }
+    scenario.assertion(
+        "Remove from library asks before removing",
+        harness.state().pending_library_remove.is_some(),
+    );
+    scenario.capture_screen("remove-from-library", &mut harness);
 
     let report = scenario.finish();
     assert!(

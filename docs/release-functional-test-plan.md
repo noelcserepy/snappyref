@@ -37,7 +37,7 @@ stacking, always need a native run.
 
 | ID | Do | Expect | Covered |
 | --- | --- | --- | --- |
-| WIN-1 | First launch on an empty root, choose Not Now in "Enable Semantic Search?" | Prompt closes, empty board usable, prompt does not return after restart | |
+| WIN-1 | First launch on an empty root, choose Not now in "Enable Semantic Search?" | Prompt closes, empty board usable, prompt does not return after restart | |
 | WIN-2 | `Mod+B` twice; open it again and click the canvas | `Mod+B` opens and closes the sidebar; a canvas click closes it | |
 | WIN-3 | Close the sidebar and look at the left edge | A small pull tab showing the `Mod+B` label sits level with the sidebar top; clicking it opens the sidebar | |
 | WIN-4 | Switch the sidebar between Boards and Settings tabs, scroll each | Both tabs reachable, scroll does not pan or zoom the canvas | |
@@ -211,13 +211,14 @@ Semantic rows need the model installed in the data root.
 
 ## Dialogs
 
-The four dialogs are "Enable Semantic Search?", "Delete "<board name>"?", "Remove asset(s) from Library?" and "Remove Semantic Search?".
+The four dialogs are "Enable Semantic Search?", "Delete "<board name>"?", "Remove <n> image(s) from the library?" and "Remove Semantic Search?".
 
 | ID | Do | Expect | Covered |
 | --- | --- | --- | --- |
 | DLG-1 | Open each dialog, drag inside its body | Dialog stays centered, canvas behind does not pan or select | |
 | DLG-2 | With a dialog open, click the sidebar and canvas | Clicks blocked until the dialog closes | |
 | DLG-3 | Cancel and confirm each | Cancel changes nothing, confirm acts once | |
+| DLG-4 | Press Escape in each; reopen each and press Enter | Escape cancels. Enter enables Semantic Search and does nothing in the Delete and Remove dialogs | |
 
 ## Persistence and restart
 

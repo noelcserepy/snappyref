@@ -1,54 +1,28 @@
-use eframe::egui;
+//! The app's one dialog: a compact card that asks a question. The title is
+//! the question, a muted line says what the action does, and the actions sit
+//! bottom right, a quiet cancel beside one filled action.
 
-use crate::ui::{card, theme};
+use eframe::egui::{self, Align, Align2, FontId, Layout, Sense, UiBuilder, vec2};
 
-/// A dialog is a floating card that fades in with its overlay entrance.
-/// Destructive dialogs keep the shell neutral: the red belongs on the
-/// irreversible action, not on the card behind it.
-pub(super) fn dialog_frame(entrance: f32) -> egui::Frame {
-    let frame = card::frame();
-    let mut shadow = frame.shadow;
-    shadow.color = shadow.color.gamma_multiply(entrance);
-    frame
-        .fill(frame.fill.gamma_multiply(entrance))
-        .shadow(shadow)
+use crate::ui::{card, motion, theme};
+
+const WIDTH: f32 = 320.0;
+
+pub(super) enum DialogAction<'a> {
+    /// The gold button. Enter runs it.
+    Primary(&'a str),
+    /// The red button. Only a click runs it, so a stray Enter never
+    /// destroys data.
+    Destructive(&'a str),
 }
 
-pub(super) fn destructive_dialog_width() -> f32 {
-    340.0
-}
-
-pub(super) fn semantic_search_prompt_width() -> f32 {
-    380.0
-}
-
-pub(super) fn dialog_title(ui: &mut egui::Ui, title: &str) {
-    ui.label(
-        egui::RichText::new(title)
-            .size(theme::TYPE_TITLE)
-            .color(theme::TEXT),
-    );
-}
-
-/// The question a dialog asks, under its title.
-pub(super) fn dialog_lead(ui: &mut egui::Ui, text: &str) {
-    ui.label(
-        egui::RichText::new(text)
-            .size(theme::TYPE_CONTROL)
-            .color(theme::TEXT),
-    );
-}
-
-/// What the dialog's action does, wrapped under the lead.
-pub(super) fn dialog_detail(ui: &mut egui::Ui, text: &str) {
-    ui.add(
-        egui::Label::new(
-            egui::RichText::new(text)
-                .size(theme::TYPE_DETAIL)
-                .color(theme::TEXT_MUTED),
-        )
-        .wrap(),
-    );
+pub(super) struct Dialog<'a> {
+    /// Stable across frames while the title changes, like a board's name.
+    pub id: &'static str,
+    pub title: &'a str,
+    pub detail: &'a str,
+    pub cancel: &'a str,
+    pub action: DialogAction<'a>,
 }
 
 pub(super) enum DialogChoice {
@@ -56,25 +30,115 @@ pub(super) enum DialogChoice {
     Cancel,
 }
 
-/// The dialog's closing row: the action on the right, Cancel quiet beside
-/// it. `action` draws the action button and returns its response.
-pub(super) fn dialog_actions(
-    ui: &mut egui::Ui,
-    cancel: &str,
-    action: impl FnOnce(&mut egui::Ui) -> egui::Response,
-) -> Option<DialogChoice> {
-    ui.add_space(theme::SPACE_3);
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if action(ui).clicked() {
-                Some(DialogChoice::Confirm)
-            } else if card::action(ui, cancel, true).clicked() {
-                Some(DialogChoice::Cancel)
-            } else {
-                None
-            }
+impl Dialog<'_> {
+    /// Draws the dialog. Call it only on frames where it is open. Returns
+    /// the choice made this frame by click or key: Escape cancels, Enter
+    /// confirms a primary action.
+    pub(super) fn show(&self, ctx: &egui::Context) -> Option<DialogChoice> {
+        let id = egui::Id::new(("dialog", self.id));
+        let entrance = motion::entrance_on_appear(ctx, id);
+        let frame = card::frame();
+        let mut shadow = frame.shadow;
+        shadow.color = shadow.color.gamma_multiply(entrance);
+        let frame = frame
+            .fill(frame.fill.gamma_multiply(entrance))
+            .shadow(shadow);
+        let clicked = egui::Window::new(self.title)
+            .id(id)
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(
+                Align2::CENTER_CENTER,
+                vec2(0.0, motion::settle_offset(entrance)),
+            )
+            .frame(frame)
+            .show(ctx, |ui| {
+                ui.multiply_opacity(entrance);
+                ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                let inner = WIDTH - 2.0 * card::PADDING;
+                ui.set_width(inner);
+                text(ui, self.title, theme::TYPE_TITLE, theme::TEXT);
+                ui.add_space(theme::SPACE_1);
+                text(ui, self.detail, theme::TYPE_DETAIL, theme::TEXT_MUTED);
+                ui.add_space(theme::SPACE_4);
+                let (row, _) =
+                    ui.allocate_exact_size(vec2(inner, theme::CONTROL_HEIGHT), Sense::hover());
+                ui.scope_builder(
+                    UiBuilder::new()
+                        .max_rect(row)
+                        .layout(Layout::right_to_left(Align::Center)),
+                    |ui| self.actions(ui),
+                )
+                .inner
+            })
+            .and_then(|window| window.inner)
+            .flatten();
+        clicked.or_else(|| {
+            ctx.input_mut(|i| {
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+                    Some(DialogChoice::Cancel)
+                } else if matches!(self.action, DialogAction::Primary(_))
+                    && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                {
+                    Some(DialogChoice::Confirm)
+                } else {
+                    None
+                }
+            })
         })
-        .inner
-    })
-    .inner
+    }
+
+    /// Lays the actions out right to left, so the filled one ends flush right.
+    fn actions(&self, ui: &mut egui::Ui) -> Option<DialogChoice> {
+        ui.spacing_mut().item_spacing.x = card::ITEM_SPACING.x;
+        let confirm = match self.action {
+            DialogAction::Primary(label) => card::button(ui, label, 0.0),
+            DialogAction::Destructive(label) => card::destructive_button(ui, label, 0.0),
+        };
+        let cancel = quiet_button(ui, self.cancel);
+        if confirm.clicked() {
+            Some(DialogChoice::Confirm)
+        } else if cancel.clicked() {
+            Some(DialogChoice::Cancel)
+        } else {
+            None
+        }
+    }
+}
+
+fn text(ui: &mut egui::Ui, text: &str, size: f32, color: egui::Color32) {
+    ui.add(egui::Label::new(egui::RichText::new(text).size(size).color(color)).wrap());
+}
+
+/// Cancel sized like the filled button beside it: control height and type,
+/// muted ink that lifts on hover, no fill at rest.
+fn quiet_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let font = FontId::proportional(theme::TYPE_CONTROL);
+    let text_width = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), theme::TEXT)
+        .size()
+        .x;
+    let response = card::cell(
+        ui,
+        label,
+        vec2(text_width + 2.0 * theme::SPACE_3, theme::CONTROL_HEIGHT),
+        false,
+        true,
+        egui::Color32::TRANSPARENT,
+    );
+    let ink = if response.hovered() {
+        theme::TEXT
+    } else {
+        theme::TEXT_MUTED
+    };
+    ui.painter().text(
+        response.rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font,
+        ink,
+    );
+    response
 }

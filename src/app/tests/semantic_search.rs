@@ -227,6 +227,7 @@ fn settings_semantic_search_remove_requires_confirmation() {
         app.show_semantic_search_remove_confirmation(ctx);
     });
 
+    let settings_remove = harness.get_by_label("Remove").rect();
     harness.get_by_label("Remove").click();
     harness.run();
 
@@ -236,7 +237,11 @@ fn settings_semantic_search_remove_requires_confirmation() {
         LocalModelStoreStatus::Installed
     );
 
-    harness.get_by_label("Remove Semantic Search").click();
+    harness
+        .get_all_by_label("Remove")
+        .find(|button| button.rect() != settings_remove)
+        .expect("the dialog's Remove")
+        .click();
     harness.run();
 
     assert!(!harness.state().pending_semantic_search_remove);
