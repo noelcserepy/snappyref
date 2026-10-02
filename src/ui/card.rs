@@ -8,6 +8,7 @@
 //! [`ITEM_SPACING`] apart; [`section`] adds 6 more above each caption, so
 //! sections read 14 apart.
 
+use eframe::egui::emath::GuiRounding as _;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Response, Sense, Stroke, Vec2};
 
 use super::shortcut::{self, Shortcut};
@@ -357,33 +358,51 @@ pub(crate) fn progress(ui: &mut egui::Ui, width: f32, fraction: f32) -> Response
     response
 }
 
-/// A status dot in `color` and its label, on the hint label's type.
+/// A status dot in `color` and its label, on the hint label's type. The
+/// label centers on the row like every other label, so it shares their
+/// baseline; the dot then centers on the label's x-height, where a typeset
+/// bullet sits.
 pub(crate) fn status(ui: &mut egui::Ui, color: Color32, label: &str) -> Response {
-    let galley = ui.painter().layout_no_wrap(
-        label.to_owned(),
-        FontId::proportional(theme::TYPE_DETAIL),
-        theme::TEXT_MUTED,
-    );
+    let font = FontId::proportional(theme::TYPE_DETAIL);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), theme::TEXT_MUTED);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(STATUS_INSET + galley.size().x, 18.0),
         Sense::hover(),
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
     let p = ui.painter();
+    // Text draws on whole pixels, so the dot measures from where it lands.
+    let text = egui::pos2(
+        rect.left() + STATUS_INSET,
+        rect.center().y - galley.size().y * 0.5,
+    )
+    .round_to_pixels(ui.pixels_per_point());
     p.circle_filled(
-        rect.left_center() + egui::vec2(STATUS_DOT * 0.5, 0.0),
+        egui::pos2(
+            rect.left() + STATUS_DOT * 0.5,
+            text.y + x_height_center(p, font),
+        ),
         STATUS_DOT * 0.5,
         color,
     );
-    p.galley(
-        egui::pos2(
-            rect.left() + STATUS_INSET,
-            rect.center().y - galley.size().y * 0.5,
-        ),
-        galley,
-        theme::TEXT_MUTED,
-    );
+    p.galley(text, galley, theme::TEXT_MUTED);
     response
+}
+
+/// How far below the top of a line of `font` the middle of its x-height
+/// sits, measured from the ink of an "x".
+fn x_height_center(painter: &egui::Painter, font: FontId) -> f32 {
+    let galley = painter.layout_no_wrap("x".to_owned(), font, theme::TEXT);
+    galley
+        .rows
+        .first()
+        .and_then(|row| {
+            let glyph = row.row.glyphs.first()?;
+            Some(row.pos.y + glyph.pos.y + glyph.uv_rect.offset.y + glyph.uv_rect.size.y * 0.5)
+        })
+        .unwrap_or(galley.size().y * 0.5)
 }
 
 /// What a [`status_panel`] shows.
