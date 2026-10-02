@@ -74,6 +74,13 @@ impl From<ExtractError> for SemanticSearchInstallError {
     }
 }
 
+impl SemanticSearchAssetDescriptor {
+    /// The download size as the UI quotes it.
+    pub(crate) fn megabytes(&self) -> u64 {
+        self.size / 1_000_000
+    }
+}
+
 pub(crate) fn default_semantic_search_asset_descriptor() -> SemanticSearchAssetDescriptor {
     SemanticSearchAssetDescriptor {
         url: env!("SNAPPYREF_SEMANTIC_SEARCH_URL").to_owned(),

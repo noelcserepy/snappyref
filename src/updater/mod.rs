@@ -472,6 +472,19 @@ impl UpdateService {
         }
     }
 
+    /// Puts the service in `state` as if a check had just completed at
+    /// `checked_unix_millis`, so the schedule waits a full interval.
+    #[cfg(test)]
+    pub(crate) fn set_checked_state_for_test(
+        &mut self,
+        state: UpdateState,
+        checked_unix_millis: u64,
+    ) {
+        self.state = state;
+        self.last_check = Some(self.started_at.elapsed());
+        self.last_check_completed_at = Some(checked_unix_millis);
+    }
+
     /// Suggested wait until updater work needs another tick, used by
     /// callers to request a future repaint. Poll while waiting for the
     /// first settled-idle sample and while a worker is in flight so

@@ -174,10 +174,16 @@ fn inspect_semantic_search_install_accepts_prompt() {
             .should_show_semantic_search_first_launch_prompt(),
     );
     scenario.capture_screen("screen-prompt", &mut harness);
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::F);
+    harness.run();
+    scenario.assertion(
+        "search shortcut stays behind the open prompt",
+        !harness.state().search.is_open(),
+    );
     let enable_rect = harness.get_by_label("Enable").rect();
     scenario.target("snap.semantic-search.install.enable", "button", enable_rect);
-    scenario.action("click semantic search enable", enable_rect.center());
-    harness.get_by_label("Enable").click();
+    scenario.event("key", serde_json::json!({ "key": "Enter" }));
+    harness.key_press(egui::Key::Enter);
     harness.run();
 
     scenario.fact(
@@ -190,7 +196,7 @@ fn inspect_semantic_search_install_accepts_prompt() {
         }),
     );
     harness.state_mut().flush_persistence();
-    scenario.assertion("install action started", starts.get() == 1);
+    scenario.assertion("Enter enables and starts the install", starts.get() == 1);
     scenario.assertion(
         "semantic search status is downloading",
         harness.state().search.local_model_store_status()
@@ -207,6 +213,22 @@ fn inspect_semantic_search_install_accepts_prompt() {
 
     scenario.capture_screen("screen-install-started", &mut harness);
 
+    harness
+        .state_mut()
+        .search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+    harness.state_mut().pending_semantic_search_remove = true;
+    harness.run();
+    scenario.capture_screen("screen-remove-dialog", &mut harness);
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    scenario.assertion(
+        "Escape cancels Remove and keeps the model",
+        !harness.state().pending_semantic_search_remove
+            && harness.state().search.local_model_store_status()
+                == LocalModelStoreStatus::Installed,
+    );
+
     let report = scenario.finish();
     assert!(
         report.passed,
@@ -221,7 +243,7 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
     scenario.event(
         "seed",
         serde_json::json!({
-            "seed": "sidebar-open-options-tab",
+            "seed": "sidebar-open-settings-tab",
         }),
     );
 
@@ -230,7 +252,7 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
     let actual_status = crate::search::semantic::default_local_model_store_status();
     let mut app = test_app(Some(library));
     app.sidebar_open = true;
-    app.sidebar_tab = SidebarTab::Options;
+    app.sidebar_tab = SidebarTab::Settings;
     app.settings.semantic_search_first_launch_prompt_seen = true;
     app.search
         .set_local_model_store_status_for_test(actual_status.clone());
@@ -238,18 +260,14 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
 
     scenario.capture_screen("screen-settings-top", &mut harness);
 
-    let section_rect = harness.get_by_label("Semantic Search").rect();
+    harness.get_by_label("SEMANTIC SEARCH").scroll_to_me();
+    harness.run();
+    let section_rect = harness.get_by_label("SEMANTIC SEARCH").rect();
     scenario.target(
         "snap.sidebar.semantic-search",
         "settings-section",
         section_rect,
     );
-    scenario.action(
-        "scroll semantic search settings into view",
-        section_rect.center(),
-    );
-    harness.get_by_label("Semantic Search").scroll_to_me();
-    harness.run();
 
     let frame_stats = scenario.capture_screen("screen", &mut harness);
     scenario.fact(
@@ -272,10 +290,11 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
     );
     scenario.assertion("screen frame is nonblank", frame_stats.unique_colors > 1);
 
-    let shortcuts_rect = harness.get_by_label("CORE ACTIONS").rect();
-    scenario.action("scroll shortcut groups into view", shortcuts_rect.center());
-    harness.get_by_label("LAYOUT + HISTORY").scroll_to_me();
+    let keys_page = harness.get_by_label("Keys").rect();
+    scenario.action("open the Keys settings page", keys_page.center());
+    inspect_click_at(&harness, keys_page.center(), egui::Modifiers::NONE);
     harness.run();
+    harness.get_by_label("CORE ACTIONS");
     let shortcut_frame = scenario.capture_screen("screen-shortcuts", &mut harness);
     scenario.assertion(
         "shortcut groups render in the full app frame",
@@ -288,6 +307,153 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
     harness.get_by_label("Undo").scroll_to_me();
     harness.run();
     scenario.capture_screen("screen-shortcuts-end", &mut harness);
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+}
+
+#[test]
+fn inspect_sidebar_pages_writes_artifact() {
+    let mut scenario = InspectScenario::new("sidebar-pages");
+    scenario.event(
+        "seed",
+        serde_json::json!({
+            "seed": "five-boards-long-names-update-available-search-downloading",
+            "purpose": "every sidebar page: Boards at rest and hovered, then General with Semantic Search and About, then Keys",
+        }),
+    );
+
+    let root = TempRoot::new("snappyref-inspect-sidebar-pages");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let source = library
+        .store_rgba_image(
+            "sidebar-swatch",
+            &solid_rgba([224, 168, 72, 255], 40, 40),
+            40,
+            40,
+        )
+        .unwrap();
+    let asset = library
+        .register_original(&source, "image/png", 40, 40, 40 * 40 * 4, None)
+        .unwrap();
+    let add_placements = |board_id: i64, count: usize| {
+        for index in 0..count {
+            library
+                .fixture_placement(
+                    board_id,
+                    Placement::loaded(
+                        PlacementState::new(
+                            library.allocate_document_id(),
+                            egui::pos2(index as f32 * 50.0, 0.0),
+                            1.0,
+                            0.0,
+                            0,
+                            false,
+                        ),
+                        asset.clone(),
+                    ),
+                )
+                .unwrap();
+        }
+    };
+    let first = library.list_boards().unwrap()[0].clone();
+    add_placements(first.id, 3);
+    let active = library
+        .fixture_board("Character turnarounds and expression sheets for the spring pitch")
+        .unwrap();
+    add_placements(active.id, 12);
+    let hovered = library
+        .fixture_board("Architecture references from the Lisbon trip, tiles and facades")
+        .unwrap();
+    add_placements(hovered.id, 7);
+    library.fixture_board("Lighting").unwrap();
+    library.set_active_board(active.id).unwrap();
+
+    let mut app = test_app(Some(library.clone()));
+    app.active_board_id = active.id;
+    app.refresh_board_summaries();
+    app.sidebar_open = true;
+    app.sidebar_tab = SidebarTab::Boards;
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+    app.search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Downloading { percent: 42 });
+    let now_millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let entry = crate::updater::manifest::PlatformEntry {
+        url: "https://example.invalid/snappyref.zip".to_owned(),
+        sha256: "0".repeat(64),
+        size: 1,
+    };
+    app.update_service.set_checked_state_for_test(
+        crate::updater::UpdateState::Available {
+            release: crate::updater::manifest::Manifest {
+                version: "9.9.0".to_owned(),
+                macos: entry.clone(),
+                windows: entry,
+            },
+        },
+        now_millis - 2 * 60 * 60 * 1000,
+    );
+    let mut harness = app_full_harness(app);
+    harness.step();
+    scenario.capture_screen("screen-000-boards", &mut harness);
+    scenario.assertion(
+        "every board has a row and New board follows them",
+        harness.state().board_summaries().len() == 4
+            && harness.query_by_label("New board").is_some(),
+    );
+
+    let row = harness
+        .get_by_label(&format!("Board {}", hovered.name))
+        .rect();
+    scenario.target("sidebar.board-row", "button", row);
+    harness.hover_at(row.center());
+    harness.step();
+    harness.step();
+    scenario.capture_screen("screen-001-boards-hover", &mut harness);
+
+    let settings_tab = harness.get_by_label("Settings").rect();
+    scenario.action("open the Settings tab", settings_tab.center());
+    inspect_click_at(&harness, settings_tab.center(), egui::Modifiers::NONE);
+    // Park the pointer in the empty body so it hides no label.
+    let park = egui::pos2(140.0, 600.0);
+    harness.step();
+    harness.hover_at(park);
+    // The pending session save and update schedule keep repainting.
+    harness.run_steps(6);
+    scenario.capture_screen("screen-002-general", &mut harness);
+    scenario.assertion(
+        "General shows pointer, canvas, and window settings",
+        harness.query_by_label("Always on top").is_some()
+            && harness.query_by_label("Fill new textboxes").is_some(),
+    );
+    scenario.assertion(
+        "General ends with the Semantic Search download and the available update",
+        harness.query_by_label("Downloading 42%").is_some()
+            && harness.query_by_label("Update").is_some(),
+    );
+    scenario.assertion(
+        "switching tabs keeps the tabs in place",
+        harness.get_by_label("Settings").rect() == settings_tab,
+    );
+
+    let keys = harness.get_by_label("Keys").rect();
+    scenario.action("open the Keys page", keys.center());
+    inspect_click_at(&harness, keys.center(), egui::Modifiers::NONE);
+    harness.step();
+    harness.hover_at(park);
+    harness.run_steps(6);
+    scenario.capture_screen("screen-003-keys", &mut harness);
+    scenario.assertion(
+        "Keys lists the shortcut groups",
+        harness.query_by_label("CORE ACTIONS").is_some(),
+    );
 
     let report = scenario.finish();
     assert!(
@@ -413,6 +579,24 @@ fn inspect_delete_board_modal_flash_writes_artifact() {
     scenario.assertion(
         "sidebar remains open behind modal",
         harness.state().sidebar_open,
+    );
+
+    harness.key_press(egui::Key::Enter);
+    harness.step();
+    scenario.assertion(
+        "Enter does not confirm a destructive dialog",
+        harness.state().pending_board_delete.is_some(),
+    );
+    harness.key_press(egui::Key::Escape);
+    harness.step();
+    scenario.assertion(
+        "Escape cancels and keeps the board",
+        harness.state().pending_board_delete.is_none()
+            && library
+                .list_boards()
+                .unwrap()
+                .iter()
+                .any(|board| board.id == second.id),
     );
 
     let report = scenario.finish();
@@ -982,101 +1166,203 @@ fn inspect_compact_equal_size_images_writes_artifact() {
 }
 
 #[test]
-fn inspect_search_palette_footer_writes_artifact() {
-    let mut scenario = InspectScenario::new("search-palette-footer");
-    scenario.event(
-        "seed",
-        serde_json::json!({
-            "seed": "empty-search-palette-plus-results-footer",
-        }),
-    );
+fn inspect_search_composer_writes_artifact() {
+    use crate::search::palette::{ImageSearchPivot, SearchAssetPreviewEntry, SearchOverlayStatus};
 
-    let root = TempRoot::new("snappyref-inspect-search-palette-footer");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let result_specs = [
-        ("first-result", [228, 171, 72, 255], 180_u32, 120_u32),
-        ("second-result", [155, 108, 218, 255], 140_u32, 140_u32),
+    let mut scenario = InspectScenario::new("search-composer");
+    let root = TempRoot::new("snappyref-inspect-search-composer");
+    let colors: [[u8; 4]; 10] = [
+        [228, 171, 72, 255],
+        [155, 108, 218, 255],
+        [72, 140, 196, 255],
+        [210, 96, 84, 255],
+        [96, 170, 120, 255],
+        [236, 206, 160, 255],
+        [60, 64, 92, 255],
+        [196, 120, 150, 255],
+        [140, 140, 136, 255],
+        [44, 110, 128, 255],
     ];
-    let mut result_placements = Vec::new();
-    for (index, (name, color, width, height)) in result_specs.into_iter().enumerate() {
-        let path = library
-            .store_rgba_image(name, &solid_rgba(color, width, height), width, height)
-            .unwrap();
-        let placement = library
-            .fixture_placement(
-                library.load_user_session().unwrap().active_board_id,
-                crate::data::Placement::loaded(
-                    crate::data::PlacementState::new(
-                        library.allocate_document_id(),
-                        egui::pos2(index as f32 * 32.0, 0.0),
-                        1.0,
-                        0.0,
-                        0,
-                        false,
-                    ),
-                    library
-                        .register_original(
-                            &path,
-                            "image/png",
-                            width,
-                            height,
-                            width as u64 * height as u64 * 4,
-                            None,
-                        )
-                        .unwrap(),
-                ),
+    let entries = colors
+        .iter()
+        .enumerate()
+        .map(|(index, &color)| {
+            let (width, height) = if index % 2 == 0 {
+                (180, 120)
+            } else {
+                (120, 160)
+            };
+            let path = root.join(format!("result-{index}.png"));
+            image::save_buffer(
+                &path,
+                &solid_rgba(color, width, height),
+                width,
+                height,
+                image::ColorType::Rgba8,
             )
             .unwrap();
-        library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: [placement.state.id].to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if [placement.state.id].contains(id))).collect()), ..Default::default()}).unwrap();
-        result_placements.push(placement);
-    }
+            SearchResultAssetEntry {
+                asset_id: 9000 + index as i64,
+                asset_preview_path: Some(path),
+                asset_width: width,
+                asset_height: height,
+            }
+        })
+        .collect::<Vec<_>>();
+    scenario.event(
+        "seed",
+        serde_json::json!({"seed": "ten-solid-results-four-recents", "count": entries.len()}),
+    );
 
-    let mut app = test_app(Some(library.clone()));
+    let library = Library::initialize(root.join("library")).unwrap();
+    let mut app = test_app(Some(library));
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+    app.search.set_recent_searches(
+        [
+            "warm interior light",
+            "brutalist stairwell",
+            "fog over hills",
+            "red chair",
+        ]
+        .map(String::from)
+        .to_vec(),
+    );
     app.search.overlay.open = true;
-    app.search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
+    app.search.overlay.status = SearchOverlayStatus::Ready;
+    app.search.overlay.active_recent_search_index = 1;
     let mut harness = app_full_harness(app);
 
-    let empty_stats = scenario.capture_screen("screen-000-empty-search-palette", &mut harness);
-    scenario.fact(
-        "search.palette.footer.empty",
-        serde_json::json!({
-            "status": "Ready",
-            "result_count": harness.state().search.overlay.results.len(),
-        }),
-    );
+    let settle = |harness: &mut Harness<'static, SnappyRefApp>| {
+        for _ in 0..4 {
+            harness.step();
+        }
+    };
+    let wait_for_previews = |harness: &mut Harness<'static, SnappyRefApp>| -> bool {
+        for _ in 0..200 {
+            harness.step();
+            let overlay = &harness.state().search.overlay;
+            let pending = overlay
+                .results
+                .iter()
+                .map(|entry| entry.asset_id)
+                .chain(overlay.image_pivot.as_ref().map(|pivot| pivot.asset_id))
+                .any(|id| {
+                    !matches!(
+                        overlay.asset_preview_cache.get(&id),
+                        Some(SearchAssetPreviewEntry::Ready(_))
+                    )
+                });
+            if !pending {
+                harness.step();
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    };
+    let mut all_opaque = true;
+
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-000-recents", &mut harness)
+        .transparent_pixels
+        == 0;
+
+    let search = &mut harness.state_mut().search;
+    search.overlay.query = "warm light over hills".into();
+    search.overlay.results = entries.clone();
+    search.overlay.has_more_results = true;
+    search.overlay.result_selection.replace(1);
+    search.overlay.result_selection.toggle(2);
+    let previews_ready = wait_for_previews(&mut harness);
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-001-results-selected", &mut harness)
+        .transparent_pixels
+        == 0;
+
+    let search = &mut harness.state_mut().search;
+    search.overlay.query = "purple giraffe on a bicycle".into();
+    search.overlay.results.clear();
+    search.overlay.result_selection.clear();
+    search.overlay.has_more_results = false;
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-002-no-results", &mut harness)
+        .transparent_pixels
+        == 0;
+
+    let search = &mut harness.state_mut().search;
+    search.overlay.query.clear();
+    search.overlay.image_pivot = Some(ImageSearchPivot {
+        asset_id: entries[0].asset_id,
+        asset_preview_path: entries[0].asset_preview_path.clone(),
+    });
+    search.overlay.results = entries[1..].to_vec();
+    search.overlay.result_selection.replace(0);
+    let previews_ready = previews_ready && wait_for_previews(&mut harness);
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-003-similar", &mut harness)
+        .transparent_pixels
+        == 0;
+
+    let search = &mut harness.state_mut().search;
+    search.overlay.image_pivot = None;
+    search.overlay.results.clear();
+    search.overlay.result_selection.clear();
+    search.set_local_model_store_status_for_test(LocalModelStoreStatus::Missing);
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-004-install", &mut harness)
+        .transparent_pixels
+        == 0;
+    harness.key_press(egui::Key::Enter);
+    settle(&mut harness);
     scenario.assertion(
-        "empty palette frame is opaque",
-        empty_stats.transparent_pixels == 0,
+        "Enter does not start the install",
+        harness.state().search.local_model_store_status() == LocalModelStoreStatus::Missing,
     );
 
-    let results = result_placements
-        .iter()
-        .map(inspect_search_result_entry)
-        .collect::<Vec<_>>();
-    harness.state_mut().search.overlay.results = results;
-    harness.state_mut().search.overlay.has_more_results = true;
     harness
         .state_mut()
         .search
-        .overlay
-        .result_selection
-        .replace(0);
-    harness.step();
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Downloading { percent: 42 });
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-005-downloading", &mut harness)
+        .transparent_pixels
+        == 0;
 
-    let results_stats = scenario.capture_screen("screen-001-results-search-palette", &mut harness);
-    scenario.fact(
-        "search.palette.footer.results",
-        serde_json::json!({
-            "has_more_results": harness.state().search.overlay.has_more_results,
-            "result_count": harness.state().search.overlay.results.len(),
-            "selection_count": harness.state().search.overlay.result_selection.selected().len(),
-        }),
-    );
+    harness
+        .state_mut()
+        .search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Failed(
+            "network: timeout".to_owned(),
+        ));
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-006-install-error", &mut harness)
+        .transparent_pixels
+        == 0;
+
+    harness
+        .state_mut()
+        .search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Missing);
+    settle(&mut harness);
+    let not_now = harness.get_by_label("Not now").rect();
+    scenario.action("click Not now on the install card", not_now.center());
+    inspect_click_at(&harness, not_now.center(), egui::Modifiers::NONE);
+    settle(&mut harness);
     scenario.assertion(
-        "results palette frame is opaque",
-        results_stats.transparent_pixels == 0,
+        "Not now closes search and leaves Semantic Search uninstalled",
+        !harness.state().search.overlay.open
+            && harness.state().search.local_model_store_status() == LocalModelStoreStatus::Missing,
     );
 
+    scenario.assertion("every composer frame is opaque", all_opaque);
+    scenario.assertion("result previews decoded before capture", previews_ready);
     let report = scenario.finish();
     assert!(
         report.passed,
@@ -2131,7 +2417,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
     scenario.event(
         "seed",
         serde_json::json!({
-            "seed": "sidebar-open-options-tab-real-semantic-install",
+            "seed": "sidebar-open-settings-tab-real-semantic-install",
         }),
     );
 
@@ -2140,7 +2426,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
     let initial_status = crate::search::semantic::default_local_model_store_status();
     let mut app = test_app(Some(library));
     app.sidebar_open = true;
-    app.sidebar_tab = SidebarTab::Options;
+    app.sidebar_tab = SidebarTab::Settings;
     app.settings.semantic_search_first_launch_prompt_seen = true;
     app.search
         .set_local_model_store_status_for_test(initial_status.clone());
@@ -2169,7 +2455,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
     });
 
     let mut harness = app_full_harness(app);
-    harness.get_by_label("Semantic Search").scroll_to_me();
+    harness.get_by_label("Search").click();
     harness.run();
     scenario.capture_screen("screen-000-before-install", &mut harness);
     scenario.fact(

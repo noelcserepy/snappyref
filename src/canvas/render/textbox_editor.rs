@@ -8,15 +8,16 @@ use crate::canvas::interaction::{
     annotation_screen_rect, hit_test_textbox_resize_handle, textbox_screen_rect, textbox_world_rect,
 };
 use crate::canvas::{
-    CanvasState, MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP,
-    TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH, TEXTBOX_EDITOR_TOOLBAR_CLEARANCE,
-    TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH,
-    TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH, TextboxLayoutCacheKey, TextboxPointerRegion,
+    CanvasState, MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+    TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN,
+    TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH, TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH, TextboxLayoutCacheKey,
+    TextboxPointerRegion,
 };
 use crate::data::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasStrokeWidth,
     CanvasTextSize,
 };
+use crate::ui::{card, theme};
 
 pub(crate) fn textbox_padding() -> egui::Vec2 {
     egui::vec2(crate::ui::theme::SPACE_2, crate::ui::theme::SPACE_2)
@@ -329,19 +330,41 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
         });
 }
 
+/// A style toolbar is one segmented [`card::bed`] holding cells `widths` wide.
+fn toolbar_size(widths: &[f32]) -> egui::Vec2 {
+    let insets = widths.len() as f32 + 1.0;
+    egui::vec2(
+        widths.iter().sum::<f32>() + card::BED_INSET * insets,
+        theme::CONTROL_HEIGHT + card::BED_INSET * 2.0,
+    )
+}
+
 fn textbox_editor_toolbar_size() -> egui::Vec2 {
-    let button_span = TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH * 4.0
-        + TOOLBAR_SWATCH_BUTTON_WIDTH * 5.0
-        + TOOLBAR_BACKGROUND_BUTTON_WIDTH
-        + TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP * 9.0;
-    egui::vec2(button_span, crate::ui::theme::CONTROL_HEIGHT)
+    toolbar_size(&[
+        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+        TOOLBAR_SWATCH_BUTTON_WIDTH,
+        TOOLBAR_SWATCH_BUTTON_WIDTH,
+        TOOLBAR_SWATCH_BUTTON_WIDTH,
+        TOOLBAR_SWATCH_BUTTON_WIDTH,
+        TOOLBAR_SWATCH_BUTTON_WIDTH,
+        TOOLBAR_BACKGROUND_BUTTON_WIDTH,
+    ])
 }
 
 fn annotation_style_toolbar_size() -> egui::Vec2 {
-    let button_span = TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH * 3.0
-        + TOOLBAR_SWATCH_BUTTON_WIDTH * 5.0
-        + TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP * 7.0;
-    egui::vec2(button_span, crate::ui::theme::CONTROL_HEIGHT)
+    toolbar_size(&[
+        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
+        TOOLBAR_SWATCH_BUTTON_WIDTH,
+        TOOLBAR_SWATCH_BUTTON_WIDTH,
+        TOOLBAR_SWATCH_BUTTON_WIDTH,
+        TOOLBAR_SWATCH_BUTTON_WIDTH,
+        TOOLBAR_SWATCH_BUTTON_WIDTH,
+    ])
 }
 
 pub(crate) fn editing_textbox_toolbar_rect(
@@ -395,64 +418,25 @@ fn show_textbox_editor_toolbar(
         .fixed_pos(toolbar_rect.min + egui::vec2(0.0, settle))
         .show(ui.ctx(), |ui| {
             ui.multiply_opacity(entrance);
-            ui.set_min_size(toolbar_rect.size());
-            ui.spacing_mut().item_spacing.x = TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP;
-            ui.horizontal(|ui| {
+            card::bed(ui, |ui| {
                 for size in [
                     CanvasTextSize::S,
                     CanvasTextSize::M,
                     CanvasTextSize::L,
                     CanvasTextSize::Xl,
                 ] {
-                    let button = egui::Button::new(
-                        egui::RichText::new(size.label())
-                            .text_style(egui::TextStyle::Button)
-                            .color(crate::ui::theme::TEXT),
-                    )
-                    .fill(if selected == Some(size) {
-                        crate::ui::theme::SURFACE_ELEVATED
-                    } else {
-                        crate::ui::theme::SURFACE
-                    })
-                    .stroke(if selected == Some(size) {
-                        crate::ui::theme::stroke_strong()
-                    } else {
-                        crate::ui::theme::stroke_subtle()
-                    })
-                    .corner_radius(crate::ui::theme::RADIUS_CONTROL)
-                    .min_size(egui::vec2(
-                        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-                        crate::ui::theme::CONTROL_HEIGHT,
-                    ));
-                    if ui.add(button).clicked() {
+                    let width = TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH;
+                    if text_cell(ui, size.label(), width, selected == Some(size)).clicked() {
                         next_size = Some(size);
                     }
                 }
                 for color in ANNOTATION_COLORS {
-                    if paint_color_swatch_button(ui, color, selected_color == Some(color)).clicked()
-                    {
+                    if color_swatch(ui, color, selected_color == Some(color)).clicked() {
                         next_color = Some(color);
                     }
                 }
-                let background_button = egui::Button::new(
-                    egui::RichText::new("BG").text_style(egui::TextStyle::Button),
-                )
-                .fill(if background_enabled {
-                    crate::ui::theme::SURFACE_ELEVATED
-                } else {
-                    crate::ui::theme::SURFACE
-                })
-                .stroke(if background_enabled {
-                    crate::ui::theme::stroke_strong()
-                } else {
-                    crate::ui::theme::stroke_subtle()
-                })
-                .corner_radius(crate::ui::theme::RADIUS_CONTROL)
-                .min_size(egui::vec2(
-                    TOOLBAR_BACKGROUND_BUTTON_WIDTH,
-                    crate::ui::theme::CONTROL_HEIGHT,
-                ));
-                if ui.add(background_button).clicked() {
+                let width = TOOLBAR_BACKGROUND_BUTTON_WIDTH;
+                if text_cell(ui, "BG", width, background_enabled).clicked() {
                     toggle_background = true;
                 }
             });
@@ -515,37 +499,21 @@ pub(crate) fn show_annotation_style_toolbar(
         .fixed_pos(toolbar_rect.min + egui::vec2(0.0, settle))
         .show(ui.ctx(), |ui| {
             ui.multiply_opacity(entrance);
-            ui.set_min_size(toolbar_rect.size());
-            ui.spacing_mut().item_spacing.x = TEXTBOX_EDITOR_TOOLBAR_BUTTON_GAP;
-            ui.horizontal(|ui| {
+            card::bed(ui, |ui| {
                 for width in [
                     CanvasStrokeWidth::S,
                     CanvasStrokeWidth::M,
                     CanvasStrokeWidth::L,
                 ] {
-                    let button = egui::Button::new(width.label())
-                        .fill(if selected_width == Some(width) {
-                            crate::ui::theme::SURFACE_ELEVATED
-                        } else {
-                            crate::ui::theme::SURFACE
-                        })
-                        .stroke(if selected_width == Some(width) {
-                            crate::ui::theme::stroke_strong()
-                        } else {
-                            crate::ui::theme::stroke_subtle()
-                        })
-                        .corner_radius(crate::ui::theme::RADIUS_CONTROL)
-                        .min_size(egui::vec2(
-                            TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-                            crate::ui::theme::CONTROL_HEIGHT,
-                        ));
-                    if ui.add(button).clicked() {
+                    let cell_width = TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH;
+                    if text_cell(ui, width.label(), cell_width, selected_width == Some(width))
+                        .clicked()
+                    {
                         next_width = Some(width);
                     }
                 }
                 for color in ANNOTATION_COLORS {
-                    if paint_color_swatch_button(ui, color, selected_color == Some(color)).clicked()
-                    {
+                    if color_swatch(ui, color, selected_color == Some(color)).clicked() {
                         next_color = Some(color);
                     }
                 }
@@ -560,23 +528,43 @@ pub(crate) fn show_annotation_style_toolbar(
     }
 }
 
-fn paint_color_swatch_button(
-    ui: &mut egui::Ui,
-    color: CanvasAnnotationColor,
-    selected: bool,
-) -> egui::Response {
-    ui.add(
-        egui::Button::new("")
-            .fill(annotation_color(color))
-            .stroke(if selected {
-                crate::ui::theme::stroke_strong()
-            } else {
-                crate::ui::theme::stroke_subtle()
-            })
-            .corner_radius(crate::ui::theme::RADIUS_CONTROL)
-            .min_size(egui::vec2(
-                TOOLBAR_SWATCH_BUTTON_WIDTH,
-                crate::ui::theme::CONTROL_HEIGHT,
-            )),
-    )
+/// A toolbar choice named by its label.
+fn text_cell(ui: &mut egui::Ui, label: &str, width: f32, selected: bool) -> egui::Response {
+    let response = card::cell(
+        ui,
+        label,
+        egui::vec2(width, theme::CONTROL_HEIGHT),
+        selected,
+        true,
+        theme::SURFACE_PRESSED,
+    );
+    ui.painter().text(
+        response.rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(theme::TYPE_CONTROL),
+        card::ink(selected, true, false),
+    );
+    response
+}
+
+/// A color choice: a dot in the color, ringed while it is the current one.
+/// The ring stands in for the gold fill so the Gold swatch stays readable.
+fn color_swatch(ui: &mut egui::Ui, color: CanvasAnnotationColor, selected: bool) -> egui::Response {
+    let response = card::cell(
+        ui,
+        color.as_str(),
+        egui::vec2(TOOLBAR_SWATCH_BUTTON_WIDTH, theme::CONTROL_HEIGHT),
+        false,
+        true,
+        theme::SURFACE_PRESSED,
+    );
+    let center = response.rect.center();
+    if selected {
+        ui.painter()
+            .circle_stroke(center, 10.0, egui::Stroke::new(1.5_f32, theme::TEXT));
+    }
+    ui.painter()
+        .circle_filled(center, 7.0, annotation_color(color));
+    response
 }

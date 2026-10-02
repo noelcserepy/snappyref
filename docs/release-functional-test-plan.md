@@ -37,7 +37,7 @@ stacking, always need a native run.
 
 | ID | Do | Expect | Covered |
 | --- | --- | --- | --- |
-| WIN-1 | First launch on an empty root, choose Not Now in "Enable Semantic Search?" | Prompt closes, empty board usable, prompt does not return after restart | |
+| WIN-1 | First launch on an empty root, choose Not now in "Enable Semantic Search?" | Prompt closes, empty board usable, prompt does not return after restart | |
 | WIN-2 | `Mod+B` twice; open it again and click the canvas | `Mod+B` opens and closes the sidebar; a canvas click closes it | |
 | WIN-3 | Close the sidebar and look at the left edge | A small pull tab showing the `Mod+B` label sits level with the sidebar top; clicking it opens the sidebar | |
 | WIN-4 | Switch the sidebar between Boards and Settings tabs, scroll each | Both tabs reachable, scroll does not pan or zoom the canvas | |
@@ -153,7 +153,7 @@ There is no flip command. Mirrored images only come from EXIF (IMP-10).
 | GRP-16 | Member card back link, then Escape twice | Back link and first Escape return to the Group card, second Escape clears selection | |
 | GRP-17 | Member card Detach; separately drag a member far outside the group | Member leaves at its position, gap closes, Undo restores | |
 | GRP-18 | Card Ungroup; then `Mod+Shift+G` and context menu Ungroup on another group | Container removed, members stay in place | |
-| GRP-19 | Select loose images, press G, type part of a name, arrows + Enter; repeat via context menu > Add to group | Picker lists this board's groups; images append to the chosen group | |
+| GRP-19 | Select loose images, press G, type part of a name, arrows + Enter; repeat via context menu > Add to group… | Picker lists this board's groups; images append to the chosen group | |
 | GRP-20 | G, type a new name, Enter; G then Escape; G then Cancel | New group created with the image; cancels change nothing | |
 | GRP-21 | Move a member from one group to another with G | Leaves the first, appends to the second, one Undo step | |
 | GRP-22 | Delete every member of a group | Empty named group stays and accepts new members | |
@@ -163,14 +163,14 @@ There is no flip command. Mirrored images only come from EXIF (IMP-10).
 
 | ID | Do | Expect | Covered |
 | --- | --- | --- | --- |
-| ORD-1 | `Mod+.` and `Mod+,` on overlapping items; then context menu Move to Front, Move to Back | Selection moves above or below others, relative order kept | |
+| ORD-1 | `Mod+.` and `Mod+,` on overlapping items; then context menu Bring to front, Send to back | Selection moves above or below others, relative order kept | |
 | ORD-2 | Context menu with nothing selected | Stack order items disabled | `stack_order_context_actions_are_disabled_without_canvas_item_selection` |
 | CPY-1 | `Mod+D` and context menu Duplicate on a mixed selection | Offset copies, selected, editable on their own | |
 | CPY-2 | `Mod+C` a cropped, rotated image, `Mod+V` on the same and another board; repeat with context menu Copy and Paste | Copies keep crop and rotation | |
 | CPY-3 | Copy one SnappyRef image, paste into an external image editor | Pixels arrive | |
 | CPY-4 | Copy from PureRef, paste into SnappyRef | Referenced images import once | |
-| CPY-5 | Delete, then context menu Delete (from board) | Items leave this board only, Library keeps the image | |
-| CPY-6 | Context menu > Remove from Library..., cancel, then confirm | Cancel keeps all; confirm removes the image from every board and from search | |
+| CPY-5 | Delete, then context menu Delete | Items leave this board only, Library keeps the image | |
+| CPY-6 | Context menu > Remove from library…, cancel, then confirm | Cancel keeps all; confirm removes the image from every board and from search | |
 | CPY-7 | Open the context menu, dismiss with Escape and with an outside click | Menu closes, nothing underneath fires | |
 | CPY-8 | Copy a mixed selection (images, a textbox, an arrow, a group), quit, reopen, `Mod+V` | Every item pastes once with its geometry and the group intact | |
 
@@ -189,7 +189,7 @@ Semantic rows need the model installed in the data root.
 
 | ID | Do | Expect | Covered |
 | --- | --- | --- | --- |
-| SRC-1 | Model missing: `Mod+F` | Palette opens with a focused install action; ordinary editing still works | |
+| SRC-1 | Model missing: `Mod+F` | Palette opens on the install card; Enter does nothing, Esc closes it; ordinary editing still works | |
 | SRC-2 | Model installed: `Mod+F`, type a subject, Escape | Relevant results, Escape closes without adding anything | |
 | SRC-3 | Search for an image that is only on another board or deleted from all boards | Found; search covers the whole Library | |
 | SRC-4 | Select one image, `Mod+F` or context menu Search using image; clear the pivot | Similar images; clearing returns to text search | |
@@ -211,13 +211,14 @@ Semantic rows need the model installed in the data root.
 
 ## Dialogs
 
-The four dialogs are "Enable Semantic Search?", "Delete board?", "Remove asset(s) from Library?" and "Remove Semantic Search?".
+The four dialogs are "Enable Semantic Search?", "Delete "<board name>"?", "Remove <n> image(s) from the library?" and "Remove Semantic Search?".
 
 | ID | Do | Expect | Covered |
 | --- | --- | --- | --- |
 | DLG-1 | Open each dialog, drag inside its body | Dialog stays centered, canvas behind does not pan or select | |
 | DLG-2 | With a dialog open, click the sidebar and canvas | Clicks blocked until the dialog closes | |
 | DLG-3 | Cancel and confirm each | Cancel changes nothing, confirm acts once | |
+| DLG-4 | Press Escape in each; reopen each and press Enter | Escape cancels. Enter enables Semantic Search and does nothing in the Delete and Remove dialogs | |
 
 ## Persistence and restart
 

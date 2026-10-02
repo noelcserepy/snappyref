@@ -37,7 +37,8 @@ use shortcuts::{
     delete_shortcut_pressed, settle_direction_pressed, shortcut_pressed,
 };
 pub(crate) use shortcuts::{
-    CORE_SHORTCUTS, LAYOUT_AND_HISTORY_SHORTCUTS, SupportedShortcut, platform_shortcut_label,
+    BOARD_DIGITS, CORE_SHORTCUTS, LAYOUT_AND_HISTORY_SHORTCUTS, NEW_BOARD, SWITCH_BOARD,
+    SupportedShortcut, TOGGLE_ALWAYS_ON_TOP, TOGGLE_SIDEBAR, UNGROUP,
 };
 
 #[derive(Clone, Debug)]
@@ -497,53 +498,23 @@ impl SnappyRefApp {
     }
 
     fn show_board_delete_confirmation(&mut self, ctx: &egui::Context) {
-        let entrance = crate::ui::motion::overlay_entrance(
-            ctx,
-            egui::Id::new("board_delete_dialog_entrance"),
-            self.pending_board_delete.is_some(),
-        );
-        let Some(pending) = self.pending_board_delete.clone() else {
+        let Some(pending) = &self.pending_board_delete else {
             return;
         };
-
-        let settle = crate::ui::motion::settle_offset(entrance);
-        egui::Window::new("Delete board?")
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
-            .frame(dialog_frame(ctx, entrance))
-            .show(ctx, |ui| {
-                ui.multiply_opacity(entrance);
-                ui.set_min_width(destructive_dialog_width());
-                dialog_header(ui, "Delete board?");
-                dialog_body(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(format!("Delete \"{}\"?", pending.board_name))
-                            .color(crate::ui::theme::TEXT),
-                    );
-                    ui.add_space(crate::ui::theme::SPACE_1);
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(
-                                "Images stay in the shared Library. Placements, arrows, lines, and textboxes on this board will be removed.",
-                            )
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::ui::theme::TEXT_MUTED),
-                        )
-                        .wrap(),
-                    );
-                    ui.add_space(crate::ui::theme::SPACE_3);
-                    ui.horizontal(|ui| {
-                        if ui.add(secondary_dialog_button("Cancel")).clicked() {
-                            self.cancel_pending_board_delete();
-                        }
-                        if ui.add(destructive_action_button("Delete board")).clicked() {
-                            self.confirm_pending_board_delete(ctx);
-                        }
-                    });
-                });
-            });
+        let title = format!("Delete \"{}\"?", pending.board_name);
+        let choice = Dialog {
+            id: "delete-board",
+            title: &title,
+            detail: "The images stay in your library. Arrows, lines, and textboxes on this board are deleted.",
+            cancel: "Cancel",
+            action: DialogAction::Destructive("Delete board"),
+        }
+        .show(ctx);
+        match choice {
+            Some(DialogChoice::Confirm) => self.confirm_pending_board_delete(ctx),
+            Some(DialogChoice::Cancel) => self.cancel_pending_board_delete(),
+            None => {}
+        }
     }
 
     fn modal_open(&self) -> bool {
@@ -655,21 +626,20 @@ impl SnappyRefApp {
         };
     }
 
-    fn move_selected_canvas_items_to_front(&mut self) {
+    fn bring_selection_to_front(&mut self) {
         if let Err(error) =
             self.board_editing
-                .move_selection_in_stack(&mut self.canvas, self.active_board_id, true)
+                .restack_selection(&mut self.canvas, self.active_board_id, true)
         {
             self.status = error;
         }
     }
 
-    fn move_selected_canvas_items_to_back(&mut self) {
-        if let Err(error) = self.board_editing.move_selection_in_stack(
-            &mut self.canvas,
-            self.active_board_id,
-            false,
-        ) {
+    fn send_selection_to_back(&mut self) {
+        if let Err(error) =
+            self.board_editing
+                .restack_selection(&mut self.canvas, self.active_board_id, false)
+        {
             self.status = error;
         }
     }
@@ -740,56 +710,32 @@ impl SnappyRefApp {
     }
 
     fn show_library_remove_confirmation(&mut self, ctx: &egui::Context) {
-        let entrance = crate::ui::motion::overlay_entrance(
-            ctx,
-            egui::Id::new("library_remove_dialog_entrance"),
-            self.pending_library_remove.is_some(),
-        );
-        let Some(pending) = self.pending_library_remove.clone() else {
+        let Some(pending) = &self.pending_library_remove else {
             return;
         };
-
-        let title = if pending.asset_ids.len() == 1 {
-            "Remove asset from Library?"
-        } else {
-            "Remove assets from Library?"
+        let (title, detail) = match pending.asset_ids.len() {
+            1 => (
+                "Remove 1 image from the library?".to_owned(),
+                "It disappears from every board. The original file on disk stays.",
+            ),
+            count => (
+                format!("Remove {count} images from the library?"),
+                "They disappear from every board. The original files on disk stay.",
+            ),
         };
-        let settle = crate::ui::motion::settle_offset(entrance);
-        egui::Window::new(title)
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, settle))
-            .frame(dialog_frame(ctx, entrance))
-            .show(ctx, |ui| {
-                ui.multiply_opacity(entrance);
-                ui.set_min_width(destructive_dialog_width());
-                dialog_header(ui, title);
-                dialog_body(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(
-                                "Placements will be removed from all boards. Original files are kept.",
-                            )
-                            .text_style(egui::TextStyle::Small)
-                            .color(crate::ui::theme::TEXT_MUTED),
-                        )
-                        .wrap(),
-                    );
-                    ui.add_space(crate::ui::theme::SPACE_3);
-                    ui.horizontal(|ui| {
-                        if ui.add(secondary_dialog_button("Cancel")).clicked() {
-                            self.pending_library_remove = None;
-                        }
-                        if ui
-                            .add(destructive_action_button("Remove from Library"))
-                            .clicked()
-                        {
-                            self.confirm_pending_library_remove();
-                        }
-                    });
-                });
-            });
+        let choice = Dialog {
+            id: "remove-from-library",
+            title: &title,
+            detail,
+            cancel: "Cancel",
+            action: DialogAction::Destructive("Remove"),
+        }
+        .show(ctx);
+        match choice {
+            Some(DialogChoice::Confirm) => self.confirm_pending_library_remove(),
+            Some(DialogChoice::Cancel) => self.pending_library_remove = None,
+            None => {}
+        }
     }
 
     #[cfg(test)]
@@ -812,7 +758,7 @@ impl SnappyRefApp {
     }
 
     fn handle_selection_shortcuts(&mut self, ctx: &egui::Context, screen_rect: egui::Rect) {
-        if self.search.is_open() || self.canvas.group_picker_open() {
+        if self.modal_open() || self.search.is_open() || self.canvas.group_picker_open() {
             return;
         }
 
@@ -862,8 +808,8 @@ impl SnappyRefApp {
                 SupportedShortcutAction::DeleteSelection => delete_shortcut_pressed(ctx),
                 SupportedShortcutAction::FocusSelection
                 | SupportedShortcutAction::DuplicateSelection
-                | SupportedShortcutAction::MoveSelectionToFront
-                | SupportedShortcutAction::MoveSelectionToBack
+                | SupportedShortcutAction::BringSelectionToFront
+                | SupportedShortcutAction::SendSelectionToBack
                 | SupportedShortcutAction::ToggleSidebar
                 | SupportedShortcutAction::ToggleAlwaysOnTop
                 | SupportedShortcutAction::ApplyDefaultAverageArea
@@ -890,17 +836,17 @@ impl SnappyRefApp {
                     }
                     self.duplicate_selection_with_gap();
                 }
-                SupportedShortcutAction::MoveSelectionToFront => {
+                SupportedShortcutAction::BringSelectionToFront => {
                     if !self.canvas.has_selection() {
                         continue;
                     }
-                    self.move_selected_canvas_items_to_front();
+                    self.bring_selection_to_front();
                 }
-                SupportedShortcutAction::MoveSelectionToBack => {
+                SupportedShortcutAction::SendSelectionToBack => {
                     if !self.canvas.has_selection() {
                         continue;
                     }
-                    self.move_selected_canvas_items_to_back();
+                    self.send_selection_to_back();
                 }
                 SupportedShortcutAction::FocusSelection => {
                     if !self.canvas.has_selection() {
@@ -952,11 +898,7 @@ impl SnappyRefApp {
     }
 
     fn handle_board_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.pending_board_delete.is_some() || self.pending_library_remove.is_some() {
-            return;
-        }
-
-        if self.search.is_open() {
+        if self.modal_open() || self.search.is_open() {
             return;
         }
 
@@ -1285,22 +1227,30 @@ impl eframe::App for SnappyRefApp {
         self.update_window_state(ui.ctx());
         ui.set_clip_rect(screen_rect);
         ui.expand_to_include_rect(screen_rect);
-        self.handle_history_shortcuts(ui.ctx());
+        // A dialog owns the keyboard: shortcuts must not change what it asks about.
+        let modal_open = self.modal_open();
+        if !modal_open {
+            self.handle_history_shortcuts(ui.ctx());
+        }
         if self.drive_perf_scenario(ui.ctx(), screen_rect) {
             return;
         }
 
-        self.handle_clipboard_copy(ui.ctx());
-        self.handle_clipboard_paste(ui.ctx(), screen_rect);
+        if !modal_open {
+            self.handle_clipboard_copy(ui.ctx());
+            self.handle_clipboard_paste(ui.ctx(), screen_rect);
+        }
         self.handle_hovered_files(ui, screen_rect);
         self.handle_dropped_files(ui, screen_rect);
-        self.search.handle_shortcut(
-            ui.ctx(),
-            self.library.as_ref(),
-            &mut self.canvas,
-            &mut self.status,
-            self.settings.canvas_image_max_side,
-        );
+        if !modal_open {
+            self.search.handle_shortcut(
+                ui.ctx(),
+                self.library.as_ref(),
+                &mut self.canvas,
+                &mut self.status,
+                self.settings.canvas_image_max_side,
+            );
+        }
         self.handle_board_shortcuts(ui.ctx());
         self.handle_selection_shortcuts(ui.ctx(), screen_rect);
         let sidebar_open = self.sidebar_open;
@@ -1366,7 +1316,8 @@ impl eframe::App for SnappyRefApp {
             self.status = error;
         }
         let board_summaries = self.board_editing.documents.summaries();
-        let about_updates = self.about_updates_view();
+        let about = self.about_view();
+        let semantic_search = self.semantic_search_settings_status();
         let always_on_top_before = self.settings.always_on_top;
         let sidebar_result = show_sidebar(
             ui.ctx(),
@@ -1378,8 +1329,8 @@ impl eframe::App for SnappyRefApp {
             &mut self.canvas,
             board_summaries,
             self.active_board_id,
-            None,
-            about_updates,
+            &about,
+            &semantic_search,
         );
         let board_action = if self.modal_open() {
             None
@@ -1449,10 +1400,7 @@ impl eframe::App for SnappyRefApp {
     }
 }
 
-use dialogs::{
-    destructive_action_button, destructive_dialog_width, dialog_body, dialog_frame, dialog_header,
-    secondary_dialog_button,
-};
+use dialogs::{Dialog, DialogAction, DialogChoice};
 
 fn apply_arrangement_action(
     canvas: &mut crate::canvas::CanvasState,

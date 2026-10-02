@@ -274,7 +274,7 @@ decisions:
       - Optional local assets need a discoverable enable path without repeatedly interrupting users who decline.
       - One supported model location removes bundle discovery and file-moving behavior from availability checks.
     consequences:
-      - Enable and Not Now both persist that the first-run offer was answered.
+      - Enable and Not now both persist that the first-run offer was answered.
       - Removing the model later does not resurrect the first-run prompt.
       - Users with only a bundled model must install the standalone package again; existing standalone installations remain usable.
     reconsider_when:
@@ -282,7 +282,7 @@ decisions:
     explored_paths:
       prompt-every-launch:
         status: rejected
-        reason: It ignores a durable Not Now choice.
+        reason: It ignores a durable Not now choice.
       automatic-bundled-model-migration:
         status: superseded
         reason: A fresh explicit download for older bundled installations is acceptable in exchange for one model location.

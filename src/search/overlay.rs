@@ -9,13 +9,12 @@ use super::placement::provisional_placement_commit_requested;
 use super::selection::{PendingResultSelection, SearchSelectionMode};
 use crate::canvas::CanvasState;
 use crate::search::palette::{
-    PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, SEARCH_DEBOUNCE_MS, SEARCH_OVERLAY_TOP_MARGIN,
-    SEARCH_RESULT_PAGE_SIZE, SearchOverlayStatus, paint_palette_divider, paint_palette_empty_state,
-    paint_palette_footer, paint_palette_input_row, paint_palette_install_state,
-    paint_palette_no_results_state, search_result_grid_content_height, search_result_grid_layout,
-    search_result_tile,
+    InstallAction, PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, SEARCH_DEBOUNCE_MS,
+    SEARCH_OVERLAY_TOP_MARGIN, SEARCH_RESULT_PAGE_SIZE, SearchOverlayStatus, paint_palette_divider,
+    paint_palette_empty_state, paint_palette_footer, paint_palette_input_row,
+    paint_palette_install_state, paint_palette_no_results_state, search_result_grid_content_height,
+    search_result_grid_layout, search_result_tile,
 };
-use crate::search::semantic::LocalModelStoreStatus;
 
 const SEARCH_RESULT_SCROLL_ANIMATION: egui::style::ScrollAnimation = egui::style::ScrollAnimation {
     points_per_second: 3200.0,
@@ -45,12 +44,7 @@ impl SearchController {
         }
 
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            if matches!(
-                self.local_model_store_status,
-                Some(LocalModelStoreStatus::Downloading { .. })
-            ) {
-                self.cancel_semantic_search_install(status);
-            } else if self
+            if self
                 .overlay
                 .drag_state
                 .as_ref()
@@ -125,200 +119,188 @@ impl SearchController {
                 ui.set_width(width);
                 ui.set_min_width(width);
                 ui.set_max_width(width);
-                egui::Frame::new()
-                    .fill(crate::ui::theme::PALETTE_SURFACE)
-                    .stroke(egui::Stroke::NONE)
-                    .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_PANEL))
-                    .shadow(egui::epaint::Shadow {
-                        offset: [0, 12],
-                        blur: 40,
-                        spread: 0,
-                        color: egui::Color32::from_black_alpha(180),
-                    })
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                crate::ui::card::frame().inner_margin(0).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
 
-                        if self.install_surface_visible() {
-                            let installing = matches!(
-                                self.local_model_store_status,
-                                Some(LocalModelStoreStatus::Downloading { .. })
-                            );
-                            let response = paint_palette_install_state(
-                                ui,
-                                &self.overlay.status,
-                                &mut self.overlay.install_action_focus_requested,
-                                installing,
-                            );
-                            if response.clicked() {
+                    if let Some(model) = self
+                        .local_model_store_status
+                        .clone()
+                        .filter(|_| self.install_surface_visible())
+                    {
+                        match paint_palette_install_state(ui, &model) {
+                            Some(InstallAction::Install) => {
                                 self.start_semantic_search_install(status);
-                                ctx.request_repaint_after(Duration::from_millis(16));
                             }
-                            return;
+                            Some(InstallAction::Cancel) => {
+                                self.cancel_semantic_search_install(status);
+                            }
+                            Some(InstallAction::NotNow) => self.close_overlay(),
+                            None => {}
                         }
+                        return;
+                    }
 
-                        let input_result = paint_palette_input_row(
-                            ui,
-                            &mut self.overlay.query,
-                            input_id,
-                            self.overlay.image_pivot.as_ref(),
-                            &mut self.overlay.asset_preview_cache,
-                        );
-                        let response = input_result.response;
-                        let pivot_backspace_dismissed = self.overlay.image_pivot.is_some()
-                            && self.overlay.query.is_empty()
-                            && response.has_focus()
-                            && ctx.input(|input| input.key_pressed(egui::Key::Backspace));
-                        if input_result.pivot_dismissed || pivot_backspace_dismissed {
-                            self.dismiss_image_pivot();
-                        }
+                    let input_result = paint_palette_input_row(
+                        ui,
+                        &mut self.overlay.query,
+                        input_id,
+                        self.overlay.image_pivot.as_ref(),
+                        &mut self.overlay.asset_preview_cache,
+                    );
+                    let response = input_result.response;
+                    let pivot_backspace_dismissed = self.overlay.image_pivot.is_some()
+                        && self.overlay.query.is_empty()
+                        && response.has_focus()
+                        && ctx.input(|input| input.key_pressed(egui::Key::Backspace));
+                    if input_result.pivot_dismissed || pivot_backspace_dismissed {
+                        self.dismiss_image_pivot();
+                    }
+                    if self.overlay.focus_requested {
+                        response.request_focus();
+                        self.overlay.focus_requested =
+                            !ctx.memory(|memory| memory.has_focus(input_id));
                         if self.overlay.focus_requested {
-                            response.request_focus();
-                            self.overlay.focus_requested =
-                                !ctx.memory(|memory| memory.has_focus(input_id));
-                            if self.overlay.focus_requested {
-                                ctx.request_repaint_after(Duration::from_millis(16));
-                            }
+                            ctx.request_repaint_after(Duration::from_millis(16));
                         }
-                        if response.changed() {
-                            self.query_edited();
-                        }
+                    }
+                    if response.changed() {
+                        self.query_edited();
+                    }
 
-                        if !compact_for_drag {
-                            paint_palette_divider(ui);
+                    let browsing_recent = self.browsing_recent();
+                    if !compact_for_drag {
+                        paint_palette_divider(ui);
 
-                            if result_count == 0 {
-                                if self.overlay.query.trim().is_empty()
-                                    && self.overlay.image_pivot.is_none()
-                                {
-                                    if let Some(recent_search) = paint_palette_empty_state(
-                                        ui,
-                                        &self.recent_searches,
-                                        self.overlay
-                                            .active_recent_search_index
-                                            .min(self.recent_searches.len().saturating_sub(1)),
-                                    ) {
-                                        self.submit_recent_search(&recent_search);
-                                    }
-                                } else {
-                                    paint_palette_no_results_state(ui, &self.overlay.status);
+                        if result_count == 0 {
+                            if self.overlay.query.trim().is_empty()
+                                && self.overlay.image_pivot.is_none()
+                            {
+                                if let Some(recent_search) = paint_palette_empty_state(
+                                    ui,
+                                    &self.recent_searches,
+                                    self.overlay
+                                        .active_recent_search_index
+                                        .min(self.recent_searches.len().saturating_sub(1)),
+                                ) {
+                                    self.submit_recent_search(&recent_search);
                                 }
                             } else {
-                                let mut clicked_index = None;
-                                let mut drag_start_index = None;
-                                let scroll_lead_index = if self.overlay.scroll_lead_result_into_view
-                                {
-                                    self.overlay.result_selection.lead()
-                                } else {
-                                    None
-                                };
-                                let mut scrolled_lead_result = false;
-                                let selected_indices =
-                                    self.overlay.result_selection.selected().to_vec();
-                                egui::Frame::new()
-                                    .inner_margin(egui::Margin {
-                                        left: body_h_pad as i8,
-                                        right: body_h_pad as i8,
-                                        top: body_h_pad as i8,
-                                        bottom: body_h_pad as i8,
-                                    })
-                                    .show(ui, |ui| {
-                                        ui.set_min_width(grid_inner_width);
-                                        ui.set_max_width(grid_inner_width);
-                                        let mut render_grid = |ui: &mut egui::Ui| {
-                                            ui.spacing_mut().item_spacing = egui::vec2(
-                                                crate::ui::theme::SPACE_2,
-                                                crate::ui::theme::SPACE_2,
-                                            );
-                                            for (row_index, row_groups) in self
-                                                .overlay
-                                                .results
-                                                .chunks(grid_layout.columns.max(1))
-                                                .enumerate()
-                                            {
-                                                ui.horizontal(|ui| {
-                                                    ui.spacing_mut().item_spacing.x =
-                                                        crate::ui::theme::SPACE_2;
-                                                    for (column_index, group) in
-                                                        row_groups.iter().enumerate()
-                                                    {
-                                                        let index = row_index * grid_layout.columns
-                                                            + column_index;
-                                                        let selected =
-                                                            selected_indices.contains(&index);
-                                                        let response = search_result_tile(
-                                                            ui,
-                                                            group,
-                                                            &mut self.overlay.asset_preview_cache,
-                                                            selected,
-                                                            grid_layout.tile_width,
-                                                        );
-                                                        if scroll_lead_index == Some(index) {
-                                                            ui.scroll_to_rect_animation(
-                                                                response.rect.expand2(egui::vec2(
-                                                                    0.0,
-                                                                    SEARCH_RESULT_SCROLL_MARGIN,
-                                                                )),
-                                                                None,
-                                                                SEARCH_RESULT_SCROLL_ANIMATION,
-                                                            );
-                                                            scrolled_lead_result = true;
-                                                        }
-                                                        if response.clicked() {
-                                                            clicked_index = Some((
-                                                                index,
-                                                                ctx.input(|input| {
-                                                                    if input.modifiers.shift {
-                                                                        SearchSelectionMode::Range
-                                                                    } else if input
-                                                                        .modifiers
-                                                                        .command
-                                                                        || input.modifiers.ctrl
-                                                                    {
-                                                                        SearchSelectionMode::Toggle
-                                                                    } else {
-                                                                        SearchSelectionMode::Replace
-                                                                    }
-                                                                }),
-                                                            ));
-                                                        }
-                                                        if response.drag_started() {
-                                                            drag_start_index = Some(index);
-                                                        }
-                                                    }
-                                                });
-                                            }
-                                        };
-
-                                        if grid_content_height <= PALETTE_GRID_MAX_HEIGHT {
-                                            render_grid(ui);
-                                        } else {
-                                            egui::ScrollArea::vertical()
-                                                .max_height(grid_viewport_height)
-                                                .auto_shrink([false, false])
-                                                .show(ui, |ui| render_grid(ui));
-                                        }
-                                    });
-                                if scrolled_lead_result {
-                                    self.overlay.scroll_lead_result_into_view = false;
-                                }
-                                if let Some((index, mode)) = clicked_index {
-                                    self.overlay.scroll_lead_result_into_view = true;
-                                    self.overlay.result_selection.update(index, mode);
-                                }
-                                if let Some(index) = drag_start_index {
-                                    self.start_result_drag(index);
-                                }
+                                paint_palette_no_results_state(ui, &self.overlay.status);
                             }
+                        } else {
+                            let mut clicked_index = None;
+                            let mut drag_start_index = None;
+                            let scroll_lead_index = if self.overlay.scroll_lead_result_into_view {
+                                self.overlay.result_selection.lead()
+                            } else {
+                                None
+                            };
+                            let mut scrolled_lead_result = false;
+                            let selected_indices =
+                                self.overlay.result_selection.selected().to_vec();
+                            egui::Frame::new()
+                                .inner_margin(egui::Margin {
+                                    left: body_h_pad as i8,
+                                    right: body_h_pad as i8,
+                                    top: body_h_pad as i8,
+                                    bottom: body_h_pad as i8,
+                                })
+                                .show(ui, |ui| {
+                                    ui.set_min_width(grid_inner_width);
+                                    ui.set_max_width(grid_inner_width);
+                                    let mut render_grid = |ui: &mut egui::Ui| {
+                                        ui.spacing_mut().item_spacing = egui::vec2(
+                                            crate::ui::theme::SPACE_2,
+                                            crate::ui::theme::SPACE_2,
+                                        );
+                                        for (row_index, row_groups) in self
+                                            .overlay
+                                            .results
+                                            .chunks(grid_layout.columns.max(1))
+                                            .enumerate()
+                                        {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x =
+                                                    crate::ui::theme::SPACE_2;
+                                                for (column_index, group) in
+                                                    row_groups.iter().enumerate()
+                                                {
+                                                    let index = row_index * grid_layout.columns
+                                                        + column_index;
+                                                    let selected =
+                                                        selected_indices.contains(&index);
+                                                    let response = search_result_tile(
+                                                        ui,
+                                                        group,
+                                                        &mut self.overlay.asset_preview_cache,
+                                                        selected,
+                                                        grid_layout.tile_width,
+                                                    );
+                                                    if scroll_lead_index == Some(index) {
+                                                        ui.scroll_to_rect_animation(
+                                                            response.rect.expand2(egui::vec2(
+                                                                0.0,
+                                                                SEARCH_RESULT_SCROLL_MARGIN,
+                                                            )),
+                                                            None,
+                                                            SEARCH_RESULT_SCROLL_ANIMATION,
+                                                        );
+                                                        scrolled_lead_result = true;
+                                                    }
+                                                    if response.clicked() {
+                                                        clicked_index = Some((
+                                                            index,
+                                                            ctx.input(|input| {
+                                                                if input.modifiers.shift {
+                                                                    SearchSelectionMode::Range
+                                                                } else if input.modifiers.command
+                                                                    || input.modifiers.ctrl
+                                                                {
+                                                                    SearchSelectionMode::Toggle
+                                                                } else {
+                                                                    SearchSelectionMode::Replace
+                                                                }
+                                                            }),
+                                                        ));
+                                                    }
+                                                    if response.drag_started() {
+                                                        drag_start_index = Some(index);
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    };
 
-                            paint_palette_divider(ui);
-                            paint_palette_footer(
-                                ui,
-                                result_count,
-                                self.overlay.has_more_results,
-                                &self.overlay.status,
-                            );
+                                    if grid_content_height <= PALETTE_GRID_MAX_HEIGHT {
+                                        render_grid(ui);
+                                    } else {
+                                        egui::ScrollArea::vertical()
+                                            .max_height(grid_viewport_height)
+                                            .auto_shrink([false, false])
+                                            .show(ui, |ui| render_grid(ui));
+                                    }
+                                });
+                            if scrolled_lead_result {
+                                self.overlay.scroll_lead_result_into_view = false;
+                            }
+                            if let Some((index, mode)) = clicked_index {
+                                self.overlay.scroll_lead_result_into_view = true;
+                                self.overlay.result_selection.update(index, mode);
+                            }
+                            if let Some(index) = drag_start_index {
+                                self.start_result_drag(index);
+                            }
                         }
-                    });
+
+                        paint_palette_footer(
+                            ui,
+                            &self.overlay.status,
+                            result_count,
+                            self.overlay.has_more_results,
+                            browsing_recent,
+                        );
+                    }
+                });
             });
 
         let overlay_rect = area_response.response.rect;
@@ -401,6 +383,9 @@ impl SearchController {
             && !cancelled_provisional_batch
         {
             self.close_overlay();
+            return drop_request;
+        }
+        if self.install_surface_visible() {
             return drop_request;
         }
 
@@ -488,7 +473,7 @@ impl SearchController {
                     );
                 }
             }
-        } else if !self.recent_searches.is_empty() {
+        } else if self.browsing_recent() {
             let last_recent_index = self.recent_searches.len() - 1;
             if ctx.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
                 self.overlay.active_recent_search_index =
@@ -506,5 +491,12 @@ impl SearchController {
             }
         }
         drop_request
+    }
+
+    /// An empty query with no pivot lists recent searches for the keyboard.
+    fn browsing_recent(&self) -> bool {
+        self.overlay.query.trim().is_empty()
+            && self.overlay.image_pivot.is_none()
+            && !self.recent_searches.is_empty()
     }
 }

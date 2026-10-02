@@ -60,7 +60,8 @@ pub(super) fn render_sidebar_for_test(ctx: &egui::Context, app: &mut SnappyRefAp
         block_sidebar_input(ctx, sidebar_rect(screen_rect));
     }
     let board_summaries = app.board_editing.documents.summaries();
-    let about_updates = app.about_updates_view();
+    let about = app.about_view();
+    let semantic_search = app.semantic_search_settings_status();
     let sidebar_result = show_sidebar(
         ctx,
         screen_rect,
@@ -71,8 +72,8 @@ pub(super) fn render_sidebar_for_test(ctx: &egui::Context, app: &mut SnappyRefAp
         &mut app.canvas,
         board_summaries,
         app.active_board_id,
-        None,
-        about_updates,
+        &about,
+        &semantic_search,
     );
     let board_action = if app.modal_open() {
         None

@@ -457,7 +457,7 @@ fn moved_canvas_stack_order_controls_overlapping_context_selection() {
     ]);
     state.select_content(&[], &[20]);
 
-    assert!(state.move_selected_canvas_items_to_front());
+    assert!(state.bring_selection_to_front());
     open_context_menu_at_pointer(&mut state, rect, rect.center());
 
     assert!(state.selected_placement_ids().is_empty());

@@ -1,57 +1,47 @@
+//! The sidebar: one floating card off the window's left edge holding the
+//! Boards list and Settings, with the tab between them pinned to its
+//! bottom so switching never moves the card.
+
 use eframe::egui;
 
-mod about_updates;
+mod about;
 mod boards;
 mod controls;
+mod icons;
+mod keys;
 mod settings;
-mod shortcuts;
 
-use about_updates::paint_about_updates_section;
-use boards::paint_sidebar_boards;
-use controls::{paint_sidebar_section_header, paint_sidebar_subcard, paint_sidebar_tabs};
-use settings::paint_settings_section;
-use shortcuts::paint_supported_shortcuts_section;
+use crate::ui::{card, motion, theme};
 
+pub(crate) use about::{AboutView, AppUpdateStatus};
 pub(crate) use controls::{show_sidebar_edge, show_status_message};
-pub(crate) const SIDEBAR_WIDTH: f32 = 268.0;
-pub(crate) const SIDEBAR_TOP_MARGIN: f32 = 40.0;
-pub(crate) const SIDEBAR_BOTTOM_MARGIN: f32 = 16.0;
+
+/// The card's gap to the window edge.
+const INSET: f32 = 8.0;
+/// The Group card's width, so both cards share one inner column.
+const CARD_WIDTH: f32 = 264.0;
+const INNER_WIDTH: f32 = CARD_WIDTH - 2.0 * card::PADDING;
+/// Clear of the macOS title bar.
+const TOP_MARGIN: f32 = 40.0;
+/// The window space the open sidebar covers.
+pub(crate) const SIDEBAR_WIDTH: f32 = INSET + CARD_WIDTH;
+/// The Boards/Settings tab: a bed around control-height tabs.
+const TAB_HEIGHT: f32 = theme::CONTROL_HEIGHT + 4.0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SidebarTab {
     #[default]
     Boards,
-    Options,
+    Settings,
 }
 
 pub(crate) struct SidebarRenderResult {
     pub settings_changed: bool,
     pub interactive_rect: Option<egui::Rect>,
     pub board_action: Option<SidebarBoardAction>,
-    /// True when the About / Updates update action was activated this frame.
+    /// True when the About update action was activated this frame.
     pub update_action_clicked: bool,
     pub semantic_search_action: Option<SemanticSearchSettingsAction>,
-}
-
-/// Snapshot of the About / Updates section state. The sidebar reads but
-/// does not mutate any of these; the app owns the data.
-#[derive(Clone, Debug)]
-pub(crate) struct AboutUpdatesView {
-    /// Running app version, normally `env!("CARGO_PKG_VERSION")`.
-    pub current_version: String,
-    /// Unix-epoch milliseconds of the last completed check. `None`
-    /// renders as "never".
-    pub last_checked_unix_millis: Option<u64>,
-    pub update_button_label: String,
-    pub update_button_enabled: bool,
-    pub update_button_primary: bool,
-    pub update_status: Option<String>,
-    pub semantic_search: SemanticSearchSettingsView,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct SemanticSearchSettingsView {
-    pub status: SemanticSearchSettingsStatus,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,13 +60,6 @@ pub(crate) enum SemanticSearchSettingsAction {
     RequestRemove,
 }
 
-#[derive(Clone, Copy)]
-enum SidebarOptionsSection {
-    AboutUpdates,
-    WorkspaceSettings,
-    Shortcuts,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SidebarBoardAction {
     Create,
@@ -85,11 +68,12 @@ pub(crate) enum SidebarBoardAction {
     RequestDelete(i64),
 }
 
+/// The open sidebar's card.
 pub(crate) fn sidebar_rect(screen_rect: egui::Rect) -> egui::Rect {
-    let top = screen_rect.top() + SIDEBAR_TOP_MARGIN;
-    let bottom = (screen_rect.bottom() - SIDEBAR_BOTTOM_MARGIN).max(top);
+    let top = screen_rect.top() + TOP_MARGIN;
+    let bottom = (screen_rect.bottom() - INSET).max(top);
     egui::Rect::from_min_max(
-        egui::pos2(screen_rect.left(), top),
+        egui::pos2(screen_rect.left() + INSET, top),
         egui::pos2(screen_rect.left() + SIDEBAR_WIDTH, bottom),
     )
 }
@@ -129,6 +113,7 @@ pub(crate) fn close_sidebar_on_outside_click(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn show_sidebar(
     ctx: &egui::Context,
     screen_rect: egui::Rect,
@@ -139,247 +124,124 @@ pub(crate) fn show_sidebar(
     canvas: &mut crate::canvas::CanvasState,
     boards: &[crate::data::BoardSummary],
     active_board_id: i64,
-    forced_board_hover_index: Option<usize>,
-    about_updates: AboutUpdatesView,
+    about: &AboutView,
+    semantic_search: &SemanticSearchSettingsStatus,
 ) -> SidebarRenderResult {
-    let entrance =
-        crate::ui::motion::overlay_entrance(ctx, egui::Id::new("sidebar_entrance"), sidebar_open);
+    let entrance = motion::overlay_entrance(ctx, egui::Id::new("sidebar_entrance"), sidebar_open);
+    let mut result = SidebarRenderResult {
+        settings_changed: false,
+        interactive_rect: None,
+        board_action: None,
+        update_action_clicked: false,
+        semantic_search_action: None,
+    };
     if !sidebar_open {
-        return SidebarRenderResult {
-            settings_changed: false,
-            interactive_rect: None,
-            board_action: None,
-            update_action_clicked: false,
-            semantic_search_action: None,
-        };
+        return result;
     }
 
-    let mut settings_changed = false;
-    let mut board_action = None;
-    let mut update_action_clicked = false;
-    let mut semantic_search_action = None;
-
-    let top = screen_rect.top() + SIDEBAR_TOP_MARGIN;
-    let bottom = (screen_rect.bottom() - SIDEBAR_BOTTOM_MARGIN).max(top);
-    let settle = crate::ui::motion::settle_offset(entrance);
-    let sidebar_rect = egui::Rect::from_min_max(
-        egui::pos2(screen_rect.left() - settle, top),
-        egui::pos2(screen_rect.left() + SIDEBAR_WIDTH - settle, bottom),
-    );
-
-    let area_response = egui::Area::new(egui::Id::new("sidebar"))
+    let rect =
+        sidebar_rect(screen_rect).translate(egui::vec2(-motion::settle_offset(entrance), 0.0));
+    let inner_size = rect.size() - egui::Vec2::splat(2.0 * card::PADDING);
+    let area = egui::Area::new(egui::Id::new("sidebar"))
         .order(egui::Order::Foreground)
-        .fixed_pos(sidebar_rect.min)
+        .fixed_pos(rect.min)
         .show(ctx, |ui| {
             ui.set_opacity(entrance.clamp(0.0, 1.0));
-            ui.set_min_size(sidebar_rect.size());
-            let shape_rect = sidebar_rect;
-            let radius = egui::CornerRadius {
-                nw: 0,
-                ne: crate::ui::theme::RADIUS_PANEL,
-                sw: 0,
-                se: crate::ui::theme::RADIUS_PANEL,
-            };
-            // No outline: the sidebar separates from the canvas by surface
-            // tone alone.
-            ui.painter().rect(
-                shape_rect,
-                radius,
-                crate::ui::theme::SURFACE,
-                egui::Stroke::NONE,
-                egui::StrokeKind::Inside,
-            );
-            let inner_rect = shape_rect;
-            let ui_builder = egui::UiBuilder::new().max_rect(inner_rect);
-            ui.scope_builder(ui_builder, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                let mut paint_contents = |ui: &mut egui::Ui| {
-                    paint_sidebar_tabs(ui, sidebar_tab);
-                    ui.add_space(crate::ui::theme::SPACE_2);
-                    match *sidebar_tab {
-                        SidebarTab::Boards => {
-                            board_action = paint_sidebar_boards(
-                                ui,
-                                boards,
-                                active_board_id,
-                                forced_board_hover_index,
-                            )
-                        }
-                        SidebarTab::Options => {
-                            let options_outcome =
-                                paint_sidebar_options(ui, settings, canvas, &about_updates);
-                            settings_changed |= options_outcome.settings_changed;
-                            update_action_clicked |= options_outcome.update_action_clicked;
-                            if semantic_search_action.is_none() {
-                                semantic_search_action = options_outcome.semantic_search_action;
-                            }
-                        }
+            card::frame().show(ui, |ui| {
+                let inner = egui::Rect::from_min_size(ui.cursor().min, inner_size);
+                ui.set_min_size(inner_size);
+                ui.spacing_mut().item_spacing = card::ITEM_SPACING;
+                let tab_rect = egui::Rect::from_min_max(
+                    egui::pos2(inner.left(), inner.bottom() - TAB_HEIGHT),
+                    inner.max,
+                );
+                // The body spans the padding too, so its scroll bar sits
+                // there. A child Ui keeps it from widening the frame.
+                let body = egui::Rect::from_min_max(
+                    egui::pos2(rect.left(), inner.top()),
+                    egui::pos2(rect.right(), tab_rect.top() - 14.0),
+                );
+                let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body));
+                match sidebar_tab {
+                    SidebarTab::Boards => {
+                        result.board_action = boards::show(&mut body_ui, boards, active_board_id);
                     }
-                };
-                paint_contents(ui);
+                    SidebarTab::Settings => {
+                        settings::show(
+                            &mut body_ui,
+                            settings,
+                            canvas,
+                            about,
+                            semantic_search,
+                            &mut result,
+                        );
+                    }
+                }
+                ui.scope_builder(egui::UiBuilder::new().max_rect(tab_rect), |ui| {
+                    let tabs = [SidebarTab::Boards, SidebarTab::Settings];
+                    let open = tabs.iter().position(|tab| tab == sidebar_tab).unwrap_or(0);
+                    let names = ["Boards", "Settings"];
+                    if let Some(i) = card::tabs(
+                        ui,
+                        egui::vec2(INNER_WIDTH, TAB_HEIGHT),
+                        &names,
+                        open,
+                        |p, i, r, ink| {
+                            p.text(
+                                r.center(),
+                                egui::Align2::CENTER_CENTER,
+                                names[i],
+                                egui::FontId::proportional(theme::TYPE_CONTROL),
+                                ink,
+                            );
+                        },
+                    ) {
+                        *sidebar_tab = tabs[i];
+                    }
+                });
             });
         });
+    result.interactive_rect = Some(area.response.rect);
 
     if !input_enabled {
-        settings_changed = false;
-        board_action = None;
-        update_action_clicked = false;
-        semantic_search_action = None;
+        result.settings_changed = false;
+        result.board_action = None;
+        result.update_action_clicked = false;
+        result.semantic_search_action = None;
     }
-
-    SidebarRenderResult {
-        settings_changed,
-        interactive_rect: Some(area_response.response.rect),
-        board_action,
-        update_action_clicked,
-        semantic_search_action,
-    }
+    result
 }
 
-struct SidebarOptionsOutcome {
-    settings_changed: bool,
-    update_action_clicked: bool,
-    semantic_search_action: Option<SemanticSearchSettingsAction>,
-}
-
-fn paint_sidebar_options(
+/// A vertical scroll filling the body, with contents inset to the card's
+/// padding.
+fn scroll(
     ui: &mut egui::Ui,
-    settings: &mut crate::data::WorkspaceSettings,
-    canvas: &mut crate::canvas::CanvasState,
-    about_updates: &AboutUpdatesView,
-) -> SidebarOptionsOutcome {
-    let mut changed = false;
-    let mut update_action_clicked = false;
-    let mut semantic_search_action = None;
-    let content_rect = ui.available_rect_before_wrap();
-    ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-        egui::ScrollArea::vertical()
-            .id_salt("sidebar_options_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-                ui.add_space(crate::ui::theme::SPACE_2);
-                let options_cascade = egui::Id::new("sidebar_options_cascade");
-                for (index, section) in SIDEBAR_OPTIONS_SECTIONS.into_iter().enumerate() {
-                    if index > 0 {
-                        ui.add_space(crate::ui::theme::SPACE_6);
-                    }
-                    // Sections cascade in reading order; two stagger steps
-                    // per section keep the choreography legible.
-                    let reveal = crate::ui::motion::cascade_reveal_on_appear(
-                        ui.ctx(),
-                        options_cascade,
-                        index * 2,
-                    );
-                    ui.scope(|ui| {
-                        ui.multiply_opacity(reveal.opacity);
-                        match section {
-                            SidebarOptionsSection::AboutUpdates => {
-                                paint_sidebar_section_header(ui, "Application", None);
-                                paint_sidebar_subcard(ui, |ui| {
-                                    let about_outcome =
-                                        paint_about_updates_section(ui, about_updates);
-                                    update_action_clicked |= about_outcome.update_action_clicked;
-                                });
-                            }
-                            SidebarOptionsSection::WorkspaceSettings => {
-                                paint_sidebar_section_header(ui, "Workspace", None);
-                                paint_sidebar_subcard(ui, |ui| {
-                                    let settings_outcome = paint_settings_section(
-                                        ui,
-                                        settings,
-                                        canvas,
-                                        &about_updates.semantic_search,
-                                    );
-                                    changed |= settings_outcome.changed;
-                                    semantic_search_action =
-                                        settings_outcome.semantic_search_action;
-                                });
-                            }
-                            SidebarOptionsSection::Shortcuts => {
-                                paint_sidebar_section_header(ui, "Shortcuts", None);
-                                paint_supported_shortcuts_section(ui);
-                            }
-                        }
-                    });
-                }
-                ui.add_space(crate::ui::theme::SPACE_4);
-            });
-    });
-    SidebarOptionsOutcome {
-        settings_changed: changed,
-        update_action_clicked,
-        semantic_search_action,
-    }
+    id: impl std::hash::Hash + std::fmt::Debug,
+    contents: impl FnOnce(&mut egui::Ui),
+) {
+    egui::ScrollArea::vertical()
+        .id_salt(id)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Frame::new()
+                .inner_margin(egui::Margin::symmetric(card::PADDING as i8, 0))
+                .show(ui, |ui| {
+                    ui.set_width(INNER_WIDTH);
+                    ui.spacing_mut().item_spacing = card::ITEM_SPACING;
+                    contents(ui);
+                });
+        });
 }
 
-const SIDEBAR_OPTIONS_SECTIONS: [SidebarOptionsSection; 3] = [
-    SidebarOptionsSection::AboutUpdates,
-    SidebarOptionsSection::WorkspaceSettings,
-    SidebarOptionsSection::Shortcuts,
-];
-
-#[cfg(test)]
-mod tests {
-    use super::boards::paint_board_row;
-    use super::shortcuts::display_shortcut_label;
-    use eframe::egui;
-
-    #[test]
-    fn display_shortcut_label_spaces_compact_modifier_chords() {
-        assert_eq!(display_shortcut_label("⌘B"), "⌘ B");
-        assert_eq!(display_shortcut_label("⇧⌘L"), "⇧ ⌘ L");
-        assert_eq!(display_shortcut_label("Ctrl+B"), "Ctrl B");
-        assert_eq!(display_shortcut_label("Ctrl+Shift+L"), "Ctrl Shift L");
-        assert_eq!(display_shortcut_label("C + Drag"), "C + Drag");
-        assert_eq!(display_shortcut_label("R + Drag"), "R + Drag");
-    }
-
-    #[test]
-    fn board_rename_focus_is_present_in_accessibility_tree_on_double_click() {
-        use egui_kittest::{Harness, kittest::Queryable};
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(268.0, 200.0))
-            .with_step_dt(1.0 / 60.0)
-            .build_ui(|ui| {
-                paint_board_row(ui, 1, "My Board", "0 images", true, None, false, 0.0);
-            });
-        harness.get_by_label("Board My Board").click();
-        harness.step();
-        harness.get_by_label("Board My Board").click();
-        harness.step();
-        assert!(
-            harness.ctx.egui_wants_keyboard_input(),
-            "double-click must focus the rename editor"
-        );
-    }
-
-    #[test]
-    fn board_row_rename_mode_consumes_full_row_height() {
-        let ctx = egui::Context::default();
-        let mut cursor_after_row = 0.0;
-
-        let _ = crate::ui::test_frame::run_ui(
-            &ctx,
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(268.0, 200.0),
-                )),
-                ..Default::default()
-            },
-            |ui| {
-                ui.set_width(240.0);
-                ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-                let name_edit_id = ui.make_persistent_id(("board-name-edit", 1_i64));
-                ui.memory_mut(|memory| memory.request_focus(name_edit_id));
-
-                paint_board_row(ui, 1, "My Board", "96 images", true, Some("⌘1"), false, 0.0);
-                cursor_after_row = ui.cursor().min.y;
-            },
-        );
-
-        assert_eq!(cursor_after_row, 48.0);
-    }
+/// The body's inner column for content that stays put above a scroll.
+fn column<R>(ui: &mut egui::Ui, height: f32, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(card::PADDING, 0.0))),
+        contents,
+    )
+    .inner
 }

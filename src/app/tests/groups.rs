@@ -412,7 +412,7 @@ fn inspect_group_operations_writes_artifact() {
         });
         harness.step();
     }
-    harness.get_by_label("Add to group").click();
+    harness.get_by_label("Add to group…").click();
     for _ in 0..4 {
         harness.step();
     }
@@ -1699,4 +1699,103 @@ fn scrub_survives_board_switch() {
     assert_ne!(first, second);
     assert_eq!(edited, padding + 30.0);
     assert_eq!(back, edited);
+}
+
+/// Captures the context menu over an empty board, a selected Group, a
+/// multi-image selection with one row hovered, and opened in the window's
+/// bottom-right corner, then the dialog its last row opens.
+#[test]
+fn inspect_context_menu_writes_artifact() {
+    let mut scenario = InspectScenario::new("context-menu");
+    let (_root, mut harness, ids) = dock_fixture();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
+    let group_id = harness.state().canvas.groups()[0].id;
+    let at = |h: &Harness<'_, SnappyRefApp>, id: i64| {
+        inspect_world_to_screen(
+            h.state()
+                .canvas
+                .placement_for_id(id)
+                .unwrap()
+                .state
+                .geometry
+                .center,
+            screen,
+        )
+    };
+    let open = |h: &mut Harness<'_, SnappyRefApp>, pos: egui::Pos2| {
+        h.state_mut().context_menu_pos = None;
+        h.hover_at(pos);
+        h.step();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            h.step();
+        }
+        for _ in 0..16 {
+            h.step();
+        }
+    };
+
+    harness.state_mut().canvas.select_content(&[], &[]);
+    open(&mut harness, egui::pos2(180.0, 120.0));
+    scenario.assertion(
+        "menu opens on empty board",
+        harness.state().context_menu_pos.is_some(),
+    );
+    scenario.capture_screen("empty", &mut harness);
+
+    harness.state_mut().canvas.select_group(group_id);
+    let pos = at(&harness, ids[0]) - egui::vec2(0.0, 60.0);
+    open(&mut harness, pos);
+    scenario.capture_screen("group", &mut harness);
+
+    harness.state_mut().context_menu_pos = None;
+    harness.state_mut().canvas.select_group(group_id);
+    harness.state_mut().ungroup_selection();
+    for _ in 0..4 {
+        harness.step();
+    }
+    harness.state_mut().canvas.select_content(&ids[0..3], &[]);
+    let pos = at(&harness, ids[1]) - egui::vec2(40.0, 40.0);
+    open(&mut harness, pos);
+    let row = harness.get_by_label("Duplicate").rect();
+    harness.hover_at(row.center());
+    for _ in 0..12 {
+        harness.step();
+    }
+    scenario.assertion(
+        "multi-image selection keeps all three images",
+        harness.state().canvas.selected_placement_ids().len() == 3,
+    );
+    scenario.capture_screen("selection-hover", &mut harness);
+
+    let corner = screen.max - egui::vec2(8.0, 8.0);
+    open(&mut harness, corner);
+    let last_row = harness.get_by_label("Remove from library…").rect();
+    scenario.assertion(
+        "menu in the corner opens up and left of the pointer",
+        last_row.max.x < corner.x && last_row.max.y < corner.y,
+    );
+    scenario.capture_screen("edge", &mut harness);
+
+    harness.get_by_label("Remove from library…").click();
+    for _ in 0..16 {
+        harness.step();
+    }
+    scenario.assertion(
+        "Remove from library asks before removing",
+        harness.state().pending_library_remove.is_some(),
+    );
+    scenario.capture_screen("remove-from-library", &mut harness);
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
 }

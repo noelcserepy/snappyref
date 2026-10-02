@@ -733,12 +733,20 @@ fn context_menu_enables_actions_for_selection() {
         Paste,
         Duplicate,
         DeleteFromBoard,
-        MoveToFront,
-        MoveToBack,
+        BringToFront,
+        SendToBack,
     ];
     let grouped = |extra: &[crate::app::shortcuts::ContextMenuAction]| {
-        let mut actions = vec![Group, AddToGroup];
-        actions.extend(selection_actions);
+        let mut actions = vec![
+            Copy,
+            Paste,
+            Duplicate,
+            DeleteFromBoard,
+            Group,
+            AddToGroup,
+            BringToFront,
+            SendToBack,
+        ];
         actions.extend(extra);
         actions
     };
@@ -757,8 +765,9 @@ fn context_menu_enables_actions_for_selection() {
     ] {
         app.canvas.select_content(placements, annotations);
         let enabled = app
-            .context_menu_items()
+            .context_menu_sections()
             .into_iter()
+            .flatten()
             .filter(|item| item.enabled)
             .map(|item| item.action)
             .collect::<Vec<_>>();
@@ -855,9 +864,9 @@ fn remove_from_library_context_action_waits_for_confirmation() {
 }
 
 #[test]
-fn move_to_front_context_action_persists_canvas_stack_order() {
+fn bring_to_front_context_action_persists_canvas_stack_order() {
     let ctx = egui::Context::default();
-    let root = TempRoot::new("snappyref-context-move-front");
+    let root = TempRoot::new("snappyref-context-bring-front");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
         .store_rgba_image("first", &[255, 0, 0, 255], 1, 1)
@@ -928,7 +937,7 @@ fn move_to_front_context_action_persists_canvas_stack_order() {
         .select_content(&[first.state.id], &[annotation.id]);
 
     app.handle_context_menu_action(
-        crate::app::shortcuts::ContextMenuAction::MoveToFront,
+        crate::app::shortcuts::ContextMenuAction::BringToFront,
         &ctx,
         egui::Rect::EVERYTHING,
     );
@@ -944,7 +953,7 @@ fn move_to_front_context_action_persists_canvas_stack_order() {
     );
 
     app.handle_context_menu_action(
-        crate::app::shortcuts::ContextMenuAction::MoveToBack,
+        crate::app::shortcuts::ContextMenuAction::SendToBack,
         &ctx,
         egui::Rect::EVERYTHING,
     );
@@ -1211,9 +1220,9 @@ fn clicked_multi_select_enter_places_all_selected_library_results() {
 }
 
 #[test]
-fn context_menu_move_to_front_routes_through_rendered_menu_row() {
+fn context_menu_bring_to_front_routes_through_rendered_menu_row() {
     let ctx = egui::Context::default();
-    let root = TempRoot::new("snappyref-context-menu-move-front");
+    let root = TempRoot::new("snappyref-context-menu-bring-front");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let image_path = library
         .store_rgba_image("source", &[255, 0, 0, 255], 1, 1)
@@ -1277,7 +1286,7 @@ fn context_menu_move_to_front_routes_through_rendered_menu_row() {
         app.show_context_menu(ctx, test_screen_rect(), false);
     });
 
-    harness.get_by_label("Move to Front").click();
+    harness.get_by_label("Bring to front").click();
     harness.run();
 
     assert_eq!(

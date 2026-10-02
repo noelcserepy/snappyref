@@ -8,7 +8,6 @@ const MODIFIER_KEYS: &[u8] = include_bytes!("../../assets/fonts/JetBrainsMono-Mo
 
 const SHELL_BG: egui::Color32 = color(0x0A, 0x0A, 0x0A);
 const PANEL_BG: egui::Color32 = color(0x16, 0x15, 0x14);
-const PANEL_BG_PALETTE: egui::Color32 = color(0x17, 0x16, 0x15);
 const PANEL_BG_ELEVATED: egui::Color32 = color(0x22, 0x21, 0x1F);
 const ACCENT_GOLD: egui::Color32 = color(0xE4, 0xCE, 0xB0);
 const DESTRUCTIVE_RED: egui::Color32 = color(0xCA, 0x3C, 0x25);
@@ -25,37 +24,56 @@ pub const SPACE_3: f32 = 12.0;
 pub const SPACE_4: f32 = 16.0;
 pub const SPACE_6: f32 = 24.0;
 
-/// Standard control height for compact toolbar and drawer controls.
-pub const CONTROL_HEIGHT: f32 = 28.0;
+/// Control height, set by the Group card: wells, segments, switches, and
+/// toolbar buttons.
+pub const CONTROL_HEIGHT: f32 = 30.0;
+
+/// Type scale, set by the Group card. Captions stay on [`editorial_caption`].
+///
+/// Usage:
+/// - `TYPE_TITLE` for card titles
+/// - `TYPE_CONTROL` for control labels, menu rows, and field values
+/// - `TYPE_DETAIL` for subtitles, hint labels, status lines, header actions, and tooltips
+/// - `TYPE_CHIP` for key chips and small toggle chips
+pub const TYPE_TITLE: f32 = 16.0;
+pub const TYPE_CONTROL: f32 = 13.0;
+pub const TYPE_DETAIL: f32 = 12.0;
+pub const TYPE_CHIP: f32 = 11.0;
 
 /// Radius roles.
 ///
 /// Usage:
 /// - `RADIUS_NONE` for structural fills, rules, underlines, and canvas geometry
 /// - `RADIUS_MICRO` for tiny marks, active dots, thumbnails, and swatches under 24px
-/// - `RADIUS_INLINE` for quiet inline setting controls where text stays primary
-/// - `RADIUS_COMPACT` for rows, chips, hints, and small grouped containers
-/// - `RADIUS_CONTROL` for explicit buttons and direct-manipulation toolbar targets
-/// - `RADIUS_PANEL` for floating panels, overlays, and major framed surfaces
+/// - `RADIUS_INLINE` for key chips
+/// - `RADIUS_COMPACT` for tooltips, toasts, and small grouped containers
+/// - `RADIUS_CONTROL` for card controls, menu rows, buttons, and toolbar targets
+/// - `RADIUS_PANEL` for menus and edge-docked panels: 8px rows plus 4px padding
+/// - `RADIUS_CARD` for floating cards: the Group card, search palette, group picker, and dialogs
 pub const RADIUS_NONE: u8 = 0;
 pub const RADIUS_MICRO: u8 = 3;
 pub const RADIUS_INLINE: u8 = 4;
 pub const RADIUS_COMPACT: u8 = 6;
 pub const RADIUS_CONTROL: u8 = 8;
 pub const RADIUS_PANEL: u8 = 12;
+pub const RADIUS_CARD: u8 = 14;
 
 /// Surface roles.
 ///
 /// Usage:
 /// - `BACKGROUND` for the canvas and app-level backdrop
-/// - `SURFACE` for sidebars, drawers, resting controls, and grouped UI
-/// - `PALETTE_SURFACE` for the command palette panel (slightly warmer than `SURFACE`)
-/// - `SURFACE_ELEVATED` for hover states and selected surfaces that need separation
+/// - `SURFACE` for cards, sidebars, menus, and the search palette
+/// - `SURFACE_PRESSED` for segmented beds and pressed controls
+/// - `SURFACE_ELEVATED` for wells, hover states, and selected surfaces that need separation
+/// - `SURFACE_RAISED` for marks that sit on wells: key chips, resting toggle
+///   chips, the off switch track, and hairline rules inside cards
+/// - `TOOLTIP` for tooltips, a step above everything so they read over cards
 pub const BACKGROUND: egui::Color32 = SHELL_BG;
 pub const SURFACE: egui::Color32 = PANEL_BG;
-pub const PALETTE_SURFACE: egui::Color32 = PANEL_BG_PALETTE;
-pub const SURFACE_ELEVATED: egui::Color32 = PANEL_BG_ELEVATED;
 pub const SURFACE_PRESSED: egui::Color32 = color(0x1B, 0x1A, 0x19);
+pub const SURFACE_ELEVATED: egui::Color32 = PANEL_BG_ELEVATED;
+pub const SURFACE_RAISED: egui::Color32 = color(0x2A, 0x28, 0x26);
+pub const TOOLTIP: egui::Color32 = color(0x2E, 0x2C, 0x2A);
 
 /// Border and text roles.
 ///
@@ -68,8 +86,8 @@ pub const SURFACE_PRESSED: egui::Color32 = color(0x1B, 0x1A, 0x19);
 /// - `ACCENT` for active fills and the few states that need emphasis without adding a new hue
 /// - `ACCENT_*` color accents for canvas guides and other explicit color comparisons
 /// - `GREEN` for green guide and indexed/ready semantic-search status
-/// - `DESTRUCTIVE` for destructive labels and confirmation actions only
-/// - `DESTRUCTIVE_EDGE` / `DESTRUCTIVE_FILL` for destructive buttons and failed content states
+/// - `DESTRUCTIVE` for destructive labels and confirmation buttons only
+/// - `DESTRUCTIVE_EDGE` / `DESTRUCTIVE_FILL` for failed content states
 pub const BORDER: egui::Color32 = egui::Color32::from_rgba_premultiplied(20, 20, 20, 20);
 pub const BORDER_STRONG: egui::Color32 = egui::Color32::from_rgba_premultiplied(31, 31, 31, 31);
 pub const TEXT: egui::Color32 = color(0xF0, 0xF0, 0xF0);
@@ -83,30 +101,10 @@ pub const DESTRUCTIVE_EDGE: egui::Color32 =
     egui::Color32::from_rgba_premultiplied(119, 35, 22, 150);
 pub const DESTRUCTIVE_FILL: egui::Color32 = egui::Color32::from_rgba_premultiplied(33, 10, 6, 42);
 
-/// Quiet settings and inset-group roles.
-///
-/// Usage:
-/// - `QUIET_INLINE_ACTIVE_FILL` for selected quiet inline controls and compact input fills
-/// - `QUIET_INLINE_HOVER_FILL` for hover-only quiet inline controls
-/// - `QUIET_INLINE_*` metrics for compact read-heavy settings choices
-///
-/// Quiet inline controls belong in settings/read-heavy panels. Canvas
-/// toolbars should stay visually explicit because they are direct
-/// manipulation targets.
-pub const QUIET_INLINE_ACTIVE_FILL: egui::Color32 =
-    egui::Color32::from_rgba_premultiplied(12, 12, 12, 12);
-pub const QUIET_INLINE_HOVER_FILL: egui::Color32 =
-    egui::Color32::from_rgba_premultiplied(7, 7, 7, 7);
-pub const QUIET_INLINE_PAD_X: f32 = 10.0;
-pub const QUIET_INLINE_PAD_Y: f32 = 5.0;
-pub const QUIET_INLINE_MIN_WIDTH: f32 = 32.0;
-pub const QUIET_INLINE_HEIGHT: f32 = 24.0;
-
 /// Editorial caption tracking.
 ///
 /// `CAPTION_TRACKING` is the extra letter spacing (in points) applied to
-/// uppercase editorial captions produced by [`editorial_caption`] and
-/// [`editorial_caption_galley`]. It exists only to compensate uppercase
+/// uppercase editorial captions produced by [`editorial_caption`]. It exists only to compensate uppercase
 /// microcaps set at `Small` size; do not apply it to body copy, buttons,
 /// or mixed-case labels.
 pub const CAPTION_TRACKING: f32 = 1.0;
@@ -118,14 +116,6 @@ pub const CAPTION_TRACKING: f32 = 1.0;
 /// active indicators. Avoid decorative loops and large travel.
 ///
 /// Usage:
-/// - `MOTION_REVEAL_SECONDS` per-item duration of a cascade reveal
-///   (ease-out fade + small rise). Not for hover states or loops.
-/// - `MOTION_REVEAL_STAGGER_SECONDS` offset between consecutive cascade
-///   items. Not for delaying unrelated surfaces against each other.
-/// - `MOTION_REVEAL_MAX_STAGGER_STEPS` caps the stagger so long lists do
-///   not make the last rows wait; items past the cap share one window.
-/// - `MOTION_REVEAL_RISE` vertical entrance offset in points for cascade
-///   items. Not a layout offset; it must decay to exactly zero.
 /// - `MOTION_INDICATOR_SECONDS` slide duration for active-tab/selection
 ///   indicators moving between positions. Not for content movement.
 /// - `MOTION_SETTLE_SECONDS` and `MOTION_SETTLE_DISTANCE` for dialogs,
@@ -134,10 +124,6 @@ pub const CAPTION_TRACKING: f32 = 1.0;
 /// - `MOTION_CONTENT_SECONDS` for fast canvas loading/hover fades.
 /// - `STATUS_MESSAGE_SECONDS` how long a transient status message
 ///   (action result or storage error) stays visible bottom-left.
-pub const MOTION_REVEAL_SECONDS: f32 = 0.16;
-pub const MOTION_REVEAL_STAGGER_SECONDS: f32 = 0.02;
-pub const MOTION_REVEAL_MAX_STAGGER_STEPS: usize = 8;
-pub const MOTION_REVEAL_RISE: f32 = 5.0;
 pub const MOTION_INDICATOR_SECONDS: f32 = 0.14;
 pub const MOTION_SETTLE_SECONDS: f32 = 0.14;
 pub const MOTION_FEEDBACK_SECONDS: f32 = 0.12;
@@ -157,28 +143,6 @@ pub fn editorial_caption(text: &str) -> egui::RichText {
         .text_style(TextStyle::Small)
         .color(TEXT_SUBTLE)
         .extra_letter_spacing(CAPTION_TRACKING)
-}
-
-/// Editorial caption laid out as a galley for painter-driven surfaces.
-/// Same role and constraints as [`editorial_caption`].
-pub fn editorial_caption_galley(
-    ui: &egui::Ui,
-    text: &str,
-    color: egui::Color32,
-) -> std::sync::Arc<egui::Galley> {
-    let font_id = TextStyle::Small.resolve(ui.style());
-    let mut job = egui::text::LayoutJob::default();
-    job.append(
-        &text.to_uppercase(),
-        0.0,
-        egui::TextFormat {
-            font_id,
-            color,
-            extra_letter_spacing: CAPTION_TRACKING,
-            ..Default::default()
-        },
-    );
-    ui.fonts_mut(|fonts| fonts.layout_job(job))
 }
 
 pub fn configure_theme(ctx: &egui::Context) {
@@ -212,12 +176,12 @@ fn configure_fonts(ctx: &egui::Context) {
 }
 
 fn apply_style(style: &mut egui::Style) {
-    // Editorial type scale: wider steps so size alone carries hierarchy
-    // (14 / 12 / 11 / 10) instead of borders or fills.
+    // egui's default widgets follow the type scale. `Small` exists only for
+    // `editorial_caption` microcaps.
     style.text_styles = [
-        (TextStyle::Heading, FontId::proportional(14.0)),
-        (TextStyle::Body, FontId::proportional(12.0)),
-        (TextStyle::Button, FontId::proportional(11.0)),
+        (TextStyle::Heading, FontId::proportional(TYPE_TITLE)),
+        (TextStyle::Body, FontId::proportional(TYPE_DETAIL)),
+        (TextStyle::Button, FontId::proportional(TYPE_CHIP)),
         (TextStyle::Small, FontId::proportional(10.0)),
         (TextStyle::Monospace, FontId::monospace(10.0)),
     ]
