@@ -8,40 +8,40 @@ import subprocess
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-# name: test filter, artifact scenario, refactor coverage, network/ignored
+# name: test filter, artifact scenario, network/ignored
 SCENARIOS = {
-    'group-dock-narrow': ('inspect_group_dock_narrow_writes_artifact', 'group-dock-narrow', False, False),
-    'group-dock': ('inspect_group_dock_writes_artifact', 'group-dock', False, False),
-    'context-menu': ('inspect_context_menu_writes_artifact', 'context-menu', False, False),
-    'member-dock': ('inspect_member_dock_writes_artifact', 'member-dock', False, False),
-    'annotation-editing': ('inspect_annotation_creation_editing_and_styles_writes_artifact', 'annotation-editing', False, False),
-    'annotation-endpoint-drag': ('inspect_annotation_endpoint_drag_writes_artifact', 'annotation-endpoint-drag', False, False),
-    'readme-board': ('inspect_readme_board_writes_artifact', 'readme-board', False, False),
-    'image-format-gallery': ('inspect_image_format_gallery_writes_artifact', 'image-format-gallery', False, True),
-    'group-picker-rename-create': ('inspect_group_picker_rename_and_create_writes_artifact', 'group-picker-rename-create', False, False),
-    'check-harness': ('inspect_search_result_drag_to_canvas_writes_artifact', 'search-drag-to-canvas', False, False),
-    'group-operations': ('inspect_group_operations_writes_artifact', 'group-operations', True, False),
-    'search-drag-to-canvas': ('inspect_search_result_drag_to_canvas_writes_artifact', 'search-drag-to-canvas', True, False),
-    'semantic-search-install': ('inspect_semantic_search_install_accepts_prompt', 'semantic-search-install', False, False),
-    'semantic-search-sidebar-status': ('inspect_semantic_search_sidebar_status_writes_artifact', 'semantic-search-sidebar-status', False, False),
-    'sidebar-pages': ('inspect_sidebar_pages_writes_artifact', 'sidebar-pages', False, False),
-    'semantic-search-real-install': ('inspect_semantic_search_real_install_writes_artifact', 'semantic-search-real-install', False, True),
-    'sample-image-import': ('inspect_sample_image_import_writes_artifact', 'sample-image-import', True, False),
-    'pending-drop-batch-undo': ('inspect_pending_drop_batch_undo_writes_artifact', 'pending-drop-batch-undo', True, False),
-    'blue-image-search-drag': ('inspect_blue_image_search_drag_writes_artifact', 'blue-image-search-drag', True, False),
-    'delete-board-modal-flash': ('inspect_delete_board_modal_flash_writes_artifact', 'delete-board-modal-flash', False, False),
-    'board-lifecycle-undo-redo': ('inspect_board_lifecycle_undo_redo_writes_artifact', 'board-lifecycle-undo-redo', True, False),
-    'search-composer': ('inspect_search_composer_writes_artifact', 'search-composer', False, False),
-    'placement-click-hold-flash': ('inspect_placement_click_hold_flash_writes_artifact', 'placement-click-hold-flash', False, False),
-    'delete-undo-redo-placement': ('inspect_delete_undo_redo_placement_writes_artifact', 'delete-undo-redo-placement', True, False),
-    'crop-undo-redo-placement': ('inspect_crop_undo_redo_placement_writes_artifact', 'crop-undo-redo-placement', True, False),
-    'compact-equal-size-images': ('inspect_compact_equal_size_images_writes_artifact', 'compact-equal-size-images', False, False),
-    'compact-mixed-column-images': ('inspect_compact_mixed_column_images_writes_artifact', 'compact-mixed-column-images', False, False),
-    'compact-windows-column-images': ('inspect_compact_windows_column_images_writes_artifact', 'compact-windows-column-images', False, False),
-    'canvas-edit-operations': ('inspect_canvas_edit_operations_writes_artifact', 'canvas-edit-operations', True, False),
-    'canvas-navigation-boards': ('inspect_canvas_navigation_and_boards_writes_artifact', 'canvas-navigation-boards', True, False),
-    'session-restart-restore': ('inspect_session_restart_restore_writes_artifact', 'session-restart-restore', True, False),
-    'persistence-write-retry': ('inspect_persistence_write_retry_writes_artifact', 'persistence-write-retry', True, False),
+    'group-dock-narrow': ('inspect_group_dock_narrow_writes_artifact', 'group-dock-narrow', False),
+    'group-dock': ('inspect_group_dock_writes_artifact', 'group-dock', False),
+    'context-menu': ('inspect_context_menu_writes_artifact', 'context-menu', False),
+    'member-dock': ('inspect_member_dock_writes_artifact', 'member-dock', False),
+    'annotation-editing': ('inspect_annotation_creation_editing_and_styles_writes_artifact', 'annotation-editing', False),
+    'annotation-endpoint-drag': ('inspect_annotation_endpoint_drag_writes_artifact', 'annotation-endpoint-drag', False),
+    'readme-board': ('inspect_readme_board_writes_artifact', 'readme-board', False),
+    'image-format-gallery': ('inspect_image_format_gallery_writes_artifact', 'image-format-gallery', True),
+    'group-picker-rename-create': ('inspect_group_picker_rename_and_create_writes_artifact', 'group-picker-rename-create', False),
+    'check-harness': ('inspect_search_result_drag_to_canvas_writes_artifact', 'search-drag-to-canvas', False),
+    'group-operations': ('inspect_group_operations_writes_artifact', 'group-operations', False),
+    'search-drag-to-canvas': ('inspect_search_result_drag_to_canvas_writes_artifact', 'search-drag-to-canvas', False),
+    'semantic-search-install': ('inspect_semantic_search_install_accepts_prompt', 'semantic-search-install', False),
+    'semantic-search-sidebar-status': ('inspect_semantic_search_sidebar_status_writes_artifact', 'semantic-search-sidebar-status', False),
+    'sidebar-pages': ('inspect_sidebar_pages_writes_artifact', 'sidebar-pages', False),
+    'semantic-search-real-install': ('inspect_semantic_search_real_install_writes_artifact', 'semantic-search-real-install', True),
+    'sample-image-import': ('inspect_sample_image_import_writes_artifact', 'sample-image-import', False),
+    'pending-drop-batch-undo': ('inspect_pending_drop_batch_undo_writes_artifact', 'pending-drop-batch-undo', False),
+    'blue-image-search-drag': ('inspect_blue_image_search_drag_writes_artifact', 'blue-image-search-drag', False),
+    'delete-board-modal-flash': ('inspect_delete_board_modal_flash_writes_artifact', 'delete-board-modal-flash', False),
+    'board-lifecycle-undo-redo': ('inspect_board_lifecycle_undo_redo_writes_artifact', 'board-lifecycle-undo-redo', False),
+    'search-composer': ('inspect_search_composer_writes_artifact', 'search-composer', False),
+    'placement-click-hold-flash': ('inspect_placement_click_hold_flash_writes_artifact', 'placement-click-hold-flash', False),
+    'delete-undo-redo-placement': ('inspect_delete_undo_redo_placement_writes_artifact', 'delete-undo-redo-placement', False),
+    'crop-undo-redo-placement': ('inspect_crop_undo_redo_placement_writes_artifact', 'crop-undo-redo-placement', False),
+    'compact-equal-size-images': ('inspect_compact_equal_size_images_writes_artifact', 'compact-equal-size-images', False),
+    'compact-mixed-column-images': ('inspect_compact_mixed_column_images_writes_artifact', 'compact-mixed-column-images', False),
+    'compact-windows-column-images': ('inspect_compact_windows_column_images_writes_artifact', 'compact-windows-column-images', False),
+    'canvas-edit-operations': ('inspect_canvas_edit_operations_writes_artifact', 'canvas-edit-operations', False),
+    'canvas-navigation-boards': ('inspect_canvas_navigation_and_boards_writes_artifact', 'canvas-navigation-boards', False),
+    'session-restart-restore': ('inspect_session_restart_restore_writes_artifact', 'session-restart-restore', False),
+    'persistence-write-retry': ('inspect_persistence_write_retry_writes_artifact', 'persistence-write-retry', False),
 }
 
 
@@ -77,7 +77,7 @@ def main():
         return 0
     if not args.scenario:
         parser.error('missing scenario')
-    test, scenario, _, ignored = SCENARIOS[args.scenario]
+    test, scenario, ignored = SCENARIOS[args.scenario]
     started = time.time()
     result = subprocess.run(['cargo', 'test', '--locked', '--lib', test, '--', '--nocapture', *(['--ignored'] if ignored else [])], cwd=ROOT)
     try:

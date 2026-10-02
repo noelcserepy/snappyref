@@ -39,5 +39,5 @@ class InspectEvidenceTests(unittest.TestCase):
     def test_catalogue_maps_to_existing_tests(self):
         root = Path(__file__).resolve().parents[1]
         source = '\n'.join(path.read_text() for path in (root / 'src').rglob('*.rs'))
-        for test, _, _, _ in SCENARIOS.values():
+        for test, _, _ in SCENARIOS.values():
             self.assertIn('fn ' + test + '(', source)
