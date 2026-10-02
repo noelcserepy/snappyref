@@ -508,7 +508,9 @@ impl SnappyRefApp {
         };
 
         let settle = crate::ui::motion::settle_offset(entrance);
-        egui::Window::new("Delete board?")
+        let title = format!("Delete \"{}\"?", pending.board_name);
+        egui::Window::new(title.as_str())
+            .id(egui::Id::new("board_delete_dialog"))
             .title_bar(false)
             .collapsible(false)
             .resizable(false)
@@ -518,11 +520,10 @@ impl SnappyRefApp {
                 ui.multiply_opacity(entrance);
                 ui.set_width(destructive_dialog_width());
                 ui.spacing_mut().item_spacing = crate::ui::card::ITEM_SPACING;
-                dialog_title(ui, "Delete board?");
-                dialog_lead(ui, &format!("Delete \"{}\"?", pending.board_name));
+                dialog_title(ui, &title);
                 dialog_detail(
                     ui,
-                    "Images stay in the shared Library. Placements, arrows, lines, and textboxes on this board will be removed.",
+                    "The images stay in your library. Arrows, lines, and textboxes on this board are deleted.",
                 );
                 match dialog_actions(ui, "Cancel", |ui| {
                     crate::ui::card::destructive_button(ui, "Delete board", 0.0)
@@ -1427,7 +1428,7 @@ impl eframe::App for SnappyRefApp {
 
 use dialogs::{
     DialogChoice, destructive_dialog_width, dialog_actions, dialog_detail, dialog_frame,
-    dialog_lead, dialog_title,
+    dialog_title,
 };
 
 fn apply_arrangement_action(

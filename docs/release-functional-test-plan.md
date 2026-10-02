@@ -211,7 +211,7 @@ Semantic rows need the model installed in the data root.
 
 ## Dialogs
 
-The four dialogs are "Enable Semantic Search?", "Delete board?", "Remove asset(s) from Library?" and "Remove Semantic Search?".
+The four dialogs are "Enable Semantic Search?", "Delete "<board name>"?", "Remove asset(s) from Library?" and "Remove Semantic Search?".
 
 | ID | Do | Expect | Covered |
 | --- | --- | --- | --- |
