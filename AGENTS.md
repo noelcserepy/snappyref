@@ -33,7 +33,7 @@ docs/skills/inspect/scripts/run-scenario.sh <scenario>
 ```
 
 The [pre-push hook](.githooks/pre-push) runs fmt and clippy. CI runs those,
-`cargo test` (every inspect scenario and the helper subprocess tests) and the
+`cargo test` (every non-ignored inspect scenario and the helper subprocess tests) and the
 `scripts/test_*.py` suite. Hook setup is in the [README](README.md#development-checks).
 
 When the user wants to test a build by hand, stop the previous instance and run

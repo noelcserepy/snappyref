@@ -205,8 +205,9 @@ Be concise. The artifact is the detailed evidence.
 
 ## Refactor behavior evidence
 
-`cargo test --locked` runs every inspect scenario, so it is the behavior gate
-for refactors.
+`cargo test --locked` runs every inspect scenario except the two `#[ignore]`d
+ones, so it is the behavior gate for refactors. `image-format-gallery` needs
+`SNAPPYREF_MEDIA_FIXTURES`, and `semantic-search-real-install` is networked.
 
 Keep the existing tests that describe user-visible outcomes. Add a focused
 scenario only when the boundary being changed lacks coverage. Search ranking
