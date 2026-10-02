@@ -1,14 +1,15 @@
 //! The Group card's vocabulary, shared by every floating card and its
-//! controls: the card frame, section captions, inset wells, segmented beds,
-//! switches, and tooltips.
+//! controls: the card frame, section captions, inset wells, fields, segmented
+//! beds, navigation tabs, switches, text actions, status panels, and tooltips.
 //!
 //! Inside a card, controls are [`theme::CONTROL_HEIGHT`] tall and sit
 //! [`ITEM_SPACING`] apart; [`section`] adds 6 more above each caption, so
 //! sections read 14 apart.
 
-use eframe::egui::{self, Align2, Color32, FontId, Pos2, Response, Sense, Stroke, Vec2};
+use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Response, Sense, Stroke, Vec2};
 
-use super::theme;
+use super::shortcut::{self, Shortcut};
+use super::{motion, theme};
 
 /// Card padding.
 pub(crate) const PADDING: f32 = theme::SPACE_3;
@@ -97,16 +98,104 @@ pub(crate) fn cell(
     let response = hit(ui, name, size, selected, enabled);
     let color = if selected {
         theme::ACCENT
-    } else if response.is_pointer_button_down_on() {
-        theme::SURFACE_PRESSED
-    } else if response.hovered() {
-        theme::SURFACE_ELEVATED
     } else {
-        fill
+        lift(&response, fill)
     };
     ui.painter()
         .rect_filled(response.rect, theme::RADIUS_CONTROL, color);
     focus_ring(ui, &response);
+    response
+}
+
+/// Navigation tabs `size` big: a bed with one raised fill that slides under
+/// the open tab. Gold stays with [`cell`]s, the values a user picked, so a
+/// page of choices never reads as several selections. `face` paints tab `i`
+/// into its rect in the given ink. Returns the tab clicked this frame.
+pub(crate) fn tabs(
+    ui: &mut egui::Ui,
+    size: Vec2,
+    names: &[&str],
+    open: usize,
+    face: impl Fn(&egui::Painter, usize, Rect, Color32),
+) -> Option<usize> {
+    let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
+    ui.painter()
+        .rect_filled(rect, BED_RADIUS, theme::SURFACE_PRESSED);
+    let inner = rect.shrink(2.0);
+    let count = names.len() as f32;
+    let width = (inner.width() - 2.0 * (count - 1.0)) / count;
+    let tab = |i: usize| {
+        Rect::from_min_size(
+            egui::pos2(inner.left() + i as f32 * (width + 2.0), inner.top()),
+            egui::vec2(width, inner.height()),
+        )
+    };
+    // Relative to the bed, so the fill rides along when the card itself moves.
+    let x = motion::slide_indicator(
+        ui.ctx(),
+        response.id.with("open"),
+        tab(open).left() - inner.left(),
+    );
+    ui.painter().rect_filled(
+        tab(open).translate(egui::vec2(x + inner.left() - tab(open).left(), 0.0)),
+        theme::RADIUS_CONTROL,
+        theme::SURFACE_ELEVATED,
+    );
+    let mut clicked = None;
+    for (i, name) in names.iter().enumerate() {
+        let r = tab(i);
+        let response = ui.interact(r, response.id.with(i), Sense::click());
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), i == open, *name)
+        });
+        if i != open && response.hovered() {
+            ui.painter().rect_filled(
+                r,
+                theme::RADIUS_CONTROL,
+                motion::mix(theme::SURFACE_PRESSED, theme::SURFACE_ELEVATED, 0.5),
+            );
+        }
+        focus_ring(ui, &response);
+        let ink = if i == open || response.hovered() {
+            theme::TEXT
+        } else {
+            theme::TEXT_MUTED
+        };
+        face(ui.painter(), i, r, ink);
+        if response.clicked() && i != open {
+            clicked = Some(i);
+        }
+    }
+    clicked
+}
+
+/// A text action: muted text that lifts on hover, or gold when it is the
+/// step the user should take next.
+pub(crate) fn action(ui: &mut egui::Ui, label: &str, primary: bool, enabled: bool) -> Response {
+    let font = FontId::proportional(theme::TYPE_DETAIL);
+    let width = ui
+        .painter()
+        .layout_no_wrap(label.into(), font.clone(), theme::TEXT)
+        .size()
+        .x
+        + 16.0;
+    let response = hit(ui, label, egui::vec2(width, 26.0), false, enabled);
+    let gold = primary && enabled;
+    let color = if gold {
+        theme::ACCENT
+    } else {
+        lift(&response, Color32::TRANSPARENT)
+    };
+    ui.painter()
+        .rect_filled(response.rect, theme::RADIUS_CONTROL, color);
+    focus_ring(ui, &response);
+    ui.painter().text(
+        response.rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font,
+        ink(gold, enabled, !gold),
+    );
     response
 }
 
@@ -123,7 +212,8 @@ pub(crate) fn ink(selected: bool, enabled: bool, muted: bool) -> Color32 {
     color.gamma_multiply(fade(enabled))
 }
 
-/// A named on/off row: icon and name on the left, track on the right.
+/// A named on/off row: icon and name on the left, track on the right, and
+/// the shortcut that toggles it, if any, just before the track.
 /// `icon` paints the 14px icon centered at the given point.
 pub(crate) fn switch(
     ui: &mut egui::Ui,
@@ -131,6 +221,7 @@ pub(crate) fn switch(
     width: f32,
     on: bool,
     enabled: bool,
+    keys: Option<Shortcut>,
     icon: impl FnOnce(&egui::Painter, Pos2, Color32),
 ) -> Response {
     let response = hit(
@@ -158,6 +249,17 @@ pub(crate) fn switch(
         FontId::proportional(theme::TYPE_CONTROL),
         theme::TEXT.gamma_multiply(fade),
     );
+    if let Some(keys) = keys {
+        let mut faded = p.clone();
+        faded.multiply_opacity(fade);
+        shortcut::paint(
+            &faded,
+            r.right_center() - egui::vec2(48.0, 0.0),
+            Align2::RIGHT_CENTER,
+            keys,
+            theme::TEXT_MUTED,
+        );
+    }
     let track = egui::Rect::from_center_size(
         r.right_center() - egui::vec2(25.0, 0.0),
         egui::vec2(30.0, 18.0),
@@ -181,6 +283,245 @@ pub(crate) fn switch(
         knob.gamma_multiply(fade),
     );
     response
+}
+
+/// What a [`status`] panel shows.
+pub(crate) struct Status<'a> {
+    pub title: &'a str,
+    pub action: &'a str,
+    pub primary: bool,
+    pub enabled: bool,
+    /// The status dot: green when ready, gold while something wants the
+    /// user or is under way, red when it failed.
+    pub dot: Color32,
+    pub line: &'a str,
+    /// Download progress from 0 to 1, drawn as a bar under the line.
+    pub progress: Option<f32>,
+    pub detail: &'a str,
+}
+
+/// A thing the app installs or keeps current: icon, title, and its next
+/// action on top, then a status line, optional progress, and a wrapped
+/// detail, all indented under the title. The panel sits on the bed tone so
+/// a quiet action still lifts on hover. Returns the action's response.
+pub(crate) fn status(
+    ui: &mut egui::Ui,
+    width: f32,
+    status: &Status,
+    icon: impl FnOnce(&egui::Painter, Pos2, Color32),
+) -> Response {
+    const INDENT: f32 = 22.0;
+    egui::Frame::new()
+        .fill(theme::SURFACE_PRESSED)
+        .corner_radius(BED_RADIUS)
+        .inner_margin(egui::Margin {
+            left: 10,
+            right: 6,
+            top: 6,
+            bottom: 10,
+        })
+        .show(ui, |ui| {
+            let inner = width - 16.0;
+            ui.set_width(inner);
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            let (head, title) = ui.allocate_exact_size(egui::vec2(inner, 26.0), Sense::hover());
+            title.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Label, true, status.title)
+            });
+            icon(
+                ui.painter(),
+                head.left_center() + egui::vec2(7.0, 0.0),
+                theme::TEXT_MUTED,
+            );
+            ui.painter().text(
+                head.left_center() + egui::vec2(INDENT, 0.0),
+                Align2::LEFT_CENTER,
+                status.title,
+                FontId::proportional(theme::TYPE_CONTROL),
+                theme::TEXT,
+            );
+            let action = ui
+                .scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(head)
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                    |ui| action(ui, status.action, status.primary, status.enabled),
+                )
+                .inner;
+            let text = inner - INDENT - 4.0;
+            let (line, _) = ui.allocate_exact_size(egui::vec2(inner, 18.0), Sense::hover());
+            ui.painter()
+                .circle_filled(line.left_center() + egui::vec2(7.0, 0.0), 3.5, status.dot);
+            ui.painter().text(
+                line.left_center() + egui::vec2(INDENT, 0.0),
+                Align2::LEFT_CENTER,
+                status.line,
+                FontId::proportional(theme::TYPE_DETAIL),
+                theme::TEXT_MUTED,
+            );
+            if let Some(progress) = status.progress {
+                ui.add_space(6.0);
+                let (row, _) = ui.allocate_exact_size(egui::vec2(inner, 4.0), Sense::hover());
+                let track =
+                    Rect::from_min_size(row.min + egui::vec2(INDENT, 0.0), egui::vec2(text, 4.0));
+                ui.painter().rect_filled(track, 2, theme::SURFACE_RAISED);
+                let mut done = track;
+                done.set_width(track.width() * progress.clamp(0.0, 1.0));
+                ui.painter().rect_filled(done, 2, theme::ACCENT);
+            }
+            ui.add_space(4.0);
+            let galley = ui.painter().layout(
+                status.detail.to_owned(),
+                FontId::proportional(theme::TYPE_DETAIL),
+                theme::TEXT_SUBTLE,
+                text,
+            );
+            let (detail, _) =
+                ui.allocate_exact_size(egui::vec2(inner, galley.size().y), Sense::hover());
+            ui.painter().galley(
+                detail.min + egui::vec2(INDENT, 0.0),
+                galley,
+                theme::TEXT_SUBTLE,
+            );
+            action
+        })
+        .inner
+}
+
+/// A frameless text field `width` by `height`, keyed by `name` alone so
+/// focus and drafts survive the field moving. Enter, a press elsewhere, or
+/// losing focus submits; Escape cancels. Returns the submitted text when it
+/// differs from `value`, and whether the field holds focus.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn field(
+    ui: &mut egui::Ui,
+    name: &str,
+    value: &str,
+    width: f32,
+    height: f32,
+    enabled: bool,
+    size: f32,
+    align: egui::Align,
+) -> (Option<String>, bool) {
+    let id = field_id(name);
+    let font = FontId::proportional(size);
+    let key = id.with("draft");
+    let mut draft = ui
+        .ctx()
+        .data(|d| d.get_temp::<String>(key))
+        .unwrap_or_else(|| value.into());
+    let was_focused = ui.memory(|m| m.has_focus(id));
+    let output = ui
+        .add_enabled_ui(enabled, |ui| {
+            ui.add_sized(
+                egui::vec2(width, height),
+                egui::TextEdit::singleline(&mut draft)
+                    .id(id)
+                    .desired_width(width)
+                    .font(font)
+                    .frame(egui::Frame::NONE)
+                    .min_size(egui::vec2(width, height))
+                    .horizontal_align(align)
+                    .vertical_align(egui::Align::Center),
+            )
+        })
+        .inner;
+    output.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, enabled, name));
+    let escape =
+        (was_focused || output.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Escape));
+    let enter = output.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let outside = output.has_focus()
+        && ui.input(|i| {
+            i.pointer.any_pressed()
+                && i.pointer
+                    .interact_pos()
+                    .is_some_and(|p| !output.rect.contains(p))
+        });
+    let submit = output.lost_focus() || enter || outside;
+    if escape {
+        ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    }
+    if escape || enter || outside {
+        output.surrender_focus();
+    }
+    if escape || submit || !output.has_focus() {
+        ui.ctx().data_mut(|d| d.remove::<String>(key));
+    } else {
+        ui.ctx().data_mut(|d| d.insert_temp(key, draft.clone()));
+    }
+    (
+        (submit && !escape && draft != value).then_some(draft),
+        output.has_focus() && !escape && !enter,
+    )
+}
+
+/// Moves keyboard focus to the [`field`] called `name`, for fields that
+/// appear on demand.
+pub(crate) fn focus_field(ctx: &egui::Context, name: &str) {
+    ctx.memory_mut(|m| m.request_focus(field_id(name)));
+}
+
+fn field_id(name: &str) -> egui::Id {
+    egui::Id::new(("card-field", name))
+}
+
+/// A field's drag handle: dragging the icon scrubs `value` one unit per
+/// pixel, never below `min`. Returns the scrubbed value while it differs
+/// from `value`, and whether a drag is under way. Each frame adds only
+/// movement not yet applied to the current value, so a draft that the same
+/// press commits becomes the base.
+pub(crate) fn scrub(
+    ui: &mut egui::Ui,
+    (name, tooltip): (&str, &str),
+    value: f32,
+    min: f32,
+    enabled: bool,
+    paint: impl FnOnce(&egui::Painter, Rect, Color32),
+) -> (Option<f32>, bool) {
+    let height = ui.available_height();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, height), Sense::hover());
+    let response = ui.interact(
+        rect.expand2(egui::vec2(6.0, 0.0)),
+        egui::Id::new(("card-scrub", name)),
+        if enabled {
+            Sense::drag()
+        } else {
+            Sense::hover()
+        },
+    );
+    let color = if response.dragged() {
+        theme::ACCENT
+    } else if response.hovered() && enabled {
+        theme::TEXT
+    } else {
+        theme::TEXT_MUTED
+    };
+    paint(ui.painter(), rect, color);
+    let applied = response.id.with("applied");
+    if response.drag_started() {
+        ui.ctx().data_mut(|d| d.insert_temp(applied, 0.0_f32));
+    }
+    let scrubbed = response.dragged().then(|| {
+        let dx = ui.input(|i| {
+            i.pointer
+                .interact_pos()
+                .zip(i.pointer.press_origin())
+                .map_or(0.0, |(p, o)| p.x - o.x)
+        });
+        let taken = ui.ctx().data(|d| d.get_temp(applied)).unwrap_or(0.0_f32);
+        let n = (value + dx - taken).round().max(min);
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(applied, taken + n - value));
+        n
+    });
+    let dragging = response.dragged();
+    if enabled {
+        tip(
+            response.on_hover_and_drag_cursor(egui::CursorIcon::ResizeHorizontal),
+            &format!("{tooltip} · drag to change"),
+        );
+    }
+    (scrubbed.filter(|n| *n != value), dragging)
 }
 
 /// Card tooltips sit above their control on the tooltip tone, because the
@@ -216,6 +557,18 @@ fn hit(ui: &mut egui::Ui, name: &str, size: Vec2, selected: bool, enabled: bool)
         response
     })
     .inner
+}
+
+/// A control's fill under the pointer: pressed while held, elevated on
+/// hover, `fill` at rest.
+fn lift(response: &Response, fill: Color32) -> Color32 {
+    if response.is_pointer_button_down_on() {
+        theme::SURFACE_PRESSED
+    } else if response.hovered() {
+        theme::SURFACE_ELEVATED
+    } else {
+        fill
+    }
 }
 
 fn focus_ring(ui: &egui::Ui, response: &Response) {

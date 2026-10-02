@@ -93,18 +93,22 @@ pub(crate) const MOVE_TO_FRONT: Shortcut = &[Key::Command, Key::Named(".")];
 pub(crate) const MOVE_TO_BACK: Shortcut = &[Key::Command, Key::Named(",")];
 pub(crate) const TOGGLE_SIDEBAR: Shortcut = &[Key::Command, Key::Named("B")];
 
-/// Board N in sidebar order; the tenth board takes 0.
-pub(crate) const BOARD_SHORTCUTS: [Shortcut; 10] = [
-    &[Key::Command, Key::Named("1")],
-    &[Key::Command, Key::Named("2")],
-    &[Key::Command, Key::Named("3")],
-    &[Key::Command, Key::Named("4")],
-    &[Key::Command, Key::Named("5")],
-    &[Key::Command, Key::Named("6")],
-    &[Key::Command, Key::Named("7")],
-    &[Key::Command, Key::Named("8")],
-    &[Key::Command, Key::Named("9")],
-    &[Key::Command, Key::Named("0")],
+pub(crate) const NEW_BOARD: Shortcut = &[Key::Command, Key::Named("N")];
+pub(crate) const TOGGLE_ALWAYS_ON_TOP: Shortcut = &[Key::Command, Key::Shift, Key::Named("T")];
+/// Command plus a board's digit switches to it.
+pub(crate) const SWITCH_BOARD: Shortcut = &[Key::Command, Key::Gesture("digit")];
+/// Board N's digit in sidebar order; the tenth board takes 0.
+pub(crate) const BOARD_DIGITS: [Key; 10] = [
+    Key::Named("1"),
+    Key::Named("2"),
+    Key::Named("3"),
+    Key::Named("4"),
+    Key::Named("5"),
+    Key::Named("6"),
+    Key::Named("7"),
+    Key::Named("8"),
+    Key::Named("9"),
+    Key::Named("0"),
 ];
 
 pub(crate) const CORE_SHORTCUTS: &[SupportedShortcut] = &[
@@ -241,7 +245,7 @@ pub(crate) const LAYOUT_AND_HISTORY_SHORTCUTS: &[SupportedShortcut] = &[
     },
     SupportedShortcut {
         action: "Toggle always on top",
-        keys: &[Key::Command, Key::Shift, Key::Named("T")],
+        keys: TOGGLE_ALWAYS_ON_TOP,
         binding: Some(ShortcutBinding {
             key: egui::Key::T,
             command: true,

@@ -12,26 +12,20 @@ use super::dialogs::{
     primary_dialog_button, secondary_dialog_button, semantic_search_prompt_width,
 };
 
-pub(super) fn semantic_search_settings_status(
-    status: crate::search::semantic::LocalModelStoreStatus,
-) -> SemanticSearchSettingsStatus {
-    match status {
-        crate::search::semantic::LocalModelStoreStatus::Installed => {
-            SemanticSearchSettingsStatus::Installed
-        }
-        crate::search::semantic::LocalModelStoreStatus::Missing => {
-            SemanticSearchSettingsStatus::Missing
-        }
-        crate::search::semantic::LocalModelStoreStatus::Downloading { percent } => {
-            SemanticSearchSettingsStatus::Downloading { percent }
-        }
-        crate::search::semantic::LocalModelStoreStatus::Failed(_) => {
-            SemanticSearchSettingsStatus::Failed
+impl SnappyRefApp {
+    /// The install state the Search settings page shows.
+    pub(super) fn semantic_search_settings_status(&self) -> SemanticSearchSettingsStatus {
+        use crate::search::semantic::LocalModelStoreStatus;
+        match self.search.local_model_store_status() {
+            LocalModelStoreStatus::Installed => SemanticSearchSettingsStatus::Installed,
+            LocalModelStoreStatus::Missing => SemanticSearchSettingsStatus::Missing,
+            LocalModelStoreStatus::Downloading { percent } => {
+                SemanticSearchSettingsStatus::Downloading { percent }
+            }
+            LocalModelStoreStatus::Failed(_) => SemanticSearchSettingsStatus::Failed,
         }
     }
-}
 
-impl SnappyRefApp {
     pub(super) fn handle_semantic_search_settings_action(
         &mut self,
         action: Option<SemanticSearchSettingsAction>,

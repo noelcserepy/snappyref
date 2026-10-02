@@ -5,9 +5,9 @@ use eframe::egui;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::ui::sidebar::{AboutView, AppUpdateStatus};
 use crate::updater::UpdateState;
 
-use super::semantic_search::semantic_search_settings_status;
 use super::{AppConfig, SnappyRefApp};
 
 /// Minimum wall time between About / Updates update-check clicks. Discovery is
@@ -79,88 +79,41 @@ impl UpdateSmokeState {
 }
 
 impl SnappyRefApp {
-    /// Build the About / Updates view payload from the
-    /// internal updater state machine.
-    pub(super) fn about_updates_view(&self) -> crate::ui::sidebar::AboutUpdatesView {
-        let check_now_enabled = match self.last_manual_update_check {
-            None => true,
-            Some(instant) => instant.elapsed() >= MANUAL_UPDATE_CHECK_THROTTLE,
-        };
-        let (update_button_label, update_button_enabled, update_button_primary, update_status) =
-            self.about_update_action_view(check_now_enabled);
-        crate::ui::sidebar::AboutUpdatesView {
-            current_version: self.update_service.current_version().to_owned(),
-            last_checked_unix_millis: self.update_service.last_check_completed_at(),
-            update_button_label,
-            update_button_enabled,
-            update_button_primary,
-            update_status,
-            semantic_search: crate::ui::sidebar::SemanticSearchSettingsView {
-                status: semantic_search_settings_status(self.search.local_model_store_status()),
-            },
-        }
-    }
-
-    pub(super) fn about_update_action_view(
-        &self,
-        check_now_enabled: bool,
-    ) -> (String, bool, bool, Option<String>) {
-        if self.update_service.check_in_flight() {
-            return (
-                "Checking for updates".to_owned(),
-                false,
-                false,
-                Some("Checking for updates...".to_owned()),
-            );
-        }
-        match self.update_service.state() {
-            UpdateState::Hidden => {
-                let status = self
-                    .update_service
-                    .latest_known()
-                    .then(|| "You are on the latest version.".to_owned());
-                (
-                    "Check for updates".to_owned(),
-                    check_now_enabled,
-                    false,
-                    status,
-                )
+    /// What the About page shows, read from the updater.
+    pub(super) fn about_view(&self) -> AboutView {
+        let check_enabled = self
+            .last_manual_update_check
+            .is_none_or(|instant| instant.elapsed() >= MANUAL_UPDATE_CHECK_THROTTLE);
+        let update = if self.update_service.check_in_flight() {
+            AppUpdateStatus::Checking
+        } else {
+            match self.update_service.state().clone() {
+                UpdateState::Hidden if self.update_service.latest_known() => {
+                    AppUpdateStatus::UpToDate
+                }
+                UpdateState::Hidden => AppUpdateStatus::Unchecked,
+                UpdateState::Available { release } => AppUpdateStatus::Available {
+                    version: release.version,
+                },
+                UpdateState::Downloading { version, percent } => {
+                    AppUpdateStatus::Downloading { version, percent }
+                }
+                UpdateState::Ready { version } if self.user_update_flow_active => {
+                    AppUpdateStatus::Finishing { version }
+                }
+                UpdateState::Ready { version } => AppUpdateStatus::Ready { version },
+                UpdateState::Failed {
+                    version: Some(version),
+                    reason,
+                } => AppUpdateStatus::InstallFailed { version, reason },
+                UpdateState::Failed { version: None, .. } => AppUpdateStatus::CheckFailed,
             }
-            UpdateState::Available {
-                release: crate::updater::manifest::Manifest { version, .. },
-            } => (
-                "Update".to_owned(),
-                true,
-                true,
-                Some(format!("Version {version} is available.")),
-            ),
-            UpdateState::Downloading { percent, .. } => (
-                "Updating".to_owned(),
-                false,
-                false,
-                Some(format!("Downloading {percent}%")),
-            ),
-            UpdateState::Ready { .. } if self.user_update_flow_active => (
-                "Finishing update".to_owned(),
-                false,
-                false,
-                Some("Restarting to finish update...".to_owned()),
-            ),
-            UpdateState::Ready { .. } => (
-                "Restart".to_owned(),
-                true,
-                true,
-                Some("Update ready. Restart to finish.".to_owned()),
-            ),
-            UpdateState::Failed { reason, version } => (
-                "Check for updates".to_owned(),
-                check_now_enabled,
-                false,
-                Some(match version {
-                    Some(version) => format!("Update to {version} failed. {reason}"),
-                    None => "Update check failed.".to_owned(),
-                }),
-            ),
+        };
+        AboutView {
+            version: self.update_service.current_version().to_owned(),
+            last_checked_unix_millis: self.update_service.last_check_completed_at(),
+            check_enabled,
+            update,
         }
     }
 

@@ -282,7 +282,7 @@ fn group_card(
     let count = format!("{count} {}", if count == 1 { "item" } else { "items" });
     let ungroup = model.control_enabled(&Control::Ungroup);
     let ((name, focused), r) = card_header(ui, &count, "Ungroup", ungroup, |ui, width| {
-        field(
+        card::field(
             ui,
             "Group name",
             &group.name,
@@ -290,6 +290,7 @@ fn group_card(
             22.0,
             true,
             theme::TYPE_TITLE,
+            egui::Align::Min,
         )
     });
     input.text_focus |= focused;
@@ -367,7 +368,7 @@ fn group_card(
 }
 
 /// A gold rule ties the card to the gold outline on the canvas. The title
-/// leads, the subtitle sits below, and a muted text action closes the line.
+/// leads, the subtitle sits below, and a text action closes the line.
 fn card_header<R>(
     ui: &mut egui::Ui,
     subtitle: &str,
@@ -379,48 +380,30 @@ fn card_header<R>(
         ui.spacing_mut().item_spacing.x = 9.0;
         let (rule, _) = ui.allocate_exact_size(egui::vec2(3.0, 34.0), Sense::hover());
         ui.painter().rect_filled(rule, 1.5, theme::ACCENT);
-        let action_font = FontId::proportional(theme::TYPE_DETAIL);
-        let action_width = ui
-            .painter()
-            .layout_no_wrap(action.into(), action_font.clone(), theme::TEXT)
-            .size()
-            .x
-            + 16.0;
-        let title_width = CARD_INNER - 3.0 - 18.0 - action_width;
-        let subtitle_height =
-            ui.fonts_mut(|f| f.row_height(&FontId::proportional(theme::TYPE_DETAIL)));
-        let title = ui
-            .allocate_ui_with_layout(
-                egui::vec2(title_width, 22.0 + subtitle_height),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    let title = title(ui, title_width);
-                    ui.label(
-                        egui::RichText::new(subtitle)
-                            .size(theme::TYPE_DETAIL)
-                            .color(theme::TEXT_MUTED),
-                    );
-                    title
-                },
-            )
-            .inner;
-        let r = cell(
-            ui,
-            action,
-            egui::vec2(action_width, 26.0),
-            false,
-            action_enabled,
-            Color32::TRANSPARENT,
-        );
-        ui.painter().text(
-            r.rect.center(),
-            Align2::CENTER_CENTER,
-            action,
-            action_font,
-            ink(false, action_enabled, true),
-        );
-        (title, r)
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let r = card::action(ui, action, false, action_enabled);
+            let title_width = ui.available_width();
+            let subtitle_height =
+                ui.fonts_mut(|f| f.row_height(&FontId::proportional(theme::TYPE_DETAIL)));
+            let title = ui
+                .allocate_ui_with_layout(
+                    egui::vec2(title_width, 22.0 + subtitle_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let title = title(ui, title_width);
+                        ui.label(
+                            egui::RichText::new(subtitle)
+                                .size(theme::TYPE_DETAIL)
+                                .color(theme::TEXT_MUTED),
+                        );
+                        title
+                    },
+                )
+                .inner;
+            (title, r)
+        })
+        .inner
     })
     .inner
 }
@@ -748,19 +731,16 @@ fn number_field(
     };
     card::well(ui, width, |ui| {
         let tooltip = name.to_lowercase();
-        if let Some(n) = scrub(
-            ui,
-            input,
-            (name, &tooltip),
-            number,
-            0.0,
-            enabled,
-            |p, r, color| paint_icon(p, r.center(), icon, color, 14.0),
-        ) {
+        let (scrubbed, dragging) =
+            card::scrub(ui, (name, &tooltip), number, 0.0, enabled, |p, r, color| {
+                paint_icon(p, r.center(), icon, color, 14.0)
+            });
+        input.scrubbing |= dragging;
+        if let Some(n) = scrubbed {
             input.field_submissions.push(with(n));
         }
         let width = ui.available_width();
-        let (value, focused) = field(
+        let (value, focused) = card::field(
             ui,
             name,
             &format!("{number:.0}"),
@@ -768,6 +748,7 @@ fn number_field(
             theme::CONTROL_HEIGHT,
             enabled,
             theme::TYPE_CONTROL,
+            egui::Align::Min,
         );
         input.text_focus |= focused;
         if let Some(n) = value
@@ -797,14 +778,8 @@ fn size_field(
     card::well(ui, CARD_HALF, |ui| {
         let enabled = model.control_enabled(&Control::Dimension(a, size));
         let name = (axis, ["width", "height"][a]);
-        if let Some(n) = scrub(
-            ui,
-            input,
-            name,
-            size.round(),
-            1.0,
-            enabled,
-            |p, r, color| {
+        let (scrubbed, dragging) =
+            card::scrub(ui, name, size.round(), 1.0, enabled, |p, r, color| {
                 p.text(
                     r.center(),
                     Align2::CENTER_CENTER,
@@ -812,8 +787,9 @@ fn size_field(
                     FontId::proportional(theme::TYPE_CONTROL),
                     color,
                 );
-            },
-        ) {
+            });
+        input.scrubbing |= dragging;
+        if let Some(n) = scrubbed {
             input.field_submissions.push(Control::Dimension(a, n));
         }
         let chip_font = FontId::proportional(theme::TYPE_CHIP);
@@ -827,7 +803,7 @@ fn size_field(
         if hugging {
             ui.visuals_mut().override_text_color = Some(theme::TEXT_MUTED);
         }
-        let (value, focused) = field(
+        let (value, focused) = card::field(
             ui,
             &format!("{axis} size"),
             &format!("{size:.0}"),
@@ -835,6 +811,7 @@ fn size_field(
             theme::CONTROL_HEIGHT,
             true,
             theme::TYPE_CONTROL,
+            egui::Align::Min,
         );
         input.text_focus |= focused;
         if let Some(n) = value
@@ -874,127 +851,9 @@ fn size_field(
 }
 
 fn dock_switch(ui: &mut egui::Ui, name: &str, width: f32, on: bool, enabled: bool) -> Response {
-    card::switch(ui, name, width, on, enabled, |p, center, color| {
+    card::switch(ui, name, width, on, enabled, None, |p, center, color| {
         paint_icon(p, center, name, color, 14.0);
     })
-}
-/// Dragging a field's icon or letter scrubs its value one unit per pixel,
-/// never below `min`. Returns the scrubbed value while it differs from `value`.
-/// Each frame adds only movement not yet applied to the current value, so a
-/// draft that the same press commits becomes the base.
-fn scrub(
-    ui: &mut egui::Ui,
-    input: &mut DockInput,
-    (name, tooltip): (&str, &str),
-    value: f32,
-    min: f32,
-    enabled: bool,
-    paint: impl FnOnce(&egui::Painter, Rect, Color32),
-) -> Option<f32> {
-    let height = ui.available_height();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, height), Sense::hover());
-    let response = ui.interact(
-        rect.expand2(egui::vec2(6.0, 0.0)),
-        egui::Id::new(("group-card-scrub", name)),
-        if enabled {
-            Sense::drag()
-        } else {
-            Sense::hover()
-        },
-    );
-    let color = if response.dragged() {
-        theme::ACCENT
-    } else if response.hovered() && enabled {
-        theme::TEXT
-    } else {
-        theme::TEXT_MUTED
-    };
-    paint(ui.painter(), rect, color);
-    let applied = response.id.with("applied");
-    if response.drag_started() {
-        ui.ctx().data_mut(|d| d.insert_temp(applied, 0.0_f32));
-    }
-    input.scrubbing |= response.dragged();
-    let scrubbed = response.dragged().then(|| {
-        let dx = ui.input(|i| {
-            i.pointer
-                .interact_pos()
-                .zip(i.pointer.press_origin())
-                .map_or(0.0, |(p, o)| p.x - o.x)
-        });
-        let taken = ui.ctx().data(|d| d.get_temp(applied)).unwrap_or(0.0_f32);
-        let n = (value + dx - taken).round().max(min);
-        ui.ctx()
-            .data_mut(|d| d.insert_temp(applied, taken + n - value));
-        n
-    });
-    if enabled {
-        tip(
-            response.on_hover_and_drag_cursor(egui::CursorIcon::ResizeHorizontal),
-            &format!("{tooltip} · drag to change"),
-        );
-    }
-    scrubbed.filter(|n| *n != value)
-}
-fn field(
-    ui: &mut egui::Ui,
-    name: &str,
-    value: &str,
-    width: f32,
-    height: f32,
-    enabled: bool,
-    size: f32,
-) -> (Option<String>, bool) {
-    // Keyed by name alone so focus and drafts survive a segment moving rows.
-    let id = egui::Id::new(("group-dock-field", name));
-    let font = FontId::proportional(size);
-    let key = id.with("draft");
-    let mut draft = ui
-        .ctx()
-        .data(|d| d.get_temp::<String>(key))
-        .unwrap_or_else(|| value.into());
-    let was_focused = ui.memory(|m| m.has_focus(id));
-    let output = ui
-        .add_enabled_ui(enabled, |ui| {
-            ui.add_sized(
-                egui::vec2(width, height),
-                egui::TextEdit::singleline(&mut draft)
-                    .id(id)
-                    .desired_width(width)
-                    .font(font)
-                    .frame(egui::Frame::NONE)
-                    .min_size(egui::vec2(width, height))
-                    .vertical_align(egui::Align::Center),
-            )
-        })
-        .inner;
-    output.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, enabled, name));
-    let escape =
-        (was_focused || output.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Escape));
-    let enter = output.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-    let outside = output.has_focus()
-        && ui.input(|i| {
-            i.pointer.any_pressed()
-                && i.pointer
-                    .interact_pos()
-                    .is_some_and(|p| !output.rect.contains(p))
-        });
-    let submit = output.lost_focus() || enter || outside;
-    if escape {
-        ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-    }
-    if escape || enter || outside {
-        output.surrender_focus();
-    }
-    if escape || submit || !output.has_focus() {
-        ui.ctx().data_mut(|d| d.remove::<String>(key));
-    } else {
-        ui.ctx().data_mut(|d| d.insert_temp(key, draft.clone()));
-    }
-    (
-        (submit && !escape && draft != value).then_some(draft),
-        output.has_focus() && !escape && !enter,
-    )
 }
 /// Paints a dock icon drawn on a 16 unit grid at `size` pixels; the stroke
 /// scales with it so larger icons stay as crisp as the 14 pixel ones.

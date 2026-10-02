@@ -1493,7 +1493,7 @@ fn board_delete_modal_blocks_sidebar_tabs_and_settings() {
 
     assert_eq!(harness.state().sidebar_tab, SidebarTab::Boards);
 
-    harness.state_mut().sidebar_tab = SidebarTab::Options;
+    harness.state_mut().sidebar_tab = SidebarTab::Settings;
     harness.run();
     let rotation_snap_rect = harness.get_by_label("Rotation snap").rect();
     harness.get_by_label("Dots").click();
@@ -1510,7 +1510,7 @@ fn board_delete_modal_blocks_sidebar_tabs_and_settings() {
     );
     harness.run();
 
-    assert_eq!(harness.state().sidebar_tab, SidebarTab::Options);
+    assert_eq!(harness.state().sidebar_tab, SidebarTab::Settings);
     assert_eq!(harness.state().canvas.background(), CanvasBackground::Grid);
     assert_eq!(harness.state().settings.rotation_snap_degrees, 15.0);
     assert!(harness.state().pending_board_delete.is_some());
