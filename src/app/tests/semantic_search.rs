@@ -261,7 +261,7 @@ fn settings_semantic_search_remove_requires_confirmation() {
 }
 
 #[test]
-fn search_shortcut_opens_missing_palette_with_focused_install_action() {
+fn search_shortcut_opens_missing_palette_on_install_prompt() {
     let ctx = egui::Context::default();
     let mut app = test_app(None);
     app.search
@@ -282,7 +282,6 @@ fn search_shortcut_opens_missing_palette_with_focused_install_action() {
     );
 
     assert!(app.search.overlay.open);
-    assert!(app.search.overlay.install_action_focus_requested);
     assert!(app.search.overlay.results.is_empty());
     assert_eq!(
         app.search.local_model_store_status(),

@@ -379,48 +379,30 @@ fn card_header<R>(
         ui.spacing_mut().item_spacing.x = 9.0;
         let (rule, _) = ui.allocate_exact_size(egui::vec2(3.0, 34.0), Sense::hover());
         ui.painter().rect_filled(rule, 1.5, theme::ACCENT);
-        let action_font = FontId::proportional(theme::TYPE_DETAIL);
-        let action_width = ui
-            .painter()
-            .layout_no_wrap(action.into(), action_font.clone(), theme::TEXT)
-            .size()
-            .x
-            + 16.0;
-        let title_width = CARD_INNER - 3.0 - 18.0 - action_width;
-        let subtitle_height =
-            ui.fonts_mut(|f| f.row_height(&FontId::proportional(theme::TYPE_DETAIL)));
-        let title = ui
-            .allocate_ui_with_layout(
-                egui::vec2(title_width, 22.0 + subtitle_height),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    let title = title(ui, title_width);
-                    ui.label(
-                        egui::RichText::new(subtitle)
-                            .size(theme::TYPE_DETAIL)
-                            .color(theme::TEXT_MUTED),
-                    );
-                    title
-                },
-            )
-            .inner;
-        let r = cell(
-            ui,
-            action,
-            egui::vec2(action_width, 26.0),
-            false,
-            action_enabled,
-            Color32::TRANSPARENT,
-        );
-        ui.painter().text(
-            r.rect.center(),
-            Align2::CENTER_CENTER,
-            action,
-            action_font,
-            ink(false, action_enabled, true),
-        );
-        (title, r)
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let r = card::action(ui, action, action_enabled);
+            let title_width = ui.available_width();
+            let subtitle_height =
+                ui.fonts_mut(|f| f.row_height(&FontId::proportional(theme::TYPE_DETAIL)));
+            let title = ui
+                .allocate_ui_with_layout(
+                    egui::vec2(title_width, 22.0 + subtitle_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let title = title(ui, title_width);
+                        ui.label(
+                            egui::RichText::new(subtitle)
+                                .size(theme::TYPE_DETAIL)
+                                .color(theme::TEXT_MUTED),
+                        );
+                        title
+                    },
+                )
+                .inner;
+            (title, r)
+        })
+        .inner
     })
     .inner
 }

@@ -9,13 +9,12 @@ use super::placement::provisional_placement_commit_requested;
 use super::selection::{PendingResultSelection, SearchSelectionMode};
 use crate::canvas::CanvasState;
 use crate::search::palette::{
-    PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, SEARCH_DEBOUNCE_MS, SEARCH_OVERLAY_TOP_MARGIN,
-    SEARCH_RESULT_PAGE_SIZE, SearchOverlayStatus, paint_palette_divider, paint_palette_empty_state,
-    paint_palette_footer, paint_palette_input_row, paint_palette_install_state,
-    paint_palette_no_results_state, search_result_grid_content_height, search_result_grid_layout,
-    search_result_tile,
+    InstallAction, PALETTE_GRID_MAX_HEIGHT, PALETTE_WIDTH, SEARCH_DEBOUNCE_MS,
+    SEARCH_OVERLAY_TOP_MARGIN, SEARCH_RESULT_PAGE_SIZE, SearchOverlayStatus, paint_palette_divider,
+    paint_palette_empty_state, paint_palette_footer, paint_palette_input_row,
+    paint_palette_install_state, paint_palette_no_results_state, search_result_grid_content_height,
+    search_result_grid_layout, search_result_tile,
 };
-use crate::search::semantic::LocalModelStoreStatus;
 
 const SEARCH_RESULT_SCROLL_ANIMATION: egui::style::ScrollAnimation = egui::style::ScrollAnimation {
     points_per_second: 3200.0,
@@ -45,12 +44,7 @@ impl SearchController {
         }
 
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            if matches!(
-                self.local_model_store_status,
-                Some(LocalModelStoreStatus::Downloading { .. })
-            ) {
-                self.cancel_semantic_search_install(status);
-            } else if self
+            if self
                 .overlay
                 .drag_state
                 .as_ref()
@@ -128,20 +122,19 @@ impl SearchController {
                 crate::ui::card::frame().inner_margin(0).show(ui, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
 
-                    if self.install_surface_visible() {
-                        let installing = matches!(
-                            self.local_model_store_status,
-                            Some(LocalModelStoreStatus::Downloading { .. })
-                        );
-                        let response = paint_palette_install_state(
-                            ui,
-                            &self.overlay.status,
-                            &mut self.overlay.install_action_focus_requested,
-                            installing,
-                        );
-                        if response.clicked() {
-                            self.start_semantic_search_install(status);
-                            ctx.request_repaint_after(Duration::from_millis(16));
+                    if let Some(model) = self
+                        .local_model_store_status
+                        .clone()
+                        .filter(|_| self.install_surface_visible())
+                    {
+                        match paint_palette_install_state(ui, &model) {
+                            Some(InstallAction::Install) => {
+                                self.start_semantic_search_install(status);
+                            }
+                            Some(InstallAction::Cancel) => {
+                                self.cancel_semantic_search_install(status);
+                            }
+                            None => {}
                         }
                         return;
                     }
@@ -173,6 +166,7 @@ impl SearchController {
                         self.query_edited();
                     }
 
+                    let browsing_recent = self.browsing_recent();
                     if !compact_for_drag {
                         paint_palette_divider(ui);
 
@@ -297,12 +291,12 @@ impl SearchController {
                             }
                         }
 
-                        paint_palette_divider(ui);
                         paint_palette_footer(
                             ui,
+                            &self.overlay.status,
                             result_count,
                             self.overlay.has_more_results,
-                            &self.overlay.status,
+                            browsing_recent,
                         );
                     }
                 });
@@ -390,6 +384,9 @@ impl SearchController {
             self.close_overlay();
             return drop_request;
         }
+        if self.install_surface_visible() {
+            return drop_request;
+        }
 
         if let Some(changed_at) = self.overlay.last_query_edit_at
             && changed_at.elapsed().as_secs_f32() * 1000.0 >= SEARCH_DEBOUNCE_MS
@@ -475,7 +472,7 @@ impl SearchController {
                     );
                 }
             }
-        } else if !self.recent_searches.is_empty() {
+        } else if self.browsing_recent() {
             let last_recent_index = self.recent_searches.len() - 1;
             if ctx.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
                 self.overlay.active_recent_search_index =
@@ -493,5 +490,12 @@ impl SearchController {
             }
         }
         drop_request
+    }
+
+    /// An empty query with no pivot lists recent searches for the keyboard.
+    fn browsing_recent(&self) -> bool {
+        self.overlay.query.trim().is_empty()
+            && self.overlay.image_pivot.is_none()
+            && !self.recent_searches.is_empty()
     }
 }

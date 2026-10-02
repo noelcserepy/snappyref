@@ -1,6 +1,7 @@
 //! The Group card's vocabulary, shared by every floating card and its
 //! controls: the card frame, section captions, inset wells, segmented beds,
-//! switches, and tooltips.
+//! switches, the primary button and quiet text actions, progress tracks,
+//! status lines, and tooltips.
 //!
 //! Inside a card, controls are [`theme::CONTROL_HEIGHT`] tall and sit
 //! [`ITEM_SPACING`] apart; [`section`] adds 6 more above each caption, so
@@ -8,7 +9,7 @@
 
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Response, Sense, Stroke, Vec2};
 
-use super::theme;
+use super::{motion, theme};
 
 /// Card padding.
 pub(crate) const PADDING: f32 = theme::SPACE_3;
@@ -179,6 +180,99 @@ pub(crate) fn switch(
         track.center() + egui::vec2(if on { 6.0 } else { -6.0 }, 0.0),
         7.0,
         knob.gamma_multiply(fade),
+    );
+    response
+}
+
+/// The card's primary action: a gold button `width` wide with dark ink.
+/// A card has at most one.
+pub(crate) fn button(ui: &mut egui::Ui, label: &str, width: f32) -> Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, theme::CONTROL_HEIGHT), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let fill = if response.is_pointer_button_down_on() {
+        motion::mix(theme::ACCENT, theme::BACKGROUND, 0.15)
+    } else if response.hovered() {
+        motion::mix(theme::ACCENT, theme::TEXT, 0.3)
+    } else {
+        theme::ACCENT
+    };
+    let p = ui.painter();
+    p.rect_filled(rect, theme::RADIUS_CONTROL, fill);
+    p.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::proportional(theme::TYPE_CONTROL),
+        theme::BACKGROUND,
+    );
+    response
+}
+
+/// A quiet text action, like the Group card's Ungroup: muted text that
+/// lifts on hover.
+pub(crate) fn action(ui: &mut egui::Ui, label: &str, enabled: bool) -> Response {
+    let font = FontId::proportional(theme::TYPE_DETAIL);
+    let text_width = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), theme::TEXT)
+        .size()
+        .x;
+    let response = cell(
+        ui,
+        label,
+        egui::vec2(text_width + 16.0, 26.0),
+        false,
+        enabled,
+        Color32::TRANSPARENT,
+    );
+    ui.painter().text(
+        response.rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font,
+        ink(false, enabled, true),
+    );
+    response
+}
+
+/// A determinate progress track `width` wide: gold fill on the well tone.
+pub(crate) fn progress(ui: &mut egui::Ui, width: f32, fraction: f32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 4.0), Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(rect, 2, theme::SURFACE_ELEVATED);
+    let mut filled = rect;
+    filled.set_width(rect.width() * fraction.clamp(0.0, 1.0));
+    p.rect_filled(filled, 2, theme::ACCENT);
+    response
+}
+
+/// A status dot in `color` and its label, on the hint label's type.
+pub(crate) fn status(ui: &mut egui::Ui, color: Color32, label: &str) -> Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        FontId::proportional(theme::TYPE_DETAIL),
+        theme::TEXT_MUTED,
+    );
+    let dot = 6.0;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(dot + theme::SPACE_2 + galley.size().x, 18.0),
+        Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+    let p = ui.painter();
+    p.circle_filled(
+        rect.left_center() + egui::vec2(dot * 0.5, 0.0),
+        dot * 0.5,
+        color,
+    );
+    p.galley(
+        egui::pos2(
+            rect.left() + dot + theme::SPACE_2,
+            rect.center().y - galley.size().y * 0.5,
+        ),
+        galley,
+        theme::TEXT_MUTED,
     );
     response
 }
