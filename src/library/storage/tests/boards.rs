@@ -926,14 +926,7 @@ fn workspace_settings_remain_global_across_active_boards() {
 
 #[test]
 fn clipboard_images_get_unique_destination_paths() {
-    let root = std::env::temp_dir().join(format!(
-        "snappyref-clipboard-path-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
+    let root = TempRoot::new("snappyref-clipboard-path-test");
 
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first = library
@@ -1039,14 +1032,7 @@ fn embedding_backfill_prioritizes_active_board_placements() {
 
 #[test]
 fn canvas_annotations_round_trip_and_archive() {
-    let root = std::env::temp_dir().join(format!(
-        "snappyref-annotation-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
+    let root = TempRoot::new("snappyref-annotation-test");
 
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let created = library
@@ -1097,14 +1083,7 @@ fn canvas_annotations_round_trip_and_archive() {
 
 #[test]
 fn existing_canvas_annotations_rows_migrate_text_size_to_default_m() {
-    let root = std::env::temp_dir().join(format!(
-        "snappyref-annotation-migration-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
+    let root = TempRoot::new("snappyref-annotation-migration-test");
 
     let db_path = root.join("library.db");
     let connection = Connection::open(&db_path).unwrap();

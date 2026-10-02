@@ -271,14 +271,7 @@ fn remove_asset_canvas_caches_removes_every_variant_of_only_that_asset() {
 
 #[test]
 fn embedding_backfill_includes_unplaced_library_assets() {
-    let root = std::env::temp_dir().join(format!(
-        "snappyref-library-embedding-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
+    let root = TempRoot::new("snappyref-library-embedding-test");
 
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let ready_path = library
@@ -534,14 +527,7 @@ fn embedding_backfill_retries_failed_assets_after_never_tried_assets() {
 
 #[test]
 fn embedding_helpers_scope_to_requested_model_key() {
-    let root = std::env::temp_dir().join(format!(
-        "snappyref-embedding-model-key-test-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&root).unwrap();
+    let root = TempRoot::new("snappyref-embedding-model-key-test");
 
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let first_path = library
