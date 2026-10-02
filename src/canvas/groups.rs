@@ -486,7 +486,7 @@ impl CanvasState {
                             search.request_focus();
                             picker.focus = false;
                         }
-                        ui.separator();
+                        crate::ui::card::separator(ui);
                         let query = picker.query.trim().to_lowercase();
                         let mut choices: Vec<_> = self
                             .groups()
@@ -533,31 +533,10 @@ impl CanvasState {
                                             .color(theme::TEXT_SUBTLE),
                                     );
                                 }
+                                ui.spacing_mut().item_spacing.y = 2.0;
                                 for (choice, label) in choices {
                                     let selected = picker.highlighted == Some(choice);
-                                    ui.visuals_mut().widgets.inactive.bg_fill =
-                                        egui::Color32::TRANSPARENT;
-                                    ui.visuals_mut().widgets.hovered.bg_fill =
-                                        theme::SURFACE_ELEVATED;
-                                    ui.visuals_mut().widgets.active.bg_fill =
-                                        theme::SURFACE_PRESSED;
-                                    ui.visuals_mut().selection.bg_fill = theme::SURFACE_ELEVATED;
-                                    let row = ui.add(
-                                        egui::Button::new("")
-                                            .left_text(label.as_str())
-                                            .selected(selected)
-                                            .stroke(egui::Stroke::NONE)
-                                            .corner_radius(theme::RADIUS_COMPACT)
-                                            .min_size(egui::vec2(ui.available_width(), 36.0))
-                                            .truncate(),
-                                    );
-                                    row.widget_info(|| {
-                                        egui::WidgetInfo::labeled(
-                                            egui::WidgetType::Button,
-                                            ui.is_enabled(),
-                                            &label,
-                                        )
-                                    });
+                                    let row = group_picker_row(ui, &label, selected);
                                     if selected && navigating {
                                         row.scroll_to_me(None);
                                     }
@@ -569,20 +548,25 @@ impl CanvasState {
                         if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
                             confirmed = picker.highlighted;
                         }
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = shortcut::HINT_GAP;
-                            shortcut::hint(ui, &[Key::Up, Key::Down], "Choose");
-                            shortcut::hint(ui, &[Key::Enter], "Confirm");
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui.add(egui::Button::new("Cancel").frame(false)).clicked() {
-                                        cancel = true;
-                                    }
-                                },
-                            );
-                        });
+                        crate::ui::card::separator(ui);
+                        // A control-height row, so the hints center on Cancel.
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), theme::CONTROL_HEIGHT),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = shortcut::HINT_GAP;
+                                shortcut::hint(ui, &[Key::Up, Key::Down], "Choose");
+                                shortcut::hint(ui, &[Key::Enter], "Confirm");
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if crate::ui::card::action(ui, "Cancel", true).clicked() {
+                                            cancel = true;
+                                        }
+                                    },
+                                );
+                            },
+                        );
                     });
             });
         cancel |= !just_opened
@@ -692,7 +676,7 @@ impl CanvasState {
                 rect.left_top() - egui::vec2(0., theme::SPACE_2),
                 egui::Align2::LEFT_BOTTOM,
                 &group.name,
-                egui::FontId::proportional(13.),
+                egui::FontId::proportional(theme::TYPE_CONTROL),
                 color,
             );
         }
@@ -1065,4 +1049,28 @@ fn group_member_is_absolute(group: &Group, id: i64) -> bool {
         .members
         .get(&id)
         .is_some_and(|mode| mode.absolute)
+}
+
+/// A picker row: the highlighted or hovered row lifts like a context menu row.
+fn group_picker_row(ui: &mut egui::Ui, label: &str, highlighted: bool) -> egui::Response {
+    use crate::ui::theme;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), theme::CONTROL_HEIGHT),
+        egui::Sense::click(),
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, true, highlighted, label)
+    });
+    let painter = ui.painter_at(rect);
+    if highlighted || response.hovered() {
+        painter.rect_filled(rect, theme::RADIUS_CONTROL, theme::SURFACE_ELEVATED);
+    }
+    painter.text(
+        rect.left_center() + egui::vec2(theme::SPACE_3, 0.0),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(theme::TYPE_CONTROL),
+        theme::TEXT,
+    );
+    response
 }
