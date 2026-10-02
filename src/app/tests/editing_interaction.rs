@@ -737,8 +737,16 @@ fn context_menu_enables_actions_for_selection() {
         MoveToBack,
     ];
     let grouped = |extra: &[crate::app::shortcuts::ContextMenuAction]| {
-        let mut actions = vec![Group, AddToGroup];
-        actions.extend(selection_actions);
+        let mut actions = vec![
+            Copy,
+            Paste,
+            Duplicate,
+            DeleteFromBoard,
+            Group,
+            AddToGroup,
+            MoveToFront,
+            MoveToBack,
+        ];
         actions.extend(extra);
         actions
     };
@@ -757,8 +765,9 @@ fn context_menu_enables_actions_for_selection() {
     ] {
         app.canvas.select_content(placements, annotations);
         let enabled = app
-            .context_menu_items()
+            .context_menu_sections()
             .into_iter()
+            .flatten()
             .filter(|item| item.enabled)
             .map(|item| item.action)
             .collect::<Vec<_>>();
@@ -1277,7 +1286,7 @@ fn context_menu_move_to_front_routes_through_rendered_menu_row() {
         app.show_context_menu(ctx, test_screen_rect(), false);
     });
 
-    harness.get_by_label("Move to Front").click();
+    harness.get_by_label("Bring to front").click();
     harness.run();
 
     assert_eq!(

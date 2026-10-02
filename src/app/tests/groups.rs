@@ -412,7 +412,7 @@ fn inspect_group_operations_writes_artifact() {
         });
         harness.step();
     }
-    harness.get_by_label("Add to group").click();
+    harness.get_by_label("Add to group…").click();
     for _ in 0..4 {
         harness.step();
     }
@@ -1701,8 +1701,9 @@ fn scrub_survives_board_switch() {
     assert_eq!(back, edited);
 }
 
-/// Captures the context menu over an empty board, a selected Group, and a
-/// multi-image selection with one row hovered.
+/// Captures the context menu over an empty board, a selected Group, a
+/// multi-image selection with one row hovered, and opened in the window's
+/// bottom-right corner.
 #[test]
 fn inspect_context_menu_writes_artifact() {
     let mut scenario = InspectScenario::new("context-menu");
@@ -1771,6 +1772,15 @@ fn inspect_context_menu_writes_artifact() {
         harness.state().canvas.selected_placement_ids().len() == 3,
     );
     scenario.capture_screen("selection-hover", &mut harness);
+
+    let corner = screen.max - egui::vec2(8.0, 8.0);
+    open(&mut harness, corner);
+    let last_row = harness.get_by_label("Remove from library…").rect();
+    scenario.assertion(
+        "menu in the corner opens up and left of the pointer",
+        last_row.max.x < corner.x && last_row.max.y < corner.y,
+    );
+    scenario.capture_screen("edge", &mut harness);
 
     let report = scenario.finish();
     assert!(

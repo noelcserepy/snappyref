@@ -1,6 +1,6 @@
 //! The Group card's vocabulary, shared by every floating card and its
-//! controls: the card frame, section captions, inset wells, segmented beds,
-//! switches, and tooltips.
+//! controls: the card frame, section captions, separators, inset wells,
+//! segmented beds, switches, and tooltips.
 //!
 //! Inside a card, controls are [`theme::CONTROL_HEIGHT`] tall and sit
 //! [`ITEM_SPACING`] apart; [`section`] adds 6 more above each caption, so
@@ -37,6 +37,20 @@ pub(crate) fn frame() -> egui::Frame {
 pub(crate) fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(14.0 - ITEM_SPACING.y);
     ui.label(theme::editorial_caption(title));
+}
+
+/// A hairline rule between groups that need no caption, with 4 clear above
+/// and below.
+pub(crate) fn separator(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 1.0 + 2.0 * theme::SPACE_1),
+        Sense::hover(),
+    );
+    ui.painter().hline(
+        rect.x_range().shrink(6.0),
+        rect.center().y,
+        Stroke::new(1.0_f32, theme::SURFACE_RAISED),
+    );
 }
 
 /// An inset well `width` wide: the field and switch background. Contents
@@ -229,6 +243,7 @@ fn focus_ring(ui: &egui::Ui, response: &Response) {
     }
 }
 
-fn fade(enabled: bool) -> f32 {
+/// Disabled controls draw at this opacity.
+pub(crate) fn fade(enabled: bool) -> f32 {
     if enabled { 1.0 } else { 0.4 }
 }
