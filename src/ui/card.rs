@@ -1,8 +1,8 @@
 //! The Group card's vocabulary, shared by every floating card and its
 //! controls: the card frame, section captions, separators, inset wells,
 //! fields, segmented beds, navigation tabs, switches, the primary and
-//! destructive buttons, quiet text actions, progress tracks, status lines and panels, and
-//! tooltips.
+//! destructive buttons, quiet text actions, progress tracks, status lines,
+//! and tooltips.
 //!
 //! Inside a card, controls are [`theme::CONTROL_HEIGHT`] tall and sit
 //! [`ITEM_SPACING`] apart; [`section`] adds 6 more above each caption, so
@@ -346,8 +346,7 @@ pub(crate) fn action(ui: &mut egui::Ui, label: &str, enabled: bool) -> Response 
     response
 }
 
-/// A determinate progress track `width` wide: gold fill on the raised tone,
-/// so the track reads on the card and on a [`status_panel`]'s bed alike.
+/// A determinate progress track `width` wide: gold fill on the raised tone.
 pub(crate) fn progress(ui: &mut egui::Ui, width: f32, fraction: f32) -> Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 4.0), Sense::hover());
     let p = ui.painter();
@@ -403,120 +402,6 @@ fn x_height_center(painter: &egui::Painter, font: FontId) -> f32 {
             Some(row.pos.y + glyph.pos.y + glyph.uv_rect.offset.y + glyph.uv_rect.size.y * 0.5)
         })
         .unwrap_or(galley.size().y * 0.5)
-}
-
-/// What a [`status_panel`] shows.
-pub(crate) struct StatusPanel<'a> {
-    pub title: &'a str,
-    pub action: &'a str,
-    /// The action is the step the user should take next, so it draws as the
-    /// gold [`button`].
-    pub primary: bool,
-    pub enabled: bool,
-    /// The [`status`] dot: green when ready, gold while something wants the
-    /// user or is under way, red when it failed.
-    pub dot: Color32,
-    pub line: &'a str,
-    /// Download progress from 0 to 1, drawn as a [`progress`] track under
-    /// the line.
-    pub progress: Option<f32>,
-    pub detail: &'a str,
-}
-
-/// A thing the app installs or keeps current: icon, title, and its next
-/// action on top, then a [`status`] line, optional [`progress`], and a
-/// wrapped detail, all indented under the title. The panel sits on the bed
-/// tone so a quiet action still lifts on hover. Returns the action's response.
-pub(crate) fn status_panel(
-    ui: &mut egui::Ui,
-    width: f32,
-    panel: &StatusPanel,
-    icon: impl FnOnce(&egui::Painter, Pos2, Color32),
-) -> Response {
-    // The title sits 6 past the 14px icon; status text lines up under it.
-    const INDENT: f32 = 20.0;
-    egui::Frame::new()
-        .fill(theme::SURFACE_PRESSED)
-        .corner_radius(BED_RADIUS)
-        .inner_margin(egui::Margin {
-            left: 10,
-            right: 6,
-            top: 6,
-            bottom: 10,
-        })
-        .show(ui, |ui| {
-            let inner = width - 16.0;
-            ui.set_width(inner);
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            let (head, title) =
-                ui.allocate_exact_size(egui::vec2(inner, theme::CONTROL_HEIGHT), Sense::hover());
-            title.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Label, true, panel.title)
-            });
-            icon(
-                ui.painter(),
-                head.left_center() + egui::vec2(7.0, 0.0),
-                theme::TEXT_MUTED,
-            );
-            ui.painter().text(
-                head.left_center() + egui::vec2(INDENT, 0.0),
-                Align2::LEFT_CENTER,
-                panel.title,
-                FontId::proportional(theme::TYPE_CONTROL),
-                theme::TEXT,
-            );
-            let action = ui
-                .scope_builder(
-                    egui::UiBuilder::new()
-                        .max_rect(head)
-                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
-                    |ui| {
-                        if panel.primary && panel.enabled {
-                            button(ui, panel.action, 0.0)
-                        } else {
-                            action(ui, panel.action, panel.enabled)
-                        }
-                    },
-                )
-                .inner;
-            let text = inner - INDENT - 4.0;
-            indented(ui, 18.0, INDENT - STATUS_INSET, |ui| {
-                status(ui, panel.dot, panel.line);
-            });
-            if let Some(fraction) = panel.progress {
-                ui.add_space(6.0);
-                indented(ui, 4.0, INDENT, |ui| {
-                    progress(ui, text, fraction);
-                });
-            }
-            ui.add_space(4.0);
-            let galley = ui.painter().layout(
-                panel.detail.to_owned(),
-                FontId::proportional(theme::TYPE_DETAIL),
-                theme::TEXT_SUBTLE,
-                text,
-            );
-            let (detail, _) =
-                ui.allocate_exact_size(egui::vec2(inner, galley.size().y), Sense::hover());
-            ui.painter().galley(
-                detail.min + egui::vec2(INDENT, 0.0),
-                galley,
-                theme::TEXT_SUBTLE,
-            );
-            action
-        })
-        .inner
-}
-
-/// A full-width row `height` tall whose contents start `indent` in.
-fn indented(ui: &mut egui::Ui, height: f32, indent: f32, add: impl FnOnce(&mut egui::Ui)) {
-    let (row, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::hover());
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .max_rect(row.with_min_x(row.left() + indent))
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        add,
-    );
 }
 
 /// A frameless text field `width` by `height`, keyed by `name` alone so

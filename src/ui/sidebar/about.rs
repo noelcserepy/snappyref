@@ -1,10 +1,8 @@
-//! The About page: the running version and the update it can move to, in
-//! the same status panel as Semantic Search.
+//! The About section: the running version and the update it can move to,
+//! in the same status row as Semantic Search.
 
-use eframe::egui;
-
-use super::icons::{self, Icon};
-use crate::ui::{card, theme};
+use super::settings::StatusRow;
+use crate::ui::theme;
 
 /// What About shows. The app owns the data; the sidebar only reads it.
 #[derive(Clone, Debug)]
@@ -45,37 +43,31 @@ pub(crate) enum AppUpdateStatus {
     },
 }
 
-/// The page's panel and whether its next step waits on the user.
-pub(super) struct Panel {
-    line: String,
-    detail: String,
-    action: &'static str,
-    primary: bool,
-    enabled: bool,
-    dot: egui::Color32,
-    progress: Option<f32>,
-}
-
-impl Panel {
-    pub(super) fn wants_attention(&self) -> bool {
-        self.primary
-    }
-}
-
-pub(super) fn panel(about: &AboutView) -> Panel {
+/// The About row: the running version, the update it can move to, and when
+/// the app last checked.
+pub(super) fn status(about: &AboutView) -> StatusRow {
     let v = &about.version;
     let checked = match about.last_checked_unix_millis {
         Some(millis) => format!("Checked {}.", format_last_checked(millis)),
         None => "Not checked yet.".to_owned(),
     };
-    let check = |dot, line: String, detail: String, enabled| Panel {
+    let check = |dot, line: String, detail: String, enabled| StatusRow {
         line,
-        detail,
+        detail: Some(detail),
         action: "Check",
         primary: false,
         enabled,
         dot,
         progress: None,
+    };
+    let update = |line: String, detail: &str, action, primary, progress| StatusRow {
+        line,
+        detail: Some(detail.to_owned()),
+        action,
+        primary,
+        enabled: primary,
+        dot: theme::ACCENT,
+        progress,
     };
     match &about.update {
         AppUpdateStatus::Unchecked => {
@@ -93,42 +85,34 @@ pub(super) fn panel(about: &AboutView) -> Panel {
             checked,
             false,
         ),
-        AppUpdateStatus::Available { version } => Panel {
-            line: format!("{v} · {version} available"),
-            detail: checked,
-            action: "Update",
-            primary: true,
-            enabled: true,
-            dot: theme::ACCENT,
-            progress: None,
-        },
-        AppUpdateStatus::Downloading { version, percent } => Panel {
-            line: format!("Downloading {version} · {percent}%"),
-            detail: "SnappyRef restarts when the download finishes.".to_owned(),
-            action: "Update",
-            primary: false,
-            enabled: false,
-            dot: theme::ACCENT,
-            progress: Some(f32::from(*percent) / 100.0),
-        },
-        AppUpdateStatus::Finishing { version } => Panel {
-            line: format!("Restarting into {version}"),
-            detail: "Your boards reopen where you left them.".to_owned(),
-            action: "Update",
-            primary: false,
-            enabled: false,
-            dot: theme::ACCENT,
-            progress: None,
-        },
-        AppUpdateStatus::Ready { version } => Panel {
-            line: format!("{version} ready"),
-            detail: "Restart to finish the update.".to_owned(),
-            action: "Restart",
-            primary: true,
-            enabled: true,
-            dot: theme::ACCENT,
-            progress: None,
-        },
+        AppUpdateStatus::Available { version } => update(
+            format!("{v} · {version} available"),
+            &checked,
+            "Update",
+            true,
+            None,
+        ),
+        AppUpdateStatus::Downloading { version, percent } => update(
+            format!("Downloading {version} · {percent}%"),
+            "SnappyRef restarts when the download finishes.",
+            "Update",
+            false,
+            Some(f32::from(*percent) / 100.0),
+        ),
+        AppUpdateStatus::Finishing { version } => update(
+            format!("Restarting into {version}"),
+            "Your boards reopen where you left them.",
+            "Update",
+            false,
+            None,
+        ),
+        AppUpdateStatus::Ready { version } => update(
+            format!("{version} ready"),
+            "Restart to finish the update.",
+            "Restart",
+            true,
+            None,
+        ),
         AppUpdateStatus::InstallFailed { version, reason } => check(
             theme::DESTRUCTIVE,
             format!("Update to {version} failed"),
@@ -142,26 +126,6 @@ pub(super) fn panel(about: &AboutView) -> Panel {
             about.check_enabled,
         ),
     }
-}
-
-/// Returns true when the update action was clicked.
-pub(super) fn show(ui: &mut egui::Ui, panel: &Panel) -> bool {
-    card::status_panel(
-        ui,
-        super::INNER_WIDTH,
-        &card::StatusPanel {
-            title: "SnappyRef",
-            action: panel.action,
-            primary: panel.primary,
-            enabled: panel.enabled,
-            dot: panel.dot,
-            line: &panel.line,
-            progress: panel.progress,
-            detail: &panel.detail,
-        },
-        |p, center, color| icons::paint(p, center, Icon::About, color),
-    )
-    .clicked()
 }
 
 fn format_last_checked(millis: u64) -> String {

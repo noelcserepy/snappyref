@@ -238,11 +238,9 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
 
     scenario.capture_screen("screen-settings-top", &mut harness);
 
-    let search_page = harness.get_by_label("Search").rect();
-    scenario.action("open the Search settings page", search_page.center());
-    inspect_click_at(&harness, search_page.center(), egui::Modifiers::NONE);
+    harness.get_by_label("SEMANTIC SEARCH").scroll_to_me();
     harness.run();
-    let section_rect = harness.get_by_label("Semantic Search").rect();
+    let section_rect = harness.get_by_label("SEMANTIC SEARCH").rect();
     scenario.target(
         "snap.sidebar.semantic-search",
         "settings-section",
@@ -303,7 +301,7 @@ fn inspect_sidebar_pages_writes_artifact() {
         "seed",
         serde_json::json!({
             "seed": "five-boards-long-names-update-available-search-downloading",
-            "purpose": "every sidebar page: Boards at rest and hovered, then General, Search, Keys, About",
+            "purpose": "every sidebar page: Boards at rest and hovered, then General with Semantic Search and About, then Keys",
         }),
     );
 
@@ -414,34 +412,25 @@ fn inspect_sidebar_pages_writes_artifact() {
             && harness.query_by_label("Fill new textboxes").is_some(),
     );
     scenario.assertion(
+        "General ends with the Semantic Search download and the available update",
+        harness.query_by_label("Downloading 42%").is_some()
+            && harness.query_by_label("Update").is_some(),
+    );
+    scenario.assertion(
         "switching tabs keeps the tabs in place",
         harness.get_by_label("Settings").rect() == settings_tab,
     );
 
-    for (page, action, frame) in [
-        (
-            "Search",
-            "open the Search page",
-            "screen-003-search-downloading",
-        ),
-        ("Keys", "open the Keys page", "screen-004-keys"),
-        (
-            "About",
-            "open the About page",
-            "screen-005-about-update-available",
-        ),
-    ] {
-        let tab = harness.get_by_label(page).rect();
-        scenario.action(action, tab.center());
-        inspect_click_at(&harness, tab.center(), egui::Modifiers::NONE);
-        harness.step();
-        harness.hover_at(park);
-        harness.run_steps(6);
-        scenario.capture_screen(frame, &mut harness);
-    }
+    let keys = harness.get_by_label("Keys").rect();
+    scenario.action("open the Keys page", keys.center());
+    inspect_click_at(&harness, keys.center(), egui::Modifiers::NONE);
+    harness.step();
+    harness.hover_at(park);
+    harness.run_steps(6);
+    scenario.capture_screen("screen-003-keys", &mut harness);
     scenario.assertion(
-        "About offers the available update",
-        harness.query_by_label("Update").is_some(),
+        "Keys lists the shortcut groups",
+        harness.query_by_label("CORE ACTIONS").is_some(),
     );
 
     let report = scenario.finish();

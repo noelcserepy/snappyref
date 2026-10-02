@@ -170,8 +170,6 @@ fn settings_semantic_search_install_and_cancel_share_download_state() {
         render_sidebar_for_test(ctx, app);
     });
 
-    harness.get_by_label("Search").click();
-    harness.run();
     harness.get_by_label("Install").click();
     harness.run();
 
@@ -204,8 +202,6 @@ fn settings_semantic_search_failed_state_retries_shared_install() {
         render_sidebar_for_test(ctx, app);
     });
 
-    harness.get_by_label("Search").click();
-    harness.run();
     harness.get_by_label("Retry").click();
     harness.run();
 
@@ -231,8 +227,6 @@ fn settings_semantic_search_remove_requires_confirmation() {
         app.show_semantic_search_remove_confirmation(ctx);
     });
 
-    harness.get_by_label("Search").click();
-    harness.run();
     harness.get_by_label("Remove").click();
     harness.run();
 

@@ -1,4 +1,5 @@
-//! The Settings tab: a page bar over General, Search, Keys, and About.
+//! The Settings tab: a page bar over General and Keys. General ends with
+//! Semantic Search and About, the two things the app installs or updates.
 
 use eframe::egui::{self, Align2, FontId, RichText};
 
@@ -22,16 +23,12 @@ fn bed_cell(count: f32) -> f32 {
 enum Page {
     #[default]
     General,
-    Search,
     Keys,
-    About,
 }
 
-const PAGES: [(Page, &str, Icon); 4] = [
+const PAGES: [(Page, &str, Icon); 2] = [
     (Page::General, "General", Icon::General),
-    (Page::Search, "Search", Icon::Search),
     (Page::Keys, "Keys", Icon::Keys),
-    (Page::About, "About", Icon::About),
 ];
 
 pub(super) fn show(
@@ -44,13 +41,13 @@ pub(super) fn show(
 ) {
     let page_id = egui::Id::new("sidebar-settings-page");
     let mut page: Page = ui.data(|d| d.get_temp(page_id)).unwrap_or_default();
-    let about = about::panel(about);
-    let search = SearchPanel::new(semantic_search);
+    let about = about::status(about);
+    let (search, search_action) = search_status(semantic_search);
     let open = PAGES.iter().position(|(p, ..)| *p == page).unwrap_or(0);
+    // A tab holding a step that waits on the user, like an update, wears a dot.
     let attention = |p: Page| match p {
-        Page::Search => search.primary,
-        Page::About => about.wants_attention(),
-        Page::General | Page::Keys => false,
+        Page::General => about.primary || search.primary,
+        Page::Keys => false,
     };
     let names = PAGES.map(|(_, name, _)| name);
     let clicked = super::column(ui, 48.0, |ui| {
@@ -80,18 +77,16 @@ pub(super) fn show(
         ui.data_mut(|d| d.insert_temp(page_id, page));
     }
     super::scroll(ui, ("sidebar_settings", page), |ui| match page {
-        Page::General => result.settings_changed |= general(ui, settings, canvas),
-        Page::Search => {
-            ui.add_space(14.0 - card::ITEM_SPACING.y);
-            if search.show(ui) {
-                result.semantic_search_action = Some(search.action);
+        Page::General => {
+            result.settings_changed |= general(ui, settings, canvas);
+            card::section(ui, "Semantic search");
+            if status_row(ui, &search) {
+                result.semantic_search_action = Some(search_action);
             }
+            card::section(ui, "About");
+            result.update_action_clicked |= status_row(ui, &about);
         }
         Page::Keys => super::keys::show(ui),
-        Page::About => {
-            ui.add_space(14.0 - card::ITEM_SPACING.y);
-            result.update_action_clicked |= about::show(ui, &about);
-        }
     });
 }
 
@@ -111,11 +106,7 @@ fn general(
         settings.pointer_mode = mode;
         changed = true;
     }
-    ui.label(
-        RichText::new(pointer_mode_detail(settings.pointer_mode))
-            .size(theme::TYPE_DETAIL)
-            .color(theme::TEXT_SUBTLE),
-    );
+    detail(ui, pointer_mode_detail(settings.pointer_mode));
 
     card::section(ui, "Canvas");
     let backgrounds = [
@@ -168,6 +159,15 @@ fn general(
         changed = true;
     }
     changed
+}
+
+/// A wrapped line of quiet text under the control it explains.
+fn detail(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        RichText::new(text)
+            .size(theme::TYPE_DETAIL)
+            .color(theme::TEXT_SUBTLE),
+    );
 }
 
 fn pointer_mode_detail(mode: PointerMode) -> &'static str {
@@ -303,86 +303,110 @@ fn number(ui: &mut egui::Ui, spec: Number, value: &mut f32) -> bool {
     *value != before
 }
 
-/// The Semantic Search page's panel, derived from the install state.
-struct SearchPanel {
-    line: String,
-    detail: &'static str,
-    label: &'static str,
-    action: SemanticSearchSettingsAction,
-    primary: bool,
-    dot: egui::Color32,
-    progress: Option<f32>,
+/// Something the app installs or keeps current: a [`card::status`] line in a
+/// well with the next action beside it, then optional download progress and
+/// a detail line.
+pub(super) struct StatusRow {
+    pub line: String,
+    pub detail: Option<String>,
+    pub action: &'static str,
+    /// The action is the step the user should take next, so it draws as the
+    /// gold [`card::button`].
+    pub primary: bool,
+    pub enabled: bool,
+    /// Green when ready, gold while something wants the user or is under
+    /// way, red when it failed.
+    pub dot: egui::Color32,
+    /// Download progress from 0 to 1.
+    pub progress: Option<f32>,
 }
 
-impl SearchPanel {
-    fn new(status: &SemanticSearchSettingsStatus) -> Self {
-        use SemanticSearchSettingsAction as Action;
-        let panel = |line: &str, detail, label, action, primary, dot| SearchPanel {
-            line: line.to_owned(),
-            detail,
-            label,
-            action,
-            primary,
-            dot,
-            progress: None,
-        };
-        match status {
-            SemanticSearchSettingsStatus::Installed => panel(
+/// Returns true when the action was clicked.
+fn status_row(ui: &mut egui::Ui, row: &StatusRow) -> bool {
+    let clicked = ui
+        .allocate_ui_with_layout(
+            egui::vec2(INNER_WIDTH, theme::CONTROL_HEIGHT),
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
+                let action = if row.primary && row.enabled {
+                    card::button(ui, row.action, 0.0)
+                } else {
+                    card::action(ui, row.action, row.enabled)
+                };
+                card::well(ui, ui.available_width(), |ui| {
+                    card::status(ui, row.dot, &row.line);
+                });
+                action.clicked()
+            },
+        )
+        .inner;
+    if let Some(fraction) = row.progress {
+        card::progress(ui, INNER_WIDTH, fraction);
+    }
+    if let Some(text) = &row.detail {
+        detail(ui, text);
+    }
+    clicked
+}
+
+/// The Semantic Search row and the action its button sends.
+fn search_status(
+    status: &SemanticSearchSettingsStatus,
+) -> (StatusRow, SemanticSearchSettingsAction) {
+    use SemanticSearchSettingsAction as Action;
+    let row = |line: &str, detail: Option<&str>, action, primary, dot| StatusRow {
+        line: line.to_owned(),
+        detail: detail.map(str::to_owned),
+        action,
+        primary,
+        enabled: true,
+        dot,
+        progress: None,
+    };
+    match status {
+        SemanticSearchSettingsStatus::Installed => (
+            row(
                 "Ready",
-                "Find references by describing them.",
+                Some("Find references by describing them."),
                 "Remove",
-                Action::RequestRemove,
                 false,
                 theme::GREEN,
             ),
-            SemanticSearchSettingsStatus::Missing => panel(
+            Action::RequestRemove,
+        ),
+        SemanticSearchSettingsStatus::Missing => (
+            row(
                 "Not installed",
-                "Install local assets to find references by description.",
+                Some("Install local assets to find references by description."),
                 "Install",
-                Action::Install,
                 true,
                 theme::TEXT_SUBTLE,
             ),
-            SemanticSearchSettingsStatus::Downloading { percent } => SearchPanel {
+            Action::Install,
+        ),
+        SemanticSearchSettingsStatus::Downloading { percent } => (
+            StatusRow {
                 progress: Some(f32::from(*percent) / 100.0),
-                ..panel(
+                ..row(
                     &format!("Downloading {percent}%"),
-                    "Assets download in the background.",
+                    None,
                     "Cancel",
-                    Action::Cancel,
                     false,
                     theme::ACCENT,
                 )
             },
-            SemanticSearchSettingsStatus::Failed => panel(
+            Action::Cancel,
+        ),
+        SemanticSearchSettingsStatus::Failed => (
+            row(
                 "Install failed",
-                "Keep SnappyRef in a writable folder and check network access.",
+                Some("Keep SnappyRef in a writable folder and check network access."),
                 "Retry",
-                Action::Retry,
                 true,
                 theme::DESTRUCTIVE,
             ),
-        }
-    }
-
-    /// Returns true when the action was clicked.
-    fn show(&self, ui: &mut egui::Ui) -> bool {
-        card::status_panel(
-            ui,
-            INNER_WIDTH,
-            &card::StatusPanel {
-                title: "Semantic Search",
-                action: self.label,
-                primary: self.primary,
-                enabled: true,
-                dot: self.dot,
-                line: &self.line,
-                progress: self.progress,
-                detail: self.detail,
-            },
-            |p, center, ink| icons::paint(p, center, Icon::Search, ink),
-        )
-        .clicked()
+            Action::Retry,
+        ),
     }
 }
 

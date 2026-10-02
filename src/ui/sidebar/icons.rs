@@ -15,9 +15,7 @@ pub(super) enum Icon {
     Textbox,
     OnTop,
     General,
-    Search,
     Keys,
-    About,
 }
 
 pub(super) fn paint(p: &egui::Painter, center: Pos2, icon: Icon, color: Color32) {
@@ -41,7 +39,6 @@ pub(super) fn paint(p: &egui::Painter, center: Pos2, icon: Icon, color: Color32)
         );
     };
     let dot = |x: f32, y: f32, radius: f32| p.circle_filled(point(x, y), radius * scale, color);
-    let ring = |x: f32, y: f32, radius: f32| p.circle_stroke(point(x, y), radius * scale, stroke);
     match icon {
         Icon::Mouse => {
             frame(4.5, 1.5, 7.0, 13.0, 3.5);
@@ -104,21 +101,12 @@ pub(super) fn paint(p: &egui::Painter, center: Pos2, icon: Icon, color: Color32)
             dot(10.0, 5.0, 2.0);
             dot(6.0, 11.0, 2.0);
         }
-        Icon::Search => {
-            ring(7.0, 7.0, 4.75);
-            line(&[(10.5, 10.5), (14.0, 14.0)]);
-        }
         Icon::Keys => {
             frame(1.0, 3.5, 14.0, 9.0, 2.0);
             for x in [4.0, 6.7, 9.3, 12.0] {
                 dot(x, 6.5, 0.8);
             }
             line(&[(5.0, 9.8), (11.0, 9.8)]);
-        }
-        Icon::About => {
-            ring(8.0, 8.0, 6.25);
-            line(&[(8.0, 7.0), (8.0, 11.5)]);
-            dot(8.0, 4.8, 0.9);
         }
     }
 }

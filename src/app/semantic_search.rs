@@ -13,7 +13,7 @@ use super::dialogs::{
 };
 
 impl SnappyRefApp {
-    /// The install state the Search settings page shows.
+    /// The install state the Semantic Search settings section shows.
     pub(super) fn semantic_search_settings_status(&self) -> SemanticSearchSettingsStatus {
         use crate::search::semantic::LocalModelStoreStatus;
         match self.search.local_model_store_status() {

@@ -79,7 +79,7 @@ impl UpdateSmokeState {
 }
 
 impl SnappyRefApp {
-    /// What the About page shows, read from the updater.
+    /// What the About section shows, read from the updater.
     pub(super) fn about_view(&self) -> AboutView {
         let check_enabled = self
             .last_manual_update_check
