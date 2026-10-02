@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = {
     'group-dock-narrow': ('inspect_group_dock_narrow_writes_artifact', 'group-dock-narrow', False, False),
     'group-dock': ('inspect_group_dock_writes_artifact', 'group-dock', False, False),
+    'context-menu': ('inspect_context_menu_writes_artifact', 'context-menu', False, False),
     'member-dock': ('inspect_member_dock_writes_artifact', 'member-dock', False, False),
     'annotation-editing': ('inspect_annotation_creation_editing_and_styles_writes_artifact', 'annotation-editing', False, False),
     'annotation-endpoint-drag': ('inspect_annotation_endpoint_drag_writes_artifact', 'annotation-endpoint-drag', False, False),
