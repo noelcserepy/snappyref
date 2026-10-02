@@ -146,10 +146,10 @@ pub(super) fn panel(about: &AboutView) -> Panel {
 
 /// Returns true when the update action was clicked.
 pub(super) fn show(ui: &mut egui::Ui, panel: &Panel) -> bool {
-    card::status(
+    card::status_panel(
         ui,
         super::INNER_WIDTH,
-        &card::Status {
+        &card::StatusPanel {
             title: "SnappyRef",
             action: panel.action,
             primary: panel.primary,

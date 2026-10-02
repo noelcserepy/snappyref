@@ -1,7 +1,8 @@
 //! The Group card's vocabulary, shared by every floating card and its
 //! controls: the card frame, section captions, separators, inset wells,
-//! fields, segmented beds, navigation tabs, switches, text actions, status
-//! panels, and tooltips.
+//! fields, segmented beds, navigation tabs, switches, the primary button,
+//! quiet text actions, progress tracks, status lines and panels, and
+//! tooltips.
 //!
 //! Inside a card, controls are [`theme::CONTROL_HEIGHT`] tall and sit
 //! [`ITEM_SPACING`] apart; [`section`] adds 6 more above each caption, so
@@ -16,6 +17,9 @@ use super::{motion, theme};
 pub(crate) const PADDING: f32 = theme::SPACE_3;
 /// Controls sit 6 apart on a line, and lines 8 apart.
 pub(crate) const ITEM_SPACING: Vec2 = egui::vec2(6.0, 8.0);
+/// A [`status`] line's dot, and where its label starts.
+const STATUS_DOT: f32 = 6.0;
+const STATUS_INSET: f32 = STATUS_DOT + theme::SPACE_2;
 /// A bed's radius keeps its 8px cells concentric inside the 2px margin.
 const BED_RADIUS: u8 = 10;
 
@@ -184,36 +188,6 @@ pub(crate) fn tabs(
     clicked
 }
 
-/// A text action: muted text that lifts on hover, or gold when it is the
-/// step the user should take next.
-pub(crate) fn action(ui: &mut egui::Ui, label: &str, primary: bool, enabled: bool) -> Response {
-    let font = FontId::proportional(theme::TYPE_DETAIL);
-    let width = ui
-        .painter()
-        .layout_no_wrap(label.into(), font.clone(), theme::TEXT)
-        .size()
-        .x
-        + 16.0;
-    let response = hit(ui, label, egui::vec2(width, 26.0), false, enabled);
-    let gold = primary && enabled;
-    let color = if gold {
-        theme::ACCENT
-    } else {
-        lift(&response, Color32::TRANSPARENT)
-    };
-    ui.painter()
-        .rect_filled(response.rect, theme::RADIUS_CONTROL, color);
-    focus_ring(ui, &response);
-    ui.painter().text(
-        response.rect.center(),
-        Align2::CENTER_CENTER,
-        label,
-        font,
-        ink(gold, enabled, !gold),
-    );
-    response
-}
-
 /// Ink for a cell's face: dark on gold, muted or full text otherwise, and
 /// faded while disabled.
 pub(crate) fn ink(selected: bool, enabled: bool, muted: bool) -> Color32 {
@@ -300,32 +274,135 @@ pub(crate) fn switch(
     response
 }
 
-/// What a [`status`] panel shows.
-pub(crate) struct Status<'a> {
+/// The card's primary action: a gold button with dark ink, at least
+/// `min_width` wide and wider when its label needs it. A card has at most one.
+pub(crate) fn button(ui: &mut egui::Ui, label: &str, min_width: f32) -> Response {
+    let font = FontId::proportional(theme::TYPE_CONTROL);
+    let text_width = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), theme::BACKGROUND)
+        .size()
+        .x;
+    let width = min_width.max(text_width + 2.0 * theme::SPACE_3);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, theme::CONTROL_HEIGHT), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let fill = if response.is_pointer_button_down_on() {
+        motion::mix(theme::ACCENT, theme::BACKGROUND, 0.15)
+    } else if response.hovered() {
+        motion::mix(theme::ACCENT, theme::TEXT, 0.3)
+    } else {
+        theme::ACCENT
+    };
+    let p = ui.painter();
+    p.rect_filled(rect, theme::RADIUS_CONTROL, fill);
+    p.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font,
+        theme::BACKGROUND,
+    );
+    response
+}
+
+/// A quiet text action, like the Group card's Ungroup: muted text that
+/// lifts on hover.
+pub(crate) fn action(ui: &mut egui::Ui, label: &str, enabled: bool) -> Response {
+    let font = FontId::proportional(theme::TYPE_DETAIL);
+    let text_width = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), theme::TEXT)
+        .size()
+        .x;
+    let response = cell(
+        ui,
+        label,
+        egui::vec2(text_width + 16.0, 26.0),
+        false,
+        enabled,
+        Color32::TRANSPARENT,
+    );
+    ui.painter().text(
+        response.rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font,
+        ink(false, enabled, true),
+    );
+    response
+}
+
+/// A determinate progress track `width` wide: gold fill on the well tone.
+pub(crate) fn progress(ui: &mut egui::Ui, width: f32, fraction: f32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 4.0), Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(rect, 2, theme::SURFACE_ELEVATED);
+    let mut filled = rect;
+    filled.set_width(rect.width() * fraction.clamp(0.0, 1.0));
+    p.rect_filled(filled, 2, theme::ACCENT);
+    response
+}
+
+/// A status dot in `color` and its label, on the hint label's type.
+pub(crate) fn status(ui: &mut egui::Ui, color: Color32, label: &str) -> Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        FontId::proportional(theme::TYPE_DETAIL),
+        theme::TEXT_MUTED,
+    );
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(STATUS_INSET + galley.size().x, 18.0),
+        Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+    let p = ui.painter();
+    p.circle_filled(
+        rect.left_center() + egui::vec2(STATUS_DOT * 0.5, 0.0),
+        STATUS_DOT * 0.5,
+        color,
+    );
+    p.galley(
+        egui::pos2(
+            rect.left() + STATUS_INSET,
+            rect.center().y - galley.size().y * 0.5,
+        ),
+        galley,
+        theme::TEXT_MUTED,
+    );
+    response
+}
+
+/// What a [`status_panel`] shows.
+pub(crate) struct StatusPanel<'a> {
     pub title: &'a str,
     pub action: &'a str,
+    /// The action is the step the user should take next, so it draws as the
+    /// gold [`button`].
     pub primary: bool,
     pub enabled: bool,
-    /// The status dot: green when ready, gold while something wants the
+    /// The [`status`] dot: green when ready, gold while something wants the
     /// user or is under way, red when it failed.
     pub dot: Color32,
     pub line: &'a str,
-    /// Download progress from 0 to 1, drawn as a bar under the line.
+    /// Download progress from 0 to 1, drawn as a [`progress`] track under
+    /// the line.
     pub progress: Option<f32>,
     pub detail: &'a str,
 }
 
 /// A thing the app installs or keeps current: icon, title, and its next
-/// action on top, then a status line, optional progress, and a wrapped
-/// detail, all indented under the title. The panel sits on the bed tone so
-/// a quiet action still lifts on hover. Returns the action's response.
-pub(crate) fn status(
+/// action on top, then a [`status`] line, optional [`progress`], and a
+/// wrapped detail, all indented under the title. The panel sits on the bed
+/// tone so a quiet action still lifts on hover. Returns the action's response.
+pub(crate) fn status_panel(
     ui: &mut egui::Ui,
     width: f32,
-    status: &Status,
+    panel: &StatusPanel,
     icon: impl FnOnce(&egui::Painter, Pos2, Color32),
 ) -> Response {
-    const INDENT: f32 = 22.0;
+    // The title sits 6 past the 14px icon; status text lines up under it.
+    const INDENT: f32 = 20.0;
     egui::Frame::new()
         .fill(theme::SURFACE_PRESSED)
         .corner_radius(BED_RADIUS)
@@ -339,9 +416,10 @@ pub(crate) fn status(
             let inner = width - 16.0;
             ui.set_width(inner);
             ui.spacing_mut().item_spacing = Vec2::ZERO;
-            let (head, title) = ui.allocate_exact_size(egui::vec2(inner, 26.0), Sense::hover());
+            let (head, title) =
+                ui.allocate_exact_size(egui::vec2(inner, theme::CONTROL_HEIGHT), Sense::hover());
             title.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Label, true, status.title)
+                egui::WidgetInfo::labeled(egui::WidgetType::Label, true, panel.title)
             });
             icon(
                 ui.painter(),
@@ -351,7 +429,7 @@ pub(crate) fn status(
             ui.painter().text(
                 head.left_center() + egui::vec2(INDENT, 0.0),
                 Align2::LEFT_CENTER,
-                status.title,
+                panel.title,
                 FontId::proportional(theme::TYPE_CONTROL),
                 theme::TEXT,
             );
@@ -360,33 +438,28 @@ pub(crate) fn status(
                     egui::UiBuilder::new()
                         .max_rect(head)
                         .layout(egui::Layout::right_to_left(egui::Align::Center)),
-                    |ui| action(ui, status.action, status.primary, status.enabled),
+                    |ui| {
+                        if panel.primary && panel.enabled {
+                            button(ui, panel.action, 0.0)
+                        } else {
+                            action(ui, panel.action, panel.enabled)
+                        }
+                    },
                 )
                 .inner;
             let text = inner - INDENT - 4.0;
-            let (line, _) = ui.allocate_exact_size(egui::vec2(inner, 18.0), Sense::hover());
-            ui.painter()
-                .circle_filled(line.left_center() + egui::vec2(7.0, 0.0), 3.5, status.dot);
-            ui.painter().text(
-                line.left_center() + egui::vec2(INDENT, 0.0),
-                Align2::LEFT_CENTER,
-                status.line,
-                FontId::proportional(theme::TYPE_DETAIL),
-                theme::TEXT_MUTED,
-            );
-            if let Some(progress) = status.progress {
+            indented(ui, 18.0, INDENT - STATUS_INSET, |ui| {
+                status(ui, panel.dot, panel.line);
+            });
+            if let Some(fraction) = panel.progress {
                 ui.add_space(6.0);
-                let (row, _) = ui.allocate_exact_size(egui::vec2(inner, 4.0), Sense::hover());
-                let track =
-                    Rect::from_min_size(row.min + egui::vec2(INDENT, 0.0), egui::vec2(text, 4.0));
-                ui.painter().rect_filled(track, 2, theme::SURFACE_RAISED);
-                let mut done = track;
-                done.set_width(track.width() * progress.clamp(0.0, 1.0));
-                ui.painter().rect_filled(done, 2, theme::ACCENT);
+                indented(ui, 4.0, INDENT, |ui| {
+                    progress(ui, text, fraction);
+                });
             }
             ui.add_space(4.0);
             let galley = ui.painter().layout(
-                status.detail.to_owned(),
+                panel.detail.to_owned(),
                 FontId::proportional(theme::TYPE_DETAIL),
                 theme::TEXT_SUBTLE,
                 text,
@@ -401,6 +474,17 @@ pub(crate) fn status(
             action
         })
         .inner
+}
+
+/// A full-width row `height` tall whose contents start `indent` in.
+fn indented(ui: &mut egui::Ui, height: f32, indent: f32, add: impl FnOnce(&mut egui::Ui)) {
+    let (row, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::hover());
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(row.with_min_x(row.left() + indent))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        add,
+    );
 }
 
 /// A frameless text field `width` by `height`, keyed by `name` alone so

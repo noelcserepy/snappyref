@@ -189,7 +189,7 @@ Semantic rows need the model installed in the data root.
 
 | ID | Do | Expect | Covered |
 | --- | --- | --- | --- |
-| SRC-1 | Model missing: `Mod+F` | Palette opens with a focused install action; ordinary editing still works | |
+| SRC-1 | Model missing: `Mod+F` | Palette opens on the install card; Enter does nothing, Esc closes it; ordinary editing still works | |
 | SRC-2 | Model installed: `Mod+F`, type a subject, Escape | Relevant results, Escape closes without adding anything | |
 | SRC-3 | Search for an image that is only on another board or deleted from all boards | Found; search covers the whole Library | |
 | SRC-4 | Select one image, `Mod+F` or context menu Search using image; clear the pivot | Similar images; clearing returns to text search | |

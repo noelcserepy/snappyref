@@ -1137,101 +1137,188 @@ fn inspect_compact_equal_size_images_writes_artifact() {
 }
 
 #[test]
-fn inspect_search_palette_footer_writes_artifact() {
-    let mut scenario = InspectScenario::new("search-palette-footer");
-    scenario.event(
-        "seed",
-        serde_json::json!({
-            "seed": "empty-search-palette-plus-results-footer",
-        }),
-    );
+fn inspect_search_composer_writes_artifact() {
+    use crate::search::palette::{ImageSearchPivot, SearchAssetPreviewEntry, SearchOverlayStatus};
 
-    let root = TempRoot::new("snappyref-inspect-search-palette-footer");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let result_specs = [
-        ("first-result", [228, 171, 72, 255], 180_u32, 120_u32),
-        ("second-result", [155, 108, 218, 255], 140_u32, 140_u32),
+    let mut scenario = InspectScenario::new("search-composer");
+    let root = TempRoot::new("snappyref-inspect-search-composer");
+    let colors: [[u8; 4]; 10] = [
+        [228, 171, 72, 255],
+        [155, 108, 218, 255],
+        [72, 140, 196, 255],
+        [210, 96, 84, 255],
+        [96, 170, 120, 255],
+        [236, 206, 160, 255],
+        [60, 64, 92, 255],
+        [196, 120, 150, 255],
+        [140, 140, 136, 255],
+        [44, 110, 128, 255],
     ];
-    let mut result_placements = Vec::new();
-    for (index, (name, color, width, height)) in result_specs.into_iter().enumerate() {
-        let path = library
-            .store_rgba_image(name, &solid_rgba(color, width, height), width, height)
-            .unwrap();
-        let placement = library
-            .fixture_placement(
-                library.load_user_session().unwrap().active_board_id,
-                crate::data::Placement::loaded(
-                    crate::data::PlacementState::new(
-                        library.allocate_document_id(),
-                        egui::pos2(index as f32 * 32.0, 0.0),
-                        1.0,
-                        0.0,
-                        0,
-                        false,
-                    ),
-                    library
-                        .register_original(
-                            &path,
-                            "image/png",
-                            width,
-                            height,
-                            width as u64 * height as u64 * 4,
-                            None,
-                        )
-                        .unwrap(),
-                ),
+    let entries = colors
+        .iter()
+        .enumerate()
+        .map(|(index, &color)| {
+            let (width, height) = if index % 2 == 0 {
+                (180, 120)
+            } else {
+                (120, 160)
+            };
+            let path = root.join(format!("result-{index}.png"));
+            image::save_buffer(
+                &path,
+                &solid_rgba(color, width, height),
+                width,
+                height,
+                image::ColorType::Rgba8,
             )
             .unwrap();
-        library.fixture_board_document(library.load_user_session().unwrap().active_board_id, crate::canvas::CanvasDocumentChanges {archived_placement_ids: [placement.state.id].to_vec(), stack_order: Some(library.load_board_document(library.load_user_session().unwrap().active_board_id).unwrap().stack_order.into_iter().filter(|item| !matches!(item, crate::data::CanvasStackItem::Placement(id) if [placement.state.id].contains(id))).collect()), ..Default::default()}).unwrap();
-        result_placements.push(placement);
-    }
+            SearchResultAssetEntry {
+                asset_id: 9000 + index as i64,
+                asset_preview_path: Some(path),
+                asset_width: width,
+                asset_height: height,
+            }
+        })
+        .collect::<Vec<_>>();
+    scenario.event(
+        "seed",
+        serde_json::json!({"seed": "ten-solid-results-four-recents", "count": entries.len()}),
+    );
 
-    let mut app = test_app(Some(library.clone()));
+    let library = Library::initialize(root.join("library")).unwrap();
+    let mut app = test_app(Some(library));
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+    app.search.set_recent_searches(
+        [
+            "warm interior light",
+            "brutalist stairwell",
+            "fog over hills",
+            "red chair",
+        ]
+        .map(String::from)
+        .to_vec(),
+    );
     app.search.overlay.open = true;
-    app.search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
+    app.search.overlay.status = SearchOverlayStatus::Ready;
+    app.search.overlay.active_recent_search_index = 1;
     let mut harness = app_full_harness(app);
 
-    let empty_stats = scenario.capture_screen("screen-000-empty-search-palette", &mut harness);
-    scenario.fact(
-        "search.palette.footer.empty",
-        serde_json::json!({
-            "status": "Ready",
-            "result_count": harness.state().search.overlay.results.len(),
-        }),
-    );
+    let settle = |harness: &mut Harness<'static, SnappyRefApp>| {
+        for _ in 0..4 {
+            harness.step();
+        }
+    };
+    let wait_for_previews = |harness: &mut Harness<'static, SnappyRefApp>| -> bool {
+        for _ in 0..200 {
+            harness.step();
+            let overlay = &harness.state().search.overlay;
+            let pending = overlay
+                .results
+                .iter()
+                .map(|entry| entry.asset_id)
+                .chain(overlay.image_pivot.as_ref().map(|pivot| pivot.asset_id))
+                .any(|id| {
+                    !matches!(
+                        overlay.asset_preview_cache.get(&id),
+                        Some(SearchAssetPreviewEntry::Ready(_))
+                    )
+                });
+            if !pending {
+                harness.step();
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    };
+    let mut all_opaque = true;
+
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-000-recents", &mut harness)
+        .transparent_pixels
+        == 0;
+
+    let search = &mut harness.state_mut().search;
+    search.overlay.query = "warm light over hills".into();
+    search.overlay.results = entries.clone();
+    search.overlay.has_more_results = true;
+    search.overlay.result_selection.replace(1);
+    search.overlay.result_selection.toggle(2);
+    let previews_ready = wait_for_previews(&mut harness);
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-001-results-selected", &mut harness)
+        .transparent_pixels
+        == 0;
+
+    let search = &mut harness.state_mut().search;
+    search.overlay.query = "purple giraffe on a bicycle".into();
+    search.overlay.results.clear();
+    search.overlay.result_selection.clear();
+    search.overlay.has_more_results = false;
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-002-no-results", &mut harness)
+        .transparent_pixels
+        == 0;
+
+    let search = &mut harness.state_mut().search;
+    search.overlay.query.clear();
+    search.overlay.image_pivot = Some(ImageSearchPivot {
+        asset_id: entries[0].asset_id,
+        asset_preview_path: entries[0].asset_preview_path.clone(),
+    });
+    search.overlay.results = entries[1..].to_vec();
+    search.overlay.result_selection.replace(0);
+    let previews_ready = previews_ready && wait_for_previews(&mut harness);
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-003-similar", &mut harness)
+        .transparent_pixels
+        == 0;
+
+    let search = &mut harness.state_mut().search;
+    search.overlay.image_pivot = None;
+    search.overlay.results.clear();
+    search.overlay.result_selection.clear();
+    search.set_local_model_store_status_for_test(LocalModelStoreStatus::Missing);
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-004-install", &mut harness)
+        .transparent_pixels
+        == 0;
+    harness.key_press(egui::Key::Enter);
+    settle(&mut harness);
     scenario.assertion(
-        "empty palette frame is opaque",
-        empty_stats.transparent_pixels == 0,
+        "Enter does not start the install",
+        harness.state().search.local_model_store_status() == LocalModelStoreStatus::Missing,
     );
 
-    let results = result_placements
-        .iter()
-        .map(inspect_search_result_entry)
-        .collect::<Vec<_>>();
-    harness.state_mut().search.overlay.results = results;
-    harness.state_mut().search.overlay.has_more_results = true;
     harness
         .state_mut()
         .search
-        .overlay
-        .result_selection
-        .replace(0);
-    harness.step();
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Downloading { percent: 42 });
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-005-downloading", &mut harness)
+        .transparent_pixels
+        == 0;
 
-    let results_stats = scenario.capture_screen("screen-001-results-search-palette", &mut harness);
-    scenario.fact(
-        "search.palette.footer.results",
-        serde_json::json!({
-            "has_more_results": harness.state().search.overlay.has_more_results,
-            "result_count": harness.state().search.overlay.results.len(),
-            "selection_count": harness.state().search.overlay.result_selection.selected().len(),
-        }),
-    );
-    scenario.assertion(
-        "results palette frame is opaque",
-        results_stats.transparent_pixels == 0,
-    );
+    harness
+        .state_mut()
+        .search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Failed(
+            "network: timeout".to_owned(),
+        ));
+    settle(&mut harness);
+    all_opaque &= scenario
+        .capture_screen("screen-006-install-error", &mut harness)
+        .transparent_pixels
+        == 0;
 
+    scenario.assertion("every composer frame is opaque", all_opaque);
+    scenario.assertion("result previews decoded before capture", previews_ready);
     let report = scenario.finish();
     assert!(
         report.passed,

@@ -381,7 +381,7 @@ fn card_header<R>(
         let (rule, _) = ui.allocate_exact_size(egui::vec2(3.0, 34.0), Sense::hover());
         ui.painter().rect_filled(rule, 1.5, theme::ACCENT);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let r = card::action(ui, action, false, action_enabled);
+            let r = card::action(ui, action, action_enabled);
             let title_width = ui.available_width();
             let subtitle_height =
                 ui.fonts_mut(|f| f.row_height(&FontId::proportional(theme::TYPE_DETAIL)));

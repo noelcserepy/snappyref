@@ -7,7 +7,6 @@ use crate::search::semantic::{LocalModelStoreStatus, SemanticSearchInstallProgre
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SemanticSearchInstallSnapshot {
     pub(crate) model_store_status: LocalModelStoreStatus,
-    pub(crate) install_action_focus_requested: bool,
     pub(crate) status_message: String,
 }
 
@@ -104,17 +103,14 @@ fn snapshot_for_event(event: SemanticSearchInstallProgress) -> SemanticSearchIns
         SemanticSearchInstallProgress::Progress { percent } => installing_snapshot(percent),
         SemanticSearchInstallProgress::Installed => SemanticSearchInstallSnapshot {
             model_store_status: LocalModelStoreStatus::Installed,
-            install_action_focus_requested: false,
             status_message: "Semantic Search installed".to_owned(),
         },
         SemanticSearchInstallProgress::Failed { error } => SemanticSearchInstallSnapshot {
             model_store_status: LocalModelStoreStatus::Failed(error.clone()),
-            install_action_focus_requested: true,
             status_message: format!("Semantic Search install failed: {error}"),
         },
         SemanticSearchInstallProgress::Canceled => SemanticSearchInstallSnapshot {
             model_store_status: LocalModelStoreStatus::Missing,
-            install_action_focus_requested: true,
             status_message: "Semantic Search install canceled".to_owned(),
         },
     }
@@ -123,7 +119,6 @@ fn snapshot_for_event(event: SemanticSearchInstallProgress) -> SemanticSearchIns
 fn installing_snapshot(percent: u8) -> SemanticSearchInstallSnapshot {
     SemanticSearchInstallSnapshot {
         model_store_status: LocalModelStoreStatus::Downloading { percent },
-        install_action_focus_requested: false,
         status_message: "Installing Semantic Search".to_owned(),
     }
 }

@@ -367,10 +367,10 @@ impl SearchPanel {
 
     /// Returns true when the action was clicked.
     fn show(&self, ui: &mut egui::Ui) -> bool {
-        card::status(
+        card::status_panel(
             ui,
             INNER_WIDTH,
-            &card::Status {
+            &card::StatusPanel {
                 title: "Semantic Search",
                 action: self.label,
                 primary: self.primary,

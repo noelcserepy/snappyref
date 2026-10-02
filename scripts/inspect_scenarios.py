@@ -31,7 +31,7 @@ SCENARIOS = {
     'blue-image-search-drag': ('inspect_blue_image_search_drag_writes_artifact', 'blue-image-search-drag', True, False),
     'delete-board-modal-flash': ('inspect_delete_board_modal_flash_writes_artifact', 'delete-board-modal-flash', False, False),
     'board-lifecycle-undo-redo': ('inspect_board_lifecycle_undo_redo_writes_artifact', 'board-lifecycle-undo-redo', True, False),
-    'search-palette-footer': ('inspect_search_palette_footer_writes_artifact', 'search-palette-footer', False, False),
+    'search-composer': ('inspect_search_composer_writes_artifact', 'search-composer', False, False),
     'placement-click-hold-flash': ('inspect_placement_click_hold_flash_writes_artifact', 'placement-click-hold-flash', False, False),
     'delete-undo-redo-placement': ('inspect_delete_undo_redo_placement_writes_artifact', 'delete-undo-redo-placement', True, False),
     'crop-undo-redo-placement': ('inspect_crop_undo_redo_placement_writes_artifact', 'crop-undo-redo-placement', True, False),

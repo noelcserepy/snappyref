@@ -170,7 +170,6 @@ impl SearchController {
                 self.service = None;
                 self.local_model_store_status = Some(LocalModelStoreStatus::Missing);
                 self.overlay.status = SearchOverlayStatus::Ready;
-                self.overlay.install_action_focus_requested = true;
                 self.reset_embedding_backfill();
                 *status = "Semantic Search removed".to_owned();
             }
@@ -279,7 +278,6 @@ impl SearchController {
                 self.service = None;
                 if self.overlay.open {
                     self.overlay.focus_requested = false;
-                    self.overlay.install_action_focus_requested = true;
                     self.overlay.results.clear();
                     self.overlay.result_selection.clear();
                     self.overlay.query.clear();
@@ -329,7 +327,6 @@ impl SearchController {
     ) {
         self.overlay.status = model_store_overlay_status(&snapshot.model_store_status);
         self.local_model_store_status = Some(snapshot.model_store_status);
-        self.overlay.install_action_focus_requested = snapshot.install_action_focus_requested;
         *status = snapshot.status_message;
     }
 
@@ -777,7 +774,6 @@ impl SearchController {
         self.overlay.suppress_next_outside_click = true;
         if self.install_surface_visible() {
             self.overlay.focus_requested = false;
-            self.overlay.install_action_focus_requested = true;
             if matches!(
                 self.local_model_store_status,
                 Some(LocalModelStoreStatus::Missing)
@@ -1012,7 +1008,6 @@ mod tests {
         search.remove_semantic_search_assets_with(&mut status, || Ok(()));
         assert!(search.local_model_assets_missing());
         assert!(matches!(search.overlay.status, SearchOverlayStatus::Ready));
-        assert!(search.overlay.install_action_focus_requested);
         assert!(!search.embedding_backfill.exhausted);
         assert_eq!(status, "Semantic Search removed");
     }
@@ -1146,7 +1141,6 @@ mod tests {
 
         assert!(search.overlay.open);
         assert!(!search.overlay.focus_requested);
-        assert!(search.overlay.install_action_focus_requested);
     }
 
     #[test]
@@ -1244,7 +1238,6 @@ mod tests {
             Some(LocalModelStoreStatus::Missing)
         );
         assert!(!search.semantic_install.is_running());
-        assert!(search.overlay.install_action_focus_requested);
         assert_eq!(status, "Semantic Search install canceled");
     }
 

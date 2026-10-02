@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use crate::search::semantic::SearchResultAssetEntry;
+use crate::search::semantic::{LocalModelStoreStatus, SearchResultAssetEntry};
 use crate::ui::shortcut::{self, Key};
 
 // Search palette chrome is an overlay workflow, not a second sidebar.
@@ -25,10 +25,10 @@ pub(crate) const SEARCH_RESULT_PAGE_SIZE: usize = 5;
 
 const SEARCH_RESULT_TILE_PREVIEW_HEIGHT: f32 = 144.0;
 const SEARCH_RESULT_LIBRARY_PREVIEW_MAX_SIDE: u32 = 512;
-/// The input row's search icon cell, and the height of the chrome rows.
+/// The input row's search icon cell and row height.
 const CHROME_CELL_SIZE: egui::Vec2 = egui::vec2(28.0, 28.0);
 const PALETTE_CHROME_Y_MARGIN: i8 = crate::ui::theme::SPACE_3 as i8;
-const PALETTE_FOOTER_STATUS_WIDTH: f32 = 96.0;
+const PALETTE_FOOTER_HEIGHT: f32 = 20.0;
 
 pub(crate) struct SearchOverlayState {
     pub open: bool,
@@ -48,7 +48,6 @@ pub(crate) struct SearchOverlayState {
     pub focus_requested: bool,
     pub suppress_next_outside_click: bool,
     pub image_pivot: Option<ImageSearchPivot>,
-    pub install_action_focus_requested: bool,
 }
 
 impl Default for SearchOverlayState {
@@ -71,7 +70,6 @@ impl Default for SearchOverlayState {
             focus_requested: false,
             suppress_next_outside_click: false,
             image_pivot: None,
-            install_action_focus_requested: false,
         }
     }
 }
@@ -542,7 +540,12 @@ pub(crate) fn paint_palette_empty_state(
 }
 
 pub(crate) fn paint_palette_no_results_state(ui: &mut egui::Ui, status: &SearchOverlayStatus) {
-    let text = palette_status_text(status, "No results");
+    // While a search runs the footer status speaks; the body stays blank so
+    // "No results" never shows ahead of the answer.
+    let text = match status {
+        SearchOverlayStatus::Loading(_) | SearchOverlayStatus::Indexing => "",
+        _ => "No results",
+    };
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: crate::ui::theme::SPACE_4 as i8,
@@ -555,75 +558,133 @@ pub(crate) fn paint_palette_no_results_state(ui: &mut egui::Ui, status: &SearchO
                 egui::vec2(ui.available_width(), 16.0),
                 egui::Label::new(
                     egui::RichText::new(text)
-                        .text_style(egui::TextStyle::Small)
-                        .color(crate::ui::theme::TEXT_SUBTLE)
-                        .size(11.0),
-                )
-                .truncate(),
+                        .size(crate::ui::theme::TYPE_DETAIL)
+                        .color(crate::ui::theme::TEXT_SUBTLE),
+                ),
             );
         });
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InstallAction {
+    Install,
+    Cancel,
+}
+
+/// The palette's install card for a missing, downloading, or failed model.
+/// Pointer only: Esc closes the palette as everywhere else, and a running
+/// download keeps going in the background.
 pub(crate) fn paint_palette_install_state(
     ui: &mut egui::Ui,
-    status: &SearchOverlayStatus,
-    focus_requested: &mut bool,
-    installing: bool,
-) -> egui::Response {
-    let button_id = egui::Id::new("semantic_search_install_action");
-    let mut response = None;
+    model: &LocalModelStoreStatus,
+) -> Option<InstallAction> {
+    use crate::ui::{card, theme};
+
+    let (title, detail, detail_color) = match model {
+        LocalModelStoreStatus::Downloading { .. } => (
+            "Installing Semantic Search",
+            "Keeps downloading if you close search.".to_owned(),
+            theme::TEXT_MUTED,
+        ),
+        LocalModelStoreStatus::Failed(error) => {
+            ("Install failed", error.clone(), theme::DESTRUCTIVE)
+        }
+        _ => {
+            let megabytes = crate::search::semantic::default_semantic_search_asset_descriptor()
+                .size
+                / 1_000_000;
+            (
+                "Install Semantic Search",
+                format!("Find references by describing them. One-time {megabytes} MB download."),
+                theme::TEXT_MUTED,
+            )
+        }
+    };
+    let controls_width = match model {
+        LocalModelStoreStatus::Downloading { .. } => 240.0,
+        _ => 96.0,
+    };
+
+    let mut action = None;
     egui::Frame::new()
-        .inner_margin(egui::Margin {
-            left: crate::ui::theme::SPACE_4 as i8,
-            right: crate::ui::theme::SPACE_4 as i8,
-            top: crate::ui::theme::SPACE_4 as i8,
-            bottom: crate::ui::theme::SPACE_4 as i8,
-        })
+        .inner_margin(card::PADDING)
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, crate::ui::theme::SPACE_3);
-            ui.label(
-                egui::RichText::new("Semantic Search requires a local download.")
-                    .text_style(egui::TextStyle::Body)
-                    .color(crate::ui::theme::TEXT),
-            );
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(
-                        "Install the search assets to find references by description.",
-                    )
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::ui::theme::TEXT_MUTED),
+            let width = ui.available_width();
+            ui.set_min_width(width);
+            let text_rect = ui
+                .allocate_ui_with_layout(
+                    egui::vec2(width - controls_width - theme::SPACE_4, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.y = theme::SPACE_1;
+                        ui.label(
+                            egui::RichText::new(title)
+                                .size(theme::TYPE_TITLE)
+                                .color(theme::TEXT),
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(detail)
+                                    .size(theme::TYPE_DETAIL)
+                                    .color(detail_color),
+                            )
+                            .truncate(),
+                        );
+                    },
                 )
-                .wrap(),
+                .response
+                .rect;
+            let right = text_rect.left() + width;
+            let controls = egui::Rect::from_min_max(
+                egui::pos2(
+                    right - controls_width,
+                    text_rect.bottom() - theme::CONTROL_HEIGHT,
+                ),
+                egui::pos2(right, text_rect.bottom()),
             );
-            if let SearchOverlayStatus::Error(message) = status {
-                ui.label(
-                    egui::RichText::new(message)
-                        .text_style(egui::TextStyle::Small)
-                        .color(crate::ui::theme::DESTRUCTIVE),
-                );
-            }
-            let label = match status {
-                SearchOverlayStatus::Error(_) => "Retry",
-                SearchOverlayStatus::Loading(message) => message.as_str(),
-                _ => "Install",
-            };
-            let button = egui::Button::new(label)
-                .min_size(egui::vec2(112.0, 30.0))
-                .corner_radius(crate::ui::theme::RADIUS_CONTROL);
-            let resp = ui
-                .push_id(button_id, |ui| ui.add_enabled(!installing, button))
-                .inner;
-            if *focus_requested {
-                resp.request_focus();
-                *focus_requested = !resp.has_focus();
-                if *focus_requested {
-                    ui.ctx().request_repaint_after(Duration::from_millis(16));
-                }
-            }
-            response = Some(resp);
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(controls)
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                |ui| match model {
+                    LocalModelStoreStatus::Downloading { percent } => {
+                        ui.spacing_mut().item_spacing.x = theme::SPACE_2;
+                        if card::action(ui, "Cancel", true).clicked() {
+                            action = Some(InstallAction::Cancel);
+                        }
+                        let font = egui::FontId::proportional(theme::TYPE_DETAIL);
+                        let percent_width = ui
+                            .painter()
+                            .layout_no_wrap("100%".to_owned(), font.clone(), theme::TEXT)
+                            .size()
+                            .x;
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(percent_width, theme::CONTROL_HEIGHT),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().text(
+                            rect.right_center(),
+                            egui::Align2::RIGHT_CENTER,
+                            format!("{percent}%"),
+                            font,
+                            theme::TEXT_MUTED,
+                        );
+                        card::progress(ui, ui.available_width(), f32::from(*percent) / 100.0);
+                    }
+                    LocalModelStoreStatus::Failed(_) => {
+                        if card::button(ui, "Retry", controls_width).clicked() {
+                            action = Some(InstallAction::Install);
+                        }
+                    }
+                    _ => {
+                        if card::button(ui, "Install", controls_width).clicked() {
+                            action = Some(InstallAction::Install);
+                        }
+                    }
+                },
+            );
         });
-    response.expect("semantic install action allocated")
+    action
 }
 
 fn paint_palette_empty_group(
@@ -697,73 +758,52 @@ fn paint_palette_empty_group(
     selected_recent_search
 }
 
+/// The status line and the key hints for what the keyboard does right now.
+/// Side insets match the input row, so the last hint ends under the esc chip.
 pub(crate) fn paint_palette_footer(
     ui: &mut egui::Ui,
+    status: &SearchOverlayStatus,
     result_count: usize,
     has_more_results: bool,
-    status: &SearchOverlayStatus,
+    browsing_recent: bool,
 ) {
+    let (color, text) = match status {
+        SearchOverlayStatus::Loading(message) => (crate::ui::theme::ACCENT, message.as_str()),
+        SearchOverlayStatus::Indexing => (crate::ui::theme::ACCENT, "Indexing…"),
+        SearchOverlayStatus::Error(_) => (crate::ui::theme::DESTRUCTIVE, "Search error"),
+        SearchOverlayStatus::Idle | SearchOverlayStatus::Ready => {
+            (crate::ui::theme::GREEN, "Ready")
+        }
+    };
     egui::Frame::new()
-        .fill(egui::Color32::from_black_alpha(38))
         .inner_margin(egui::Margin {
             left: crate::ui::theme::SPACE_4 as i8,
             right: crate::ui::theme::SPACE_4 as i8,
-            top: PALETTE_CHROME_Y_MARGIN,
+            top: 0,
             bottom: PALETTE_CHROME_Y_MARGIN,
         })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.set_min_height(CHROME_CELL_SIZE.y);
+                ui.set_min_height(PALETTE_FOOTER_HEIGHT);
                 ui.spacing_mut().item_spacing.x = shortcut::HINT_GAP;
-                if result_count == 0 {
-                    let idle_text = palette_status_text(status, "Ready");
-                    paint_palette_footer_status(ui, &idle_text);
-                } else if has_more_results {
-                    shortcut::hint(ui, &[Key::Down], "More");
+                let status_line = crate::ui::card::status(ui, color, text);
+                if let SearchOverlayStatus::Error(message) = status {
+                    crate::ui::card::tip(status_line, message);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if result_count == 0 {
-                        shortcut::hint(ui, &[Key::Enter], "Select");
-                        shortcut::hint(ui, &[Key::Up, Key::Down], "Navigate");
-                    } else {
+                    if result_count > 0 {
                         shortcut::hint(ui, &[Key::Command, Key::Enter], "Place all");
                         shortcut::hint(ui, &[Key::Enter], "Place");
+                        if has_more_results {
+                            shortcut::hint(ui, &[Key::Down], "More");
+                        }
+                    } else if browsing_recent {
+                        shortcut::hint(ui, &[Key::Enter], "Search");
+                        shortcut::hint(ui, &[Key::Up, Key::Down], "Navigate");
                     }
                 });
             });
         });
-}
-
-/// A status dot and the search state, on the hint label's type.
-fn paint_palette_footer_status(ui: &mut egui::Ui, label: &str) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(PALETTE_FOOTER_STATUS_WIDTH, CHROME_CELL_SIZE.y),
-        egui::Sense::hover(),
-    );
-    ui.painter().circle_filled(
-        rect.left_center() + egui::vec2(3.0, 0.0),
-        3.0,
-        crate::ui::theme::GREEN,
-    );
-    ui.painter().text(
-        rect.left_center() + egui::vec2(6.0 + crate::ui::theme::SPACE_2, 0.0),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(crate::ui::theme::TYPE_DETAIL),
-        crate::ui::theme::TEXT_MUTED,
-    );
-}
-
-fn palette_status_text(status: &SearchOverlayStatus, idle_text: &'static str) -> String {
-    match status {
-        SearchOverlayStatus::Loading(message) => message.clone(),
-        SearchOverlayStatus::Indexing => "Indexing...".to_owned(),
-        SearchOverlayStatus::Error(message) => {
-            let _has_details = !message.trim().is_empty();
-            "Search error".to_owned()
-        }
-        SearchOverlayStatus::Idle | SearchOverlayStatus::Ready => idle_text.to_owned(),
-    }
 }
 
 #[cfg(test)]
