@@ -1227,16 +1227,22 @@ impl eframe::App for SnappyRefApp {
         self.update_window_state(ui.ctx());
         ui.set_clip_rect(screen_rect);
         ui.expand_to_include_rect(screen_rect);
-        self.handle_history_shortcuts(ui.ctx());
+        // A dialog owns the keyboard: shortcuts must not change what it asks about.
+        let modal_open = self.modal_open();
+        if !modal_open {
+            self.handle_history_shortcuts(ui.ctx());
+        }
         if self.drive_perf_scenario(ui.ctx(), screen_rect) {
             return;
         }
 
-        self.handle_clipboard_copy(ui.ctx());
-        self.handle_clipboard_paste(ui.ctx(), screen_rect);
+        if !modal_open {
+            self.handle_clipboard_copy(ui.ctx());
+            self.handle_clipboard_paste(ui.ctx(), screen_rect);
+        }
         self.handle_hovered_files(ui, screen_rect);
         self.handle_dropped_files(ui, screen_rect);
-        if !self.modal_open() {
+        if !modal_open {
             self.search.handle_shortcut(
                 ui.ctx(),
                 self.library.as_ref(),
