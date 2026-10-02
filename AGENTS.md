@@ -19,8 +19,10 @@ bundle next to `snappyref`.
 ## Build, check, test
 
 Always use `--locked` and the shipping default features.
-Each worktree or parallel agent sets its own `CARGO_TARGET_DIR`. A shared
-target dir serves one worktree's binaries to another and corrupts test results.
+Leave `CARGO_TARGET_DIR` unset so each worktree builds into its own `target/`,
+which goes away with the worktree. Never point it at or clone another
+checkout's target. A shared target dir serves one worktree's binaries to
+another and corrupts test results.
 
 ```sh
 cargo fmt --check
