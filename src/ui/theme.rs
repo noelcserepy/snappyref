@@ -45,7 +45,7 @@ pub const TYPE_CHIP: f32 = 11.0;
 /// Usage:
 /// - `RADIUS_NONE` for structural fills, rules, underlines, and canvas geometry
 /// - `RADIUS_MICRO` for tiny marks, active dots, thumbnails, and swatches under 24px
-/// - `RADIUS_INLINE` for key chips and quiet inline setting controls
+/// - `RADIUS_INLINE` for key chips and dialog buttons
 /// - `RADIUS_COMPACT` for tooltips, toasts, and small grouped containers
 /// - `RADIUS_CONTROL` for card controls, menu rows, buttons, and toolbar targets
 /// - `RADIUS_PANEL` for menus, dialogs, and edge-docked panels: 8px rows plus 4px padding
@@ -101,30 +101,10 @@ pub const DESTRUCTIVE_EDGE: egui::Color32 =
     egui::Color32::from_rgba_premultiplied(119, 35, 22, 150);
 pub const DESTRUCTIVE_FILL: egui::Color32 = egui::Color32::from_rgba_premultiplied(33, 10, 6, 42);
 
-/// Quiet settings and inset-group roles.
-///
-/// Usage:
-/// - `QUIET_INLINE_ACTIVE_FILL` for selected quiet inline controls and compact input fills
-/// - `QUIET_INLINE_HOVER_FILL` for hover-only quiet inline controls
-/// - `QUIET_INLINE_*` metrics for compact read-heavy settings choices
-///
-/// Quiet inline controls belong in settings/read-heavy panels. Canvas
-/// toolbars should stay visually explicit because they are direct
-/// manipulation targets.
-pub const QUIET_INLINE_ACTIVE_FILL: egui::Color32 =
-    egui::Color32::from_rgba_premultiplied(12, 12, 12, 12);
-pub const QUIET_INLINE_HOVER_FILL: egui::Color32 =
-    egui::Color32::from_rgba_premultiplied(7, 7, 7, 7);
-pub const QUIET_INLINE_PAD_X: f32 = 10.0;
-pub const QUIET_INLINE_PAD_Y: f32 = 5.0;
-pub const QUIET_INLINE_MIN_WIDTH: f32 = 32.0;
-pub const QUIET_INLINE_HEIGHT: f32 = 24.0;
-
 /// Editorial caption tracking.
 ///
 /// `CAPTION_TRACKING` is the extra letter spacing (in points) applied to
-/// uppercase editorial captions produced by [`editorial_caption`] and
-/// [`editorial_caption_galley`]. It exists only to compensate uppercase
+/// uppercase editorial captions produced by [`editorial_caption`]. It exists only to compensate uppercase
 /// microcaps set at `Small` size; do not apply it to body copy, buttons,
 /// or mixed-case labels.
 pub const CAPTION_TRACKING: f32 = 1.0;
@@ -136,14 +116,6 @@ pub const CAPTION_TRACKING: f32 = 1.0;
 /// active indicators. Avoid decorative loops and large travel.
 ///
 /// Usage:
-/// - `MOTION_REVEAL_SECONDS` per-item duration of a cascade reveal
-///   (ease-out fade + small rise). Not for hover states or loops.
-/// - `MOTION_REVEAL_STAGGER_SECONDS` offset between consecutive cascade
-///   items. Not for delaying unrelated surfaces against each other.
-/// - `MOTION_REVEAL_MAX_STAGGER_STEPS` caps the stagger so long lists do
-///   not make the last rows wait; items past the cap share one window.
-/// - `MOTION_REVEAL_RISE` vertical entrance offset in points for cascade
-///   items. Not a layout offset; it must decay to exactly zero.
 /// - `MOTION_INDICATOR_SECONDS` slide duration for active-tab/selection
 ///   indicators moving between positions. Not for content movement.
 /// - `MOTION_SETTLE_SECONDS` and `MOTION_SETTLE_DISTANCE` for dialogs,
@@ -152,10 +124,6 @@ pub const CAPTION_TRACKING: f32 = 1.0;
 /// - `MOTION_CONTENT_SECONDS` for fast canvas loading/hover fades.
 /// - `STATUS_MESSAGE_SECONDS` how long a transient status message
 ///   (action result or storage error) stays visible bottom-left.
-pub const MOTION_REVEAL_SECONDS: f32 = 0.16;
-pub const MOTION_REVEAL_STAGGER_SECONDS: f32 = 0.02;
-pub const MOTION_REVEAL_MAX_STAGGER_STEPS: usize = 8;
-pub const MOTION_REVEAL_RISE: f32 = 5.0;
 pub const MOTION_INDICATOR_SECONDS: f32 = 0.14;
 pub const MOTION_SETTLE_SECONDS: f32 = 0.14;
 pub const MOTION_FEEDBACK_SECONDS: f32 = 0.12;
@@ -175,28 +143,6 @@ pub fn editorial_caption(text: &str) -> egui::RichText {
         .text_style(TextStyle::Small)
         .color(TEXT_SUBTLE)
         .extra_letter_spacing(CAPTION_TRACKING)
-}
-
-/// Editorial caption laid out as a galley for painter-driven surfaces.
-/// Same role and constraints as [`editorial_caption`].
-pub fn editorial_caption_galley(
-    ui: &egui::Ui,
-    text: &str,
-    color: egui::Color32,
-) -> std::sync::Arc<egui::Galley> {
-    let font_id = TextStyle::Small.resolve(ui.style());
-    let mut job = egui::text::LayoutJob::default();
-    job.append(
-        &text.to_uppercase(),
-        0.0,
-        egui::TextFormat {
-            font_id,
-            color,
-            extra_letter_spacing: CAPTION_TRACKING,
-            ..Default::default()
-        },
-    );
-    ui.fonts_mut(|fonts| fonts.layout_job(job))
 }
 
 pub fn configure_theme(ctx: &egui::Context) {

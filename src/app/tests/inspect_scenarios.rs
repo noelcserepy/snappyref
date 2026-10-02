@@ -221,7 +221,7 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
     scenario.event(
         "seed",
         serde_json::json!({
-            "seed": "sidebar-open-options-tab",
+            "seed": "sidebar-open-settings-tab",
         }),
     );
 
@@ -230,7 +230,7 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
     let actual_status = crate::search::semantic::default_local_model_store_status();
     let mut app = test_app(Some(library));
     app.sidebar_open = true;
-    app.sidebar_tab = SidebarTab::Options;
+    app.sidebar_tab = SidebarTab::Settings;
     app.settings.semantic_search_first_launch_prompt_seen = true;
     app.search
         .set_local_model_store_status_for_test(actual_status.clone());
@@ -238,18 +238,16 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
 
     scenario.capture_screen("screen-settings-top", &mut harness);
 
+    let search_page = harness.get_by_label("Search").rect();
+    scenario.action("open the Search settings page", search_page.center());
+    inspect_click_at(&harness, search_page.center(), egui::Modifiers::NONE);
+    harness.run();
     let section_rect = harness.get_by_label("Semantic Search").rect();
     scenario.target(
         "snap.sidebar.semantic-search",
         "settings-section",
         section_rect,
     );
-    scenario.action(
-        "scroll semantic search settings into view",
-        section_rect.center(),
-    );
-    harness.get_by_label("Semantic Search").scroll_to_me();
-    harness.run();
 
     let frame_stats = scenario.capture_screen("screen", &mut harness);
     scenario.fact(
@@ -272,10 +270,11 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
     );
     scenario.assertion("screen frame is nonblank", frame_stats.unique_colors > 1);
 
-    let shortcuts_rect = harness.get_by_label("CORE ACTIONS").rect();
-    scenario.action("scroll shortcut groups into view", shortcuts_rect.center());
-    harness.get_by_label("LAYOUT + HISTORY").scroll_to_me();
+    let keys_page = harness.get_by_label("Keys").rect();
+    scenario.action("open the Keys settings page", keys_page.center());
+    inspect_click_at(&harness, keys_page.center(), egui::Modifiers::NONE);
     harness.run();
+    harness.get_by_label("CORE ACTIONS");
     let shortcut_frame = scenario.capture_screen("screen-shortcuts", &mut harness);
     scenario.assertion(
         "shortcut groups render in the full app frame",
@@ -288,6 +287,162 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
     harness.get_by_label("Undo").scroll_to_me();
     harness.run();
     scenario.capture_screen("screen-shortcuts-end", &mut harness);
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+}
+
+#[test]
+fn inspect_sidebar_pages_writes_artifact() {
+    let mut scenario = InspectScenario::new("sidebar-pages");
+    scenario.event(
+        "seed",
+        serde_json::json!({
+            "seed": "five-boards-long-names-update-available-search-downloading",
+            "purpose": "every sidebar page: Boards at rest and hovered, then General, Search, Keys, About",
+        }),
+    );
+
+    let root = TempRoot::new("snappyref-inspect-sidebar-pages");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let source = library
+        .store_rgba_image(
+            "sidebar-swatch",
+            &solid_rgba([224, 168, 72, 255], 40, 40),
+            40,
+            40,
+        )
+        .unwrap();
+    let asset = library
+        .register_original(&source, "image/png", 40, 40, 40 * 40 * 4, None)
+        .unwrap();
+    let add_placements = |board_id: i64, count: usize| {
+        for index in 0..count {
+            library
+                .fixture_placement(
+                    board_id,
+                    Placement::loaded(
+                        PlacementState::new(
+                            library.allocate_document_id(),
+                            egui::pos2(index as f32 * 50.0, 0.0),
+                            1.0,
+                            0.0,
+                            0,
+                            false,
+                        ),
+                        asset.clone(),
+                    ),
+                )
+                .unwrap();
+        }
+    };
+    let first = library.list_boards().unwrap()[0].clone();
+    add_placements(first.id, 3);
+    let active = library
+        .fixture_board("Character turnarounds and expression sheets for the spring pitch")
+        .unwrap();
+    add_placements(active.id, 12);
+    let hovered = library
+        .fixture_board("Architecture references from the Lisbon trip, tiles and facades")
+        .unwrap();
+    add_placements(hovered.id, 7);
+    library.fixture_board("Lighting").unwrap();
+    library.set_active_board(active.id).unwrap();
+
+    let mut app = test_app(Some(library.clone()));
+    app.active_board_id = active.id;
+    app.refresh_board_summaries();
+    app.sidebar_open = true;
+    app.sidebar_tab = SidebarTab::Boards;
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+    app.search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Downloading { percent: 42 });
+    let now_millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let entry = crate::updater::manifest::PlatformEntry {
+        url: "https://example.invalid/snappyref.zip".to_owned(),
+        sha256: "0".repeat(64),
+        size: 1,
+    };
+    app.update_service.set_checked_state_for_test(
+        crate::updater::UpdateState::Available {
+            release: crate::updater::manifest::Manifest {
+                version: "9.9.0".to_owned(),
+                macos: entry.clone(),
+                windows: entry,
+            },
+        },
+        now_millis - 2 * 60 * 60 * 1000,
+    );
+    let mut harness = app_full_harness(app);
+    harness.step();
+    scenario.capture_screen("screen-000-boards", &mut harness);
+    scenario.assertion(
+        "every board has a row and New board follows them",
+        harness.state().board_summaries().len() == 4
+            && harness.query_by_label("New board").is_some(),
+    );
+
+    let row = harness
+        .get_by_label(&format!("Board {}", hovered.name))
+        .rect();
+    scenario.target("sidebar.board-row", "button", row);
+    harness.hover_at(row.center());
+    harness.step();
+    harness.step();
+    scenario.capture_screen("screen-001-boards-hover", &mut harness);
+
+    let settings_tab = harness.get_by_label("Settings").rect();
+    scenario.action("open the Settings tab", settings_tab.center());
+    inspect_click_at(&harness, settings_tab.center(), egui::Modifiers::NONE);
+    // Park the pointer in the empty body so it hides no label.
+    let park = egui::pos2(140.0, 600.0);
+    harness.step();
+    harness.hover_at(park);
+    // The pending session save and update schedule keep repainting.
+    harness.run_steps(6);
+    scenario.capture_screen("screen-002-general", &mut harness);
+    scenario.assertion(
+        "General shows pointer, canvas, and window settings",
+        harness.query_by_label("Always on top").is_some()
+            && harness.query_by_label("Fill new textboxes").is_some(),
+    );
+    scenario.assertion(
+        "switching tabs keeps the tabs in place",
+        harness.get_by_label("Settings").rect() == settings_tab,
+    );
+
+    for (page, action, frame) in [
+        (
+            "Search",
+            "open the Search page",
+            "screen-003-search-downloading",
+        ),
+        ("Keys", "open the Keys page", "screen-004-keys"),
+        (
+            "About",
+            "open the About page",
+            "screen-005-about-update-available",
+        ),
+    ] {
+        let tab = harness.get_by_label(page).rect();
+        scenario.action(action, tab.center());
+        inspect_click_at(&harness, tab.center(), egui::Modifiers::NONE);
+        harness.step();
+        harness.hover_at(park);
+        harness.run_steps(6);
+        scenario.capture_screen(frame, &mut harness);
+    }
+    scenario.assertion(
+        "About offers the available update",
+        harness.query_by_label("Update").is_some(),
+    );
 
     let report = scenario.finish();
     assert!(
@@ -2131,7 +2286,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
     scenario.event(
         "seed",
         serde_json::json!({
-            "seed": "sidebar-open-options-tab-real-semantic-install",
+            "seed": "sidebar-open-settings-tab-real-semantic-install",
         }),
     );
 
@@ -2140,7 +2295,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
     let initial_status = crate::search::semantic::default_local_model_store_status();
     let mut app = test_app(Some(library));
     app.sidebar_open = true;
-    app.sidebar_tab = SidebarTab::Options;
+    app.sidebar_tab = SidebarTab::Settings;
     app.settings.semantic_search_first_launch_prompt_seen = true;
     app.search
         .set_local_model_store_status_for_test(initial_status.clone());
@@ -2169,7 +2324,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
     });
 
     let mut harness = app_full_harness(app);
-    harness.get_by_label("Semantic Search").scroll_to_me();
+    harness.get_by_label("Search").click();
     harness.run();
     scenario.capture_screen("screen-000-before-install", &mut harness);
     scenario.fact(

@@ -24,6 +24,7 @@ SCENARIOS = {
     'search-drag-to-canvas': ('inspect_search_result_drag_to_canvas_writes_artifact', 'search-drag-to-canvas', True, False),
     'semantic-search-install': ('inspect_semantic_search_install_accepts_prompt', 'semantic-search-install', False, False),
     'semantic-search-sidebar-status': ('inspect_semantic_search_sidebar_status_writes_artifact', 'semantic-search-sidebar-status', False, False),
+    'sidebar-pages': ('inspect_sidebar_pages_writes_artifact', 'sidebar-pages', False, False),
     'semantic-search-real-install': ('inspect_semantic_search_real_install_writes_artifact', 'semantic-search-real-install', False, True),
     'sample-image-import': ('inspect_sample_image_import_writes_artifact', 'sample-image-import', True, False),
     'pending-drop-batch-undo': ('inspect_pending_drop_batch_undo_writes_artifact', 'pending-drop-batch-undo', True, False),

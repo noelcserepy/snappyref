@@ -37,8 +37,8 @@ use shortcuts::{
     delete_shortcut_pressed, settle_direction_pressed, shortcut_pressed,
 };
 pub(crate) use shortcuts::{
-    BOARD_SHORTCUTS, CORE_SHORTCUTS, LAYOUT_AND_HISTORY_SHORTCUTS, SupportedShortcut,
-    TOGGLE_SIDEBAR, UNGROUP,
+    BOARD_DIGITS, CORE_SHORTCUTS, LAYOUT_AND_HISTORY_SHORTCUTS, NEW_BOARD, SWITCH_BOARD,
+    SupportedShortcut, TOGGLE_ALWAYS_ON_TOP, TOGGLE_SIDEBAR, UNGROUP,
 };
 
 #[derive(Clone, Debug)]
@@ -1367,7 +1367,8 @@ impl eframe::App for SnappyRefApp {
             self.status = error;
         }
         let board_summaries = self.board_editing.documents.summaries();
-        let about_updates = self.about_updates_view();
+        let about = self.about_view();
+        let semantic_search = self.semantic_search_settings_status();
         let always_on_top_before = self.settings.always_on_top;
         let sidebar_result = show_sidebar(
             ui.ctx(),
@@ -1379,8 +1380,8 @@ impl eframe::App for SnappyRefApp {
             &mut self.canvas,
             board_summaries,
             self.active_board_id,
-            None,
-            about_updates,
+            &about,
+            &semantic_search,
         );
         let board_action = if self.modal_open() {
             None

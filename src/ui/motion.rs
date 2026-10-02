@@ -1,103 +1,22 @@
-//! Choreographed-reveal motion layer.
+//! Chrome motion.
 //!
 //! SnappyRef chrome animates a small set of task-oriented state changes:
 //!
-//! - content cascading in, in reading order (ease-out fade + small rise,
-//!   short per-row stagger), and
-//! - active indicators sliding between positions.
+//! - active indicators sliding between positions,
 //! - fast overlay entrances (opacity plus tiny settle),
 //! - tactile press/acquire feedback, and
 //! - short canvas pulses.
 //!
-//! Everything else stays still. Repaint discipline: cascade reveals track an
-//! explicit start instant and request repaints only while unsettled;
-//! indicator slides go through `Context::animate_value_with_time`, which
-//! stops scheduling repaints once the value reaches its target. When all
-//! reveals have settled and the pointer is idle, nothing here repaints.
+//! Everything else stays still. Indicator slides go through
+//! `Context::animate_value_with_time`, which stops scheduling repaints once
+//! the value reaches its target. When the pointer is idle, nothing here
+//! repaints.
 
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 
 use super::theme;
-
-/// Entrance state for one cascade item. Apply `opacity` to everything the
-/// item paints, and paint the item's content at `true_y + rise` so it enters
-/// slightly low and settles upward into its true position (`rise` decays to
-/// exactly zero). The allocated rect never moves; only painting offsets.
-#[derive(Clone, Copy)]
-pub(crate) struct RevealState {
-    pub opacity: f32,
-    pub rise: f32,
-}
-
-impl RevealState {
-    pub(crate) const SETTLED: RevealState = RevealState {
-        opacity: 1.0,
-        rise: 0.0,
-    };
-}
-
-fn cascade_start_key(list_id: egui::Id) -> egui::Id {
-    list_id.with("cascade_start")
-}
-
-/// Restart the cascade for `list_id` so its items replay their entrance on
-/// the next paint. Call when the surface (re)appears or its content is
-/// replaced; never call every frame.
-pub(crate) fn restart_cascade(ctx: &egui::Context, list_id: egui::Id) {
-    ctx.data_mut(|data| data.insert_temp(cascade_start_key(list_id), Instant::now()));
-}
-
-/// Entrance progress for item `index` of cascade `list_id`. Items fade and
-/// rise in reading order with [`theme::MOTION_REVEAL_STAGGER_SECONDS`]
-/// offsets, capped at [`theme::MOTION_REVEAL_MAX_STAGGER_STEPS`] steps. If
-/// the cascade was never started the item renders settled: content that was
-/// already on screen must not animate.
-pub(crate) fn cascade_reveal(ctx: &egui::Context, list_id: egui::Id, index: usize) -> RevealState {
-    let Some(start) = ctx.data(|data| data.get_temp::<Instant>(cascade_start_key(list_id))) else {
-        return RevealState::SETTLED;
-    };
-    let step = index.min(theme::MOTION_REVEAL_MAX_STAGGER_STEPS);
-    let delay = step as f32 * theme::MOTION_REVEAL_STAGGER_SECONDS;
-    let elapsed = start.elapsed().as_secs_f32();
-    let progress = ((elapsed - delay) / theme::MOTION_REVEAL_SECONDS).clamp(0.0, 1.0);
-    if progress < 1.0 {
-        ctx.request_repaint_after(Duration::from_millis(16));
-    }
-    let eased = theme::motion_easing(progress);
-    RevealState {
-        opacity: eased,
-        rise: (1.0 - eased) * theme::MOTION_REVEAL_RISE,
-    }
-}
-
-/// Cascade reveal that restarts automatically whenever the surface
-/// reappears after not being painted (sidebar opened, tab switched back,
-/// menu/toolbar/dialog shown). Safe to call once per item per frame.
-pub(crate) fn cascade_reveal_on_appear(
-    ctx: &egui::Context,
-    list_id: egui::Id,
-    index: usize,
-) -> RevealState {
-    #[cfg(test)]
-    {
-        let _ = (ctx, list_id, index);
-        RevealState::SETTLED
-    }
-
-    #[cfg(not(test))]
-    {
-        let pass_key = list_id.with("cascade_last_pass");
-        let pass = ctx.cumulative_pass_nr();
-        let last_painted = ctx.data(|data| data.get_temp::<u64>(pass_key));
-        if last_painted.is_none_or(|last| pass.saturating_sub(last) > 2) {
-            restart_cascade(ctx, list_id);
-        }
-        ctx.data_mut(|data| data.insert_temp(pass_key, pass));
-        cascade_reveal(ctx, list_id, index)
-    }
-}
 
 /// Animated position for an active indicator sliding between targets.
 /// The first call for an id returns `target` immediately (no entrance
@@ -219,36 +138,6 @@ pub(crate) fn pulse_decay(ctx: &egui::Context, started_at: Option<Instant>) -> O
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cascade_without_start_renders_settled() {
-        let ctx = egui::Context::default();
-        let state = cascade_reveal(&ctx, egui::Id::new("never-started"), 0);
-        assert_eq!(state.opacity, 1.0);
-        assert_eq!(state.rise, 0.0);
-    }
-
-    #[test]
-    fn restarted_cascade_begins_hidden_and_staggers_later_rows() {
-        let ctx = egui::Context::default();
-        let list = egui::Id::new("list");
-        restart_cascade(&ctx, list);
-        let first = cascade_reveal(&ctx, list, 0);
-        let later = cascade_reveal(&ctx, list, 4);
-        assert!(first.opacity < 1.0);
-        assert!(later.opacity <= first.opacity);
-        assert!(later.rise >= first.rise);
-    }
-
-    #[test]
-    fn stagger_steps_are_capped_for_long_lists() {
-        let ctx = egui::Context::default();
-        let list = egui::Id::new("long-list");
-        restart_cascade(&ctx, list);
-        let capped = cascade_reveal(&ctx, list, theme::MOTION_REVEAL_MAX_STAGGER_STEPS);
-        let beyond = cascade_reveal(&ctx, list, theme::MOTION_REVEAL_MAX_STAGGER_STEPS + 40);
-        assert_eq!(capped.opacity, beyond.opacity);
-    }
 
     #[test]
     fn pressed_rect_keeps_center_and_only_paints_smaller() {

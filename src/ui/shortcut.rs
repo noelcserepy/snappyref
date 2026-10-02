@@ -3,7 +3,7 @@
 //! A shortcut is a list of [`Key`]s that names roles, not glyphs:
 //! [`Key::Command`] reads ⌘ on macOS and Ctrl elsewhere, and each platform
 //! orders its modifiers its own way. Every on-screen shortcut goes through
-//! [`paint`], [`show`], or [`hint`]; tooltips spell it with [`text`].
+//! [`paint`], [`show`], [`hint`], or [`cap`]; tooltips spell it with [`text`].
 
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Response, Sense, Stroke, vec2};
 
@@ -22,7 +22,8 @@ pub(crate) enum Key {
     Down,
     /// A key named by its cap: a letter, digit, punctuation mark, or word.
     Named(&'static str),
-    /// A pointer gesture held with the keys. It follows a bare "+", unchipped.
+    /// A pointer gesture held with the keys, or a family of keys such as
+    /// "digit". It follows a bare "+", unchipped.
     Gesture(&'static str),
 }
 
@@ -154,20 +155,37 @@ pub(crate) fn paint(
             );
             continue;
         }
-        painter.rect_filled(chip, theme::RADIUS_INLINE, theme::SURFACE_RAISED);
-        if key.drawn() {
-            paint_glyph(painter, chip.center(), key, ink);
-        } else {
-            painter.text(
-                chip.center(),
-                Align2::CENTER_CENTER,
-                key.label(),
-                key_font(key),
-                ink,
-            );
-        }
+        paint_chip(painter, chip, key, theme::SURFACE_RAISED, ink);
     }
     rect
+}
+
+/// One key alone, centered at `center`: the key a row answers to. A lit cap
+/// fills gold, marking the row the user is on.
+pub(crate) fn cap(painter: &egui::Painter, center: Pos2, key: Key, lit: bool) -> Rect {
+    let chip = Rect::from_center_size(center, vec2(key_width(painter, key), HEIGHT));
+    let (fill, ink) = if lit {
+        (theme::ACCENT, theme::BACKGROUND)
+    } else {
+        (theme::SURFACE_RAISED, theme::TEXT_MUTED)
+    };
+    paint_chip(painter, chip, key, fill, ink);
+    chip
+}
+
+fn paint_chip(painter: &egui::Painter, chip: Rect, key: Key, fill: Color32, ink: Color32) {
+    painter.rect_filled(chip, theme::RADIUS_INLINE, fill);
+    if key.drawn() {
+        paint_glyph(painter, chip.center(), key, ink);
+    } else {
+        painter.text(
+            chip.center(),
+            Align2::CENTER_CENTER,
+            key.label(),
+            key_font(key),
+            ink,
+        );
+    }
 }
 
 /// Allocates and paints `keys` in muted ink.

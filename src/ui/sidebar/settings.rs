@@ -1,458 +1,389 @@
-use eframe::egui;
+//! The Settings tab: a page bar over General, Search, Keys, and About.
 
+use eframe::egui::{self, Align2, FontId, RichText};
+
+use super::icons::{self, Icon};
 use super::{
-    SemanticSearchSettingsAction, SemanticSearchSettingsStatus, SemanticSearchSettingsView,
+    INNER_WIDTH, SemanticSearchSettingsAction, SemanticSearchSettingsStatus, SidebarRenderResult,
+    about,
 };
+use crate::app::TOGGLE_ALWAYS_ON_TOP;
+use crate::data::{CanvasBackground, PointerMode};
+use crate::ui::{card, theme};
 
-pub(super) struct SettingsSectionOutcome {
-    pub(super) changed: bool,
-    pub(super) semantic_search_action: Option<SemanticSearchSettingsAction>,
+/// Two controls side by side on the card's inner column.
+const HALF: f32 = (INNER_WIDTH - card::ITEM_SPACING.x) * 0.5;
+/// A bed's cells share its width after the 2px margin and gaps.
+fn bed_cell(count: f32) -> f32 {
+    (INNER_WIDTH - 4.0 - 2.0 * (count - 1.0)) / count
 }
 
-pub(super) fn paint_settings_section(
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+enum Page {
+    #[default]
+    General,
+    Search,
+    Keys,
+    About,
+}
+
+const PAGES: [(Page, &str, Icon); 4] = [
+    (Page::General, "General", Icon::General),
+    (Page::Search, "Search", Icon::Search),
+    (Page::Keys, "Keys", Icon::Keys),
+    (Page::About, "About", Icon::About),
+];
+
+pub(super) fn show(
     ui: &mut egui::Ui,
     settings: &mut crate::data::WorkspaceSettings,
     canvas: &mut crate::canvas::CanvasState,
-    semantic_search: &SemanticSearchSettingsView,
-) -> SettingsSectionOutcome {
-    let mut changed = false;
-
-    changed |= paint_setting_row(
-        ui,
-        "Pointer mode",
-        pointer_mode_detail(settings.pointer_mode),
-        |ui| paint_pointer_mode_control(ui, &mut settings.pointer_mode),
-    );
-    paint_setting_divider(ui);
-    changed |= paint_setting_row(
-        ui,
-        "Always on top",
-        "Keep SnappyRef above normal windows.",
-        |ui| paint_switch(ui, &mut settings.always_on_top).changed(),
-    );
-    paint_setting_divider(ui);
-    changed |= paint_setting_row(ui, "Canvas background", "Quiet board guide.", |ui| {
-        paint_background_mode_control(ui, canvas)
+    about: &about::AboutView,
+    semantic_search: &SemanticSearchSettingsStatus,
+    result: &mut SidebarRenderResult,
+) {
+    let page_id = egui::Id::new("sidebar-settings-page");
+    let mut page: Page = ui.data(|d| d.get_temp(page_id)).unwrap_or_default();
+    let about = about::panel(about);
+    let search = SearchPanel::new(semantic_search);
+    let open = PAGES.iter().position(|(p, ..)| *p == page).unwrap_or(0);
+    let attention = |p: Page| match p {
+        Page::Search => search.primary,
+        Page::About => about.wants_attention(),
+        Page::General | Page::Keys => false,
+    };
+    let names = PAGES.map(|(_, name, _)| name);
+    let clicked = super::column(ui, 48.0, |ui| {
+        card::tabs(
+            ui,
+            egui::vec2(INNER_WIDTH, 48.0),
+            &names,
+            open,
+            |p, i, r, ink| {
+                let (page, name, icon) = PAGES[i];
+                icons::paint(p, r.center() - egui::vec2(0.0, 8.0), icon, ink);
+                p.text(
+                    r.center() + egui::vec2(0.0, 10.0),
+                    Align2::CENTER_CENTER,
+                    name,
+                    FontId::proportional(theme::TYPE_CHIP),
+                    ink,
+                );
+                if i != open && attention(page) {
+                    p.circle_filled(r.right_top() + egui::vec2(-9.0, 9.0), 3.0, theme::ACCENT);
+                }
+            },
+        )
     });
-    paint_setting_divider(ui);
-    changed |= paint_setting_row(
-        ui,
-        "Rotation snap",
-        "Default snap angle for image rotation.",
-        |ui| {
-            paint_number_text_field(
-                ui,
-                "rotation-snap-degrees",
-                &mut settings.rotation_snap_degrees,
-                0.0..=180.0,
-                "deg",
-            )
-        },
-    );
-    paint_setting_divider(ui);
-    changed |= paint_setting_row(
-        ui,
-        "Textbox background",
-        "Default background for new textboxes.",
-        |ui| paint_switch(ui, &mut settings.default_textbox_background).changed(),
-    );
-    paint_setting_divider(ui);
-    changed |= paint_setting_row(
-        ui,
-        "Placement gap",
-        "Spacing used when placing and arranging placements.",
-        |ui| {
-            paint_number_text_field(
-                ui,
-                "placement-gap",
-                &mut settings.placement_gap,
-                0.0..=128.0,
-                "units",
-            )
-        },
-    );
-
-    paint_setting_divider(ui);
-    let semantic_search_action = paint_semantic_search_settings_section(ui, semantic_search);
-
-    SettingsSectionOutcome {
-        changed,
-        semantic_search_action,
+    if let Some(i) = clicked {
+        page = PAGES[i].0;
+        ui.data_mut(|d| d.insert_temp(page_id, page));
     }
-}
-
-fn paint_semantic_search_settings_section(
-    ui: &mut egui::Ui,
-    semantic_search: &SemanticSearchSettingsView,
-) -> Option<SemanticSearchSettingsAction> {
-    let mut action = None;
-    ui.add_space(crate::ui::theme::SPACE_2 + 2.0);
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
-        ui.label(
-            egui::RichText::new("Semantic Search")
-                .text_style(egui::TextStyle::Body)
-                .color(crate::ui::theme::TEXT),
-        );
-        let (status, detail) = semantic_search_status_copy(&semantic_search.status);
-        ui.label(
-            egui::RichText::new(status)
-                .text_style(egui::TextStyle::Small)
-                .color(crate::ui::theme::TEXT_MUTED),
-        );
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(detail)
-                    .text_style(egui::TextStyle::Small)
-                    .color(crate::ui::theme::TEXT_SUBTLE),
-            )
-            .wrap(),
-        );
-        ui.add_space(crate::ui::theme::SPACE_2);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
-            match &semantic_search.status {
-                SemanticSearchSettingsStatus::Installed => {
-                    if ui.add(quiet_settings_button("Remove")).clicked() {
-                        action = Some(SemanticSearchSettingsAction::RequestRemove);
-                    }
-                }
-                SemanticSearchSettingsStatus::Missing => {
-                    if ui.add(quiet_settings_button("Install")).clicked() {
-                        action = Some(SemanticSearchSettingsAction::Install);
-                    }
-                }
-                SemanticSearchSettingsStatus::Downloading { .. } => {
-                    if ui.add(quiet_settings_button("Cancel")).clicked() {
-                        action = Some(SemanticSearchSettingsAction::Cancel);
-                    }
-                }
-                SemanticSearchSettingsStatus::Failed => {
-                    if ui.add(quiet_settings_button("Retry")).clicked() {
-                        action = Some(SemanticSearchSettingsAction::Retry);
-                    }
-                }
+    super::scroll(ui, ("sidebar_settings", page), |ui| match page {
+        Page::General => result.settings_changed |= general(ui, settings, canvas),
+        Page::Search => {
+            ui.add_space(14.0 - card::ITEM_SPACING.y);
+            if search.show(ui) {
+                result.semantic_search_action = Some(search.action);
             }
-        });
-    });
-    ui.add_space(crate::ui::theme::SPACE_2 + 2.0);
-    action
-}
-
-fn semantic_search_status_copy(status: &SemanticSearchSettingsStatus) -> (String, &'static str) {
-    match status {
-        SemanticSearchSettingsStatus::Installed => {
-            ("Installed".to_owned(), "Local search assets are ready.")
         }
-        SemanticSearchSettingsStatus::Missing => (
-            "Not installed".to_owned(),
-            "Install local search assets to find references by description.",
-        ),
-        SemanticSearchSettingsStatus::Downloading { percent } => (
-            format!("Downloading {percent}%"),
-            "Search assets are downloading in the background.",
-        ),
-        SemanticSearchSettingsStatus::Failed => (
-            "Install failed".to_owned(),
-            "Try again. If it still fails, keep SnappyRef in a writable folder and check network access.",
-        ),
-    }
+        Page::Keys => super::keys::show(ui),
+        Page::About => {
+            ui.add_space(14.0 - card::ITEM_SPACING.y);
+            result.update_action_clicked |= about::show(ui, &about);
+        }
+    });
 }
 
-fn quiet_settings_button(label: &str) -> egui::Button<'_> {
-    egui::Button::new(
-        egui::RichText::new(label)
-            .text_style(egui::TextStyle::Small)
-            .color(crate::ui::theme::TEXT),
-    )
-    .fill(crate::ui::theme::QUIET_INLINE_ACTIVE_FILL)
-    .stroke(egui::Stroke::NONE)
-    .corner_radius(crate::ui::theme::RADIUS_INLINE)
-}
-
-fn paint_setting_row(
+/// Returns true when a setting changed.
+fn general(
     ui: &mut egui::Ui,
-    title: &str,
-    detail: &str,
-    add_control: impl FnOnce(&mut egui::Ui) -> bool,
+    settings: &mut crate::data::WorkspaceSettings,
+    canvas: &mut crate::canvas::CanvasState,
 ) -> bool {
     let mut changed = false;
-    ui.add_space(crate::ui::theme::SPACE_2 + 2.0);
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
-        ui.label(
-            egui::RichText::new(title)
-                .text_style(egui::TextStyle::Body)
-                .color(crate::ui::theme::TEXT),
+    card::section(ui, "Pointer");
+    let pointer = [
+        (PointerMode::Mouse, "Mouse", Icon::Mouse),
+        (PointerMode::Trackpad, "Trackpad", Icon::Trackpad),
+    ];
+    if let Some(mode) = choice(ui, &pointer, settings.pointer_mode) {
+        settings.pointer_mode = mode;
+        changed = true;
+    }
+    ui.label(
+        RichText::new(pointer_mode_detail(settings.pointer_mode))
+            .size(theme::TYPE_DETAIL)
+            .color(theme::TEXT_SUBTLE),
+    );
+
+    card::section(ui, "Canvas");
+    let backgrounds = [
+        (CanvasBackground::None, "None", Icon::NoGuide),
+        (CanvasBackground::Grid, "Grid", Icon::Grid),
+        (CanvasBackground::Dots, "Dots", Icon::Dots),
+    ];
+    if let Some(background) = choice(ui, &backgrounds, canvas.background()) {
+        canvas.set_background(background);
+        changed = true;
+    }
+    ui.horizontal(|ui| {
+        changed |= number(
+            ui,
+            Number::ROTATION_SNAP,
+            &mut settings.rotation_snap_degrees,
         );
-        ui.label(
-            egui::RichText::new(detail)
-                .text_style(egui::TextStyle::Small)
-                .color(crate::ui::theme::TEXT_SUBTLE),
-        );
-        ui.add_space(crate::ui::theme::SPACE_2);
-        changed |= add_control(ui);
+        changed |= number(ui, Number::PLACEMENT_GAP, &mut settings.placement_gap);
     });
-    ui.add_space(crate::ui::theme::SPACE_2 + 2.0);
+    let fill = settings.default_textbox_background;
+    if card::switch(
+        ui,
+        "Fill new textboxes",
+        INNER_WIDTH,
+        fill,
+        true,
+        None,
+        |p, c, ink| icons::paint(p, c, Icon::Textbox, ink),
+    )
+    .clicked()
+    {
+        settings.default_textbox_background = !fill;
+        changed = true;
+    }
+
+    card::section(ui, "Window");
+    let on_top = settings.always_on_top;
+    if card::switch(
+        ui,
+        "Always on top",
+        INNER_WIDTH,
+        on_top,
+        true,
+        Some(TOGGLE_ALWAYS_ON_TOP),
+        |p, c, ink| icons::paint(p, c, Icon::OnTop, ink),
+    )
+    .clicked()
+    {
+        settings.always_on_top = !on_top;
+        changed = true;
+    }
     changed
 }
 
-/// Settings rows separate with spacing alone; no rules between rows.
-fn paint_setting_divider(ui: &mut egui::Ui) {
-    ui.add_space(crate::ui::theme::SPACE_1);
-}
-
-fn pointer_mode_detail(mode: crate::data::PointerMode) -> &'static str {
+fn pointer_mode_detail(mode: PointerMode) -> &'static str {
     match mode {
-        crate::data::PointerMode::Mouse => "Scroll wheel zooms. Hold Alt to pan.",
-        crate::data::PointerMode::Trackpad => "Pinch to zoom, two-finger swipe to pan.",
+        PointerMode::Mouse => "Scroll wheel zooms. Hold Alt to pan.",
+        PointerMode::Trackpad => "Pinch to zoom, two-finger swipe to pan.",
     }
 }
 
-fn paint_pointer_mode_control(ui: &mut egui::Ui, mode: &mut crate::data::PointerMode) -> bool {
-    let segments: [(&str, crate::data::PointerMode); 2] = [
-        ("Mouse", crate::data::PointerMode::Mouse),
-        ("Trackpad", crate::data::PointerMode::Trackpad),
-    ];
-    paint_inline_choice_group(ui, "pointer-mode", mode, &segments)
-}
-
-fn paint_background_mode_control(
+/// A bed of icon-and-label cells across the column. Returns the value
+/// clicked this frame.
+fn choice<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
-    canvas: &mut crate::canvas::CanvasState,
-) -> bool {
-    let mut background = canvas.background();
-
-    let segments: [(&str, crate::data::CanvasBackground); 3] = [
-        ("None", crate::data::CanvasBackground::None),
-        ("Grid", crate::data::CanvasBackground::Grid),
-        ("Dots", crate::data::CanvasBackground::Dots),
-    ];
-
-    if paint_inline_choice_group(ui, "canvas-background", &mut background, &segments) {
-        canvas.set_background(background);
-        true
-    } else {
-        false
-    }
-}
-
-/// Quiet segmented choices for read-heavy settings rows.
-///
-/// Only the selected value gets a persistent mark: a sliding accent underline.
-/// Idle choices should read as available text, not boxed pills. Keep this
-/// pattern inside sidebar/settings surfaces; canvas toolbars need more
-/// explicit targets.
-fn paint_inline_choice_group<T: PartialEq + Copy>(
-    ui: &mut egui::Ui,
-    id_source: &'static str,
-    value: &mut T,
-    segments: &[(&str, T)],
-) -> bool {
-    let before = *value;
-    let mut selected_rect = None;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
-        for (label, segment_value) in segments {
-            let selected = *value == *segment_value;
-            let response = paint_inline_choice_response(ui, label, selected);
-            if selected {
-                selected_rect = Some(response.rect);
-            }
-            if response.clicked() {
-                *value = *segment_value;
+    options: &[(T, &str, Icon)],
+    value: T,
+) -> Option<T> {
+    let width = bed_cell(options.len() as f32);
+    let mut clicked = None;
+    card::bed(ui, |ui| {
+        for &(option, name, icon) in options {
+            let selected = option == value;
+            let r = card::cell(
+                ui,
+                name,
+                egui::vec2(width, theme::CONTROL_HEIGHT),
+                selected,
+                true,
+                theme::SURFACE_PRESSED,
+            );
+            let ink = card::ink(selected, true, false);
+            let font = FontId::proportional(theme::TYPE_CONTROL);
+            let galley = ui.painter().layout_no_wrap(name.to_owned(), font, ink);
+            let left = r.rect.center().x - (14.0 + 6.0 + galley.size().x) * 0.5;
+            icons::paint(
+                ui.painter(),
+                egui::pos2(left + 7.0, r.rect.center().y),
+                icon,
+                ink,
+            );
+            ui.painter().galley(
+                egui::pos2(left + 20.0, r.rect.center().y - galley.size().y * 0.5),
+                galley,
+                ink,
+            );
+            if r.clicked() && !selected {
+                clicked = Some(option);
             }
         }
     });
-    if let Some(rect) = selected_rect {
-        let center_x = crate::ui::motion::slide_indicator(
-            ui.ctx(),
-            egui::Id::new(("inline-choice-underline-x", id_source)),
-            rect.center().x,
+    clicked
+}
+
+/// A numeric setting's well: scrub icon, short name, field, unit.
+#[derive(Clone, Copy)]
+struct Number {
+    name: &'static str,
+    short: &'static str,
+    tooltip: &'static str,
+    unit: &'static str,
+    icon: Icon,
+    max: f32,
+}
+
+impl Number {
+    const ROTATION_SNAP: Number = Number {
+        name: "Rotation snap",
+        short: "Snap",
+        tooltip: "rotation snap",
+        unit: "°",
+        icon: Icon::Rotation,
+        max: 180.0,
+    };
+    const PLACEMENT_GAP: Number = Number {
+        name: "Placement gap",
+        short: "Gap",
+        tooltip: "placement gap",
+        unit: "px",
+        icon: Icon::Gap,
+        max: 128.0,
+    };
+}
+
+/// Typed values clamp into range; text that is not a number reverts.
+/// Returns true when the value changed.
+fn number(ui: &mut egui::Ui, spec: Number, value: &mut f32) -> bool {
+    let before = *value;
+    card::well(ui, HALF, |ui| {
+        let (scrubbed, _) = card::scrub(
+            ui,
+            (spec.name, spec.tooltip),
+            *value,
+            0.0,
+            true,
+            |p, r, ink| icons::paint(p, r.center(), spec.icon, ink),
         );
-        let half_width = crate::ui::motion::slide_indicator(
-            ui.ctx(),
-            egui::Id::new(("inline-choice-underline-w", id_source)),
-            (rect.width() - crate::ui::theme::QUIET_INLINE_PAD_X) * 0.5,
+        if let Some(n) = scrubbed {
+            *value = n.min(spec.max);
+        }
+        let muted = |text| {
+            RichText::new(text)
+                .size(theme::TYPE_CONTROL)
+                .color(theme::TEXT_MUTED)
+        };
+        ui.label(muted(spec.short));
+        let unit = ui
+            .painter()
+            .layout_no_wrap(
+                spec.unit.to_owned(),
+                FontId::proportional(theme::TYPE_CONTROL),
+                theme::TEXT_MUTED,
+            )
+            .size()
+            .x;
+        let width = ui.available_width() - unit - ui.spacing().item_spacing.x;
+        let (submitted, _) = card::field(
+            ui,
+            spec.name,
+            &format!("{value:.0}"),
+            width,
+            theme::CONTROL_HEIGHT,
+            true,
+            theme::TYPE_CONTROL,
+            egui::Align::Max,
         );
-        paint_inline_choice_underline(ui, center_x, half_width, rect.bottom());
-    }
+        if let Some(n) = submitted
+            .and_then(|text| text.trim().parse::<f32>().ok())
+            .filter(|n| n.is_finite())
+        {
+            *value = n.clamp(0.0, spec.max);
+        }
+        ui.label(muted(spec.unit));
+    });
     *value != before
 }
 
-fn paint_inline_choice_underline(ui: &egui::Ui, center_x: f32, half_width: f32, bottom: f32) {
-    let y = bottom - 1.0;
-    ui.painter().line_segment(
-        [
-            egui::pos2(center_x - half_width, y),
-            egui::pos2(center_x + half_width, y),
-        ],
-        egui::Stroke::new(2.0_f32, crate::ui::theme::ACCENT),
-    );
+/// The Semantic Search page's panel, derived from the install state.
+struct SearchPanel {
+    line: String,
+    detail: &'static str,
+    label: &'static str,
+    action: SemanticSearchSettingsAction,
+    primary: bool,
+    dot: egui::Color32,
+    progress: Option<f32>,
 }
 
-fn paint_inline_choice_response(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
-    let text_color = if selected {
-        crate::ui::theme::TEXT
-    } else {
-        crate::ui::theme::TEXT_MUTED
-    };
-    let font = ui.style().text_styles[&egui::TextStyle::Button].clone();
-    let galley = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), font, text_color);
-    let pad = egui::vec2(
-        crate::ui::theme::QUIET_INLINE_PAD_X,
-        crate::ui::theme::QUIET_INLINE_PAD_Y,
-    );
-    let size = egui::vec2(
-        (galley.size().x + pad.x * 2.0).max(crate::ui::theme::QUIET_INLINE_MIN_WIDTH),
-        crate::ui::theme::QUIET_INLINE_HEIGHT,
-    );
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
-    });
-    let hover = crate::ui::motion::hover_amount(
-        ui.ctx(),
-        response.id.with("inline-choice-hover"),
-        response.hovered() && !selected,
-    );
-    let press = crate::ui::motion::press_amount(
-        ui.ctx(),
-        response.id.with("inline-choice-press"),
-        response.is_pointer_button_down_on(),
-    );
-    let acquire = crate::ui::motion::acquire_amount(
-        ui.ctx(),
-        response.id.with("inline-choice-acquire"),
-        selected,
-    );
-    let paint_rect = crate::ui::motion::pressed_rect(rect, press);
-    if !selected && (hover > 0.0 || press > 0.0) {
-        ui.painter().rect(
-            paint_rect,
-            egui::CornerRadius::same(crate::ui::theme::RADIUS_INLINE),
-            crate::ui::motion::mix(
-                crate::ui::theme::QUIET_INLINE_HOVER_FILL.gamma_multiply(hover),
-                crate::ui::theme::SURFACE_PRESSED,
-                press * 0.65,
+impl SearchPanel {
+    fn new(status: &SemanticSearchSettingsStatus) -> Self {
+        use SemanticSearchSettingsAction as Action;
+        let panel = |line: &str, detail, label, action, primary, dot| SearchPanel {
+            line: line.to_owned(),
+            detail,
+            label,
+            action,
+            primary,
+            dot,
+            progress: None,
+        };
+        match status {
+            SemanticSearchSettingsStatus::Installed => panel(
+                "Ready",
+                "Find references by describing them.",
+                "Remove",
+                Action::RequestRemove,
+                false,
+                theme::GREEN,
             ),
-            egui::Stroke::NONE,
-            egui::StrokeKind::Inside,
-        );
-    } else if selected && acquire < 1.0 {
-        ui.painter().rect(
-            crate::ui::motion::pressed_rect(rect, 1.0 - acquire),
-            egui::CornerRadius::same(crate::ui::theme::RADIUS_INLINE),
-            crate::ui::theme::QUIET_INLINE_ACTIVE_FILL.gamma_multiply(1.0 - acquire),
-            egui::Stroke::NONE,
-            egui::StrokeKind::Inside,
-        );
-    }
-    ui.painter().galley(
-        rect.center() - galley.size() * 0.5 + egui::vec2(0.0, press * 0.5),
-        galley,
-        text_color,
-    );
-    response
-}
-
-fn paint_number_text_field(
-    ui: &mut egui::Ui,
-    id_source: &'static str,
-    value: &mut f32,
-    range: std::ops::RangeInclusive<f32>,
-    suffix: &'static str,
-) -> bool {
-    let id = ui.make_persistent_id(("settings-number-field", id_source));
-    let has_focus = ui.memory(|memory| memory.has_focus(id));
-    let mut text = ui
-        .data(|data| data.get_temp::<String>(id))
-        .unwrap_or_else(|| format!("{value:.0}"));
-    if !has_focus {
-        text = format!("{value:.0}");
-    }
-
-    let mut changed = false;
-    let frame = egui::Frame::new()
-        .fill(crate::ui::theme::QUIET_INLINE_ACTIVE_FILL)
-        .corner_radius(egui::CornerRadius::same(crate::ui::theme::RADIUS_INLINE))
-        .inner_margin(egui::Margin {
-            left: crate::ui::theme::QUIET_INLINE_PAD_X as i8,
-            right: crate::ui::theme::QUIET_INLINE_PAD_X as i8,
-            top: crate::ui::theme::SPACE_1 as i8,
-            bottom: crate::ui::theme::SPACE_1 as i8,
-        });
-    let response = frame
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_2;
-                let response = ui
-                    .scope(|ui| {
-                        ui.visuals_mut().selection.bg_fill = crate::ui::theme::ACCENT;
-                        ui.visuals_mut().selection.stroke =
-                            egui::Stroke::new(1.0_f32, crate::ui::theme::BACKGROUND);
-                        ui.add(
-                            egui::TextEdit::singleline(&mut text)
-                                .id(id)
-                                .font(egui::TextStyle::Button)
-                                .text_color(crate::ui::theme::TEXT)
-                                .frame(egui::Frame::NONE)
-                                .desired_width(48.0),
-                        )
-                    })
-                    .inner;
-                ui.label(
-                    egui::RichText::new(suffix)
-                        .text_style(egui::TextStyle::Small)
-                        .color(crate::ui::theme::TEXT_MUTED),
-                );
-                response
-            })
-            .inner
-        })
-        .inner;
-
-    if response.changed()
-        && let Ok(parsed) = text.trim().parse::<f32>()
-    {
-        let clamped = parsed.clamp(*range.start(), *range.end());
-        if (*value - clamped).abs() > f32::EPSILON {
-            *value = clamped;
-            changed = true;
+            SemanticSearchSettingsStatus::Missing => panel(
+                "Not installed",
+                "Install local assets to find references by description.",
+                "Install",
+                Action::Install,
+                true,
+                theme::TEXT_SUBTLE,
+            ),
+            SemanticSearchSettingsStatus::Downloading { percent } => SearchPanel {
+                progress: Some(f32::from(*percent) / 100.0),
+                ..panel(
+                    &format!("Downloading {percent}%"),
+                    "Assets download in the background.",
+                    "Cancel",
+                    Action::Cancel,
+                    false,
+                    theme::ACCENT,
+                )
+            },
+            SemanticSearchSettingsStatus::Failed => panel(
+                "Install failed",
+                "Keep SnappyRef in a writable folder and check network access.",
+                "Retry",
+                Action::Retry,
+                true,
+                theme::DESTRUCTIVE,
+            ),
         }
     }
 
-    let commit_invalid = response.lost_focus()
-        && ui.input(|input| input.key_pressed(egui::Key::Enter) || input.pointer.any_click())
-        && text.trim().parse::<f32>().is_err();
-    if commit_invalid {
-        text = format!("{value:.0}");
-    }
-    ui.data_mut(|data| data.insert_temp(id, text));
-
-    changed
-}
-
-fn paint_switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
-    let label = if *value { "On" } else { "Off" };
-    let before = *value;
-    let mut response = paint_inline_choice_response(ui, label, before);
-    if before {
-        let rect = response.rect;
-        paint_inline_choice_underline(
+    /// Returns true when the action was clicked.
+    fn show(&self, ui: &mut egui::Ui) -> bool {
+        card::status(
             ui,
-            rect.center().x,
-            (rect.width() - crate::ui::theme::QUIET_INLINE_PAD_X) * 0.5,
-            rect.bottom(),
-        );
+            INNER_WIDTH,
+            &card::Status {
+                title: "Semantic Search",
+                action: self.label,
+                primary: self.primary,
+                enabled: true,
+                dot: self.dot,
+                line: &self.line,
+                progress: self.progress,
+                detail: self.detail,
+            },
+            |p, center, ink| icons::paint(p, center, Icon::Search, ink),
+        )
+        .clicked()
     }
-    if response.clicked() {
-        *value = !*value;
-        response.mark_changed();
-    }
-    response
 }
 
 #[cfg(test)]
@@ -462,7 +393,8 @@ mod tests {
 
     #[test]
     fn numeric_settings_clamp_bounds_and_restore_invalid_text_on_blur() {
-        for upper in [180.0, 128.0] {
+        for spec in [Number::ROTATION_SNAP, Number::PLACEMENT_GAP] {
+            let upper = spec.max;
             for (text, expected) in [
                 ("0", 0.0),
                 ("999", upper),
@@ -474,13 +406,7 @@ mod tests {
                     .with_size(egui::vec2(400.0, 100.0))
                     .build_ui_state(
                         move |ui, value| {
-                            paint_number_text_field(
-                                ui,
-                                "release-test",
-                                value,
-                                0.0..=upper,
-                                "units",
-                            );
+                            number(ui, spec, value);
                             ui.button("Elsewhere").clicked();
                         },
                         15.0,

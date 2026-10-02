@@ -163,14 +163,14 @@ fn search_using_image_context_action_survives_activation_click_outside_overlay()
 fn settings_semantic_search_install_and_cancel_share_download_state() {
     let mut app = test_app(None);
     app.sidebar_open = true;
-    app.sidebar_tab = SidebarTab::Options;
+    app.sidebar_tab = SidebarTab::Settings;
     app.search
         .set_local_model_store_status_for_test(LocalModelStoreStatus::Missing);
     let mut harness = app_harness(app, |ctx, app| {
         render_sidebar_for_test(ctx, app);
     });
 
-    harness.get_by_label("Semantic Search").scroll_to_me();
+    harness.get_by_label("Search").click();
     harness.run();
     harness.get_by_label("Install").click();
     harness.run();
@@ -181,8 +181,6 @@ fn settings_semantic_search_install_and_cancel_share_download_state() {
     );
     assert_eq!(harness.state().status, "Installing Semantic Search");
 
-    harness.get_by_label("Semantic Search").scroll_to_me();
-    harness.run();
     harness.get_by_label("Cancel").click();
     harness.run();
 
@@ -197,7 +195,7 @@ fn settings_semantic_search_install_and_cancel_share_download_state() {
 fn settings_semantic_search_failed_state_retries_shared_install() {
     let mut app = test_app(None);
     app.sidebar_open = true;
-    app.sidebar_tab = SidebarTab::Options;
+    app.sidebar_tab = SidebarTab::Settings;
     app.search
         .set_local_model_store_status_for_test(LocalModelStoreStatus::Failed(
             "network: timeout".to_owned(),
@@ -206,7 +204,7 @@ fn settings_semantic_search_failed_state_retries_shared_install() {
         render_sidebar_for_test(ctx, app);
     });
 
-    harness.get_by_label("Semantic Search").scroll_to_me();
+    harness.get_by_label("Search").click();
     harness.run();
     harness.get_by_label("Retry").click();
     harness.run();
@@ -224,7 +222,7 @@ fn settings_semantic_search_remove_requires_confirmation() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library));
     app.sidebar_open = true;
-    app.sidebar_tab = SidebarTab::Options;
+    app.sidebar_tab = SidebarTab::Settings;
     app.settings.semantic_search_first_launch_prompt_seen = true;
     app.search
         .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
@@ -233,7 +231,7 @@ fn settings_semantic_search_remove_requires_confirmation() {
         app.show_semantic_search_remove_confirmation(ctx);
     });
 
-    harness.get_by_label("Semantic Search").scroll_to_me();
+    harness.get_by_label("Search").click();
     harness.run();
     harness.get_by_label("Remove").click();
     harness.run();
