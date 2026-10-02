@@ -28,8 +28,8 @@ pub(super) fn context_menu_should_close(
     pointer_pos.is_none_or(|pos| !menu_rect.contains(pos))
 }
 
-/// A menu row: icon, label, and key chips. The hovered row lifts and takes a
-/// gold tick on its left edge; disabled rows fade like the Group card's.
+/// A menu row: icon, label, and key chips. The hovered row lifts; disabled
+/// rows fade like the Group card's.
 pub(super) fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
         vec2(ui.available_width(), ROW_HEIGHT),
@@ -56,9 +56,6 @@ pub(super) fn context_menu_row(ui: &mut egui::Ui, item: &ContextMenuItem) -> egu
             theme::RADIUS_CONTROL,
             theme::SURFACE_ELEVATED.gamma_multiply(hover),
         );
-        let tick =
-            Rect::from_center_size(rect.left_center() + vec2(1.5, 0.0), vec2(3.0, 12.0 * hover));
-        painter.rect_filled(tick, 1.5, theme::ACCENT.gamma_multiply(hover));
     }
 
     let quiet = motion::mix(theme::TEXT_MUTED, theme::TEXT, hover);
