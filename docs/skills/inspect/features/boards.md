@@ -56,6 +56,8 @@ Preconditions:
 ## Gotchas
 
 - Rename by double-click has no scenario.
+- Switching by clicking a board row has no scenario. `sidebar-pages` only
+  hovers a row, and `canvas-navigation-boards` switches with ⌘1.
 - Restoring the active board among several boards after a restart has no
   scenario. The restart scenario has one board.
 - The last board cannot be deleted.

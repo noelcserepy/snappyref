@@ -63,6 +63,8 @@ Preconditions:
 - The dock card sits on the right, even though one assertion says "bottom
   dock".
 - Typing in the picker swallows G, Q, W, E, and ⌘G.
+- No scenario drives ⇧⌘G, or reorders a member with the arrow keys.
+  `group-operations` reorders by drag.
 - No scenario clicks the context-menu "Group", "Ungroup", or "Add to group…"
   rows through to a result.
 - Dock-only scenarios seed the group directly, so they say nothing about

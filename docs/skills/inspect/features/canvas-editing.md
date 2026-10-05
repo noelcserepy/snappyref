@@ -69,6 +69,9 @@ Preconditions:
 
 ## Gotchas
 
+- Marquee selection and scaling an image by its corner handles have no
+  scenario. `canvas_selection_gestures_preserve_content_geometry` in
+  `src/app/tests/inspect_operations.rs` checks the marquee without an artifact.
 - Copy, Paste, Duplicate, Delete, Group, and front/back have no scenario that
   runs them from the context menu. Only "Remove from library…" is clicked.
 - Copy fires only on `Event::Copy`. A kittest ⌘C key press does not copy.

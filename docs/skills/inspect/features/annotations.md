@@ -40,7 +40,8 @@ Preconditions:
   "S", "M", and "L" widths, midpoint drags, and T+click with Unicode text. It
   then drives "S", "M", "L", "XL", "BG", Escape, Enter, ⌘A, Backspace, a
   T-drag, a corner resize, a body move, and a double-click edit. Colors are
-  applied in code, and no swatch is clicked. Only the first assertion is a
+  applied in code, and no swatch is clicked. The "Fill new textboxes" setting
+  is switched on in code before the T-drag. Only the first assertion is a
   live check. The rest are plain asserts. The run checks memory only.
 - **Endpoints.** Run `run-scenario.sh annotation-endpoint-drag`. It selects a
   seeded line and a seeded arrow, drags each endpoint, and presses ⌘Z and ⇧⌘Z
@@ -60,4 +61,5 @@ Preconditions:
   first.
 - Draw keys are ignored while a text field has focus. Typing T in a textbox
   types a T.
+- No scenario flips the "Fill new textboxes" switch in Settings.
 - Drawing needs an open library. Without one, creation does nothing.
