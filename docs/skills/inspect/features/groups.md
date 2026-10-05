@@ -52,8 +52,9 @@ Preconditions:
   library: "create is one undoable durable edit".
 - **Dock controls.** Run `run-scenario.sh group-dock`, `group-dock-narrow`,
   and `member-dock`. These start from a seeded "Faces" group. They drive the
-  numeric fields, the pads, spread, Free dimming, Wrap refusing width hug, the
-  member-card buttons, and "Detach".
+  numeric fields, the align pads, spread "Between", Free dimming, and Wrap
+  refusing width hug. On the member card they click "Fill height", "Absolute",
+  "H hug contents", and "Detach".
 - **Context menu rows.** Run `run-scenario.sh context-menu`. It opens the menu
   on a group selection but clicks no group row.
 
@@ -63,6 +64,8 @@ Preconditions:
 - The dock card sits on the right, even though one assertion says "bottom
   dock".
 - Typing in the picker swallows G, Q, W, E, and ⌘G.
+- No scenario drives picker ↑↓ navigation, a name-strip drag, an edge resize,
+  "Fill width", or spread "Off", "Evenly", or "Around".
 - No scenario drives ⇧⌘G, or reorders a member with the arrow keys.
   `group-operations` reorders by drag.
 - No scenario clicks the context-menu "Group", "Ungroup", or "Add to group…"
