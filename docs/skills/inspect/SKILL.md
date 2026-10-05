@@ -1,7 +1,7 @@
 ---
 name: inspect
 description: |
-  Reproduce, inspect, diagnose, and verify SnappyRef app behavior with deterministic in-process scenarios, full-app screenshots, structured artifacts, and harness-driven clicks/drags/keyboard input. Use for UI behavior, visual state, app interaction, search palette workflows, imports, progress states, and screenshot-backed verification.
+  Reproduce, inspect, diagnose, and verify SnappyRef app behavior with deterministic in-process scenarios, full-app screenshots, structured artifacts, and harness-driven clicks/drags/keyboard input. Use for UI behavior, visual state, app interaction, search palette workflows, imports, progress states, and screenshot-backed verification. features/ maps each user-facing feature to its entry points, scenarios, and coverage gaps.
 user-invocable: true
 argument-hint: "[behavior-or-scenario]"
 ---
@@ -30,6 +30,29 @@ Invariant: use user-like actions for the behavior being tested; seed everything
 else when direct setup makes the scenario clearer and more deterministic.
 
 ## Start Here
+
+Agents verify SnappyRef through these in-process scenarios, not by launching
+the GUI. A scenario builds the full app inside a `cargo test`, drives it with
+`egui_kittest`, and writes the artifact. There is no server to start or keep
+alive. The first run compiles the test binary, which takes a few minutes. Later
+runs take seconds.
+
+[features/README.md](features/README.md) maps each user-facing feature to its
+entry points, scenarios, and coverage gaps. Read the matching feature file
+before verifying a change. If you drive only one entry point of a feature that
+lists several, report the verification as partial.
+
+Check the checkout first, and again whenever a result looks wrong. The check is
+read-only:
+
+```sh
+docs/skills/inspect/scripts/doctor.sh
+```
+
+It exits 1 when `CARGO_TARGET_DIR` points outside this checkout. In that case a
+different worktree's binary would answer for this one, so unset it. It also
+lists test binaries from this checkout that are still running, and prints the
+latest artifact and its status.
 
 List available scenarios:
 
@@ -70,6 +93,21 @@ Use `--list` for the current scenario catalogue. Useful starting examples:
 
 `semantic-search-real-install` uses the real networked installer. Use it only
 when verifying that integration.
+
+## Isolation and cleanup
+
+Each scenario opens its library in a fresh directory under the OS temp dir and
+removes it on drop. Scenarios never read or write the user's library or
+`SNAPPYREF_DATA_ROOT`. Runs from the same checkout queue on cargo's build lock,
+so start them one after another.
+
+Nothing outlives a run except the artifact. If a run hangs, stop the
+`run-scenario.sh` or cargo process you started, using its PID. Never kill by
+process name, because the user may have a dev build of `snappyref` open.
+
+Artifacts stay under `target/snappyref-inspect/<scenario>/run-<nanos>/` in this
+checkout. Removing the worktree deletes them, so copy any artifact you still
+need somewhere else first.
 
 ## Evidence Rules
 
@@ -128,7 +166,7 @@ Prefer semantic actions when possible:
 
 ```rust
 harness.get_by_label("Install").click();
-harness.get_by_label("Semantic Search").scroll_to_me();
+harness.get_by_label("SEMANTIC SEARCH").scroll_to_me(); // captions render uppercase
 harness.key_press(egui::Key::Enter);
 ```
 
