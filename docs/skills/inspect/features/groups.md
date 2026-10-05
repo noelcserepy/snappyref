@@ -54,7 +54,8 @@ Preconditions:
   and `member-dock`. These start from a seeded "Faces" group. They drive the
   numeric fields, the align pads, spread "Between", Free dimming, and Wrap
   refusing width hug. On the member card they click "Fill height", "Absolute",
-  "H hug contents", and "Detach".
+  "H hug contents", and "Detach", after opening the member with ⌘-click.
+  `group-dock-narrow` clicks "Ungroup".
 - **Context menu rows.** Run `run-scenario.sh context-menu`. It opens the menu
   on a group selection but clicks no group row.
 

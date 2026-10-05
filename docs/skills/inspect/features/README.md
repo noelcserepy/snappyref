@@ -39,7 +39,10 @@ with inspect scenarios. Read this index, then follow the matching feature file.
   frames that show the action and the state after it, not only the last frame.
 - For a persistence change, cite an assertion that reads the library back after
   a flush. Each feature file names the scenarios that do this.
-- Report each unscenarioed or native entry point as unverified, and name it. A
+- A step counts as covered only when a `Driving it with inspect` bullet names
+  it as driven. Everything else is unverified, whether or not `Gotchas` calls
+  it out. `Gotchas` lists only the gaps most likely to mislead.
+- Report each uncovered or native entry point as unverified, and name it. A
   different entry point passing does not cover it.
 
 ## Feature entry contract
