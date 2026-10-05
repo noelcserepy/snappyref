@@ -97,11 +97,14 @@ when verifying that integration.
 ## Isolation and cleanup
 
 Each scenario opens its library in a fresh directory under the OS temp dir and
-removes it on drop. Scenarios never read or write the user's library or
-`SNAPPYREF_DATA_ROOT`. Runs from the same checkout queue on cargo's build lock,
-so start them one after another.
+removes it on drop. Scenarios never write the user's library or data root, with
+one exception. `semantic-search-real-install` downloads the model into the
+resolved data root and leaves it there. `semantic-search-sidebar-status` only
+reads model status from that root, so its screenshot depends on the machine. Runs
+from the same checkout queue on cargo's build lock, so start them one after
+another.
 
-Nothing outlives a run except the artifact. If a run hangs, stop the
+Apart from that exception, nothing outlives a run except the artifact. If a run hangs, stop the
 `run-scenario.sh` or cargo process you started, using its PID. Never kill by
 process name, because the user may have a dev build of `snappyref` open.
 

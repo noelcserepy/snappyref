@@ -13,7 +13,9 @@ echo "checkout=$repo_root"
 echo "head=$(git -C "$repo_root" rev-parse --short HEAD)$(git -C "$repo_root" diff --quiet HEAD || echo ' (uncommitted changes)')"
 echo "artifacts=$target_dir/snappyref-inspect"
 
-if [[ "$target_dir" != "$repo_root"/* ]]; then
+resolved_target="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$target_dir")"
+resolved_root="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$repo_root")"
+if [[ "$resolved_target" != "$resolved_root"/* ]]; then
   echo "problem: CARGO_TARGET_DIR points outside this checkout; another worktree's binaries can answer for this one. Unset it."
   status=1
 fi

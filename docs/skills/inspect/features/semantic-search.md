@@ -60,6 +60,11 @@ Preconditions:
 ## Gotchas
 
 - Opening search with ⌘F or "Search using image" has no scenario.
+- No scenario drives result selection with the arrow keys, ↵ or ⌘↵
+  placement, or cancelling a result drag with Esc or a right click.
+- No scenario clicks "Install", "Cancel", or "Retry" on the palette card, or
+  "Cancel", "Retry", or the confirmed "Remove" in Settings. Plain tests in
+  `src/app/tests/semantic_search.rs` cover some of these, without artifacts.
 - Search ranking, indexing, and the real download need the real model. Never
   run `semantic-search-real-install` unless the user asks.
 - Result count does not prove the thumbnails are visible. Only
