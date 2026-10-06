@@ -20,7 +20,6 @@ pub(super) use overlays::{
     paint_crop_marquee, paint_guide_snap_indicators, paint_hover_hairline, paint_marquee,
     paint_provisional_placement_previews, paint_selected_placement_borders, paint_selection_bounds,
 };
-pub(crate) use textbox_editor::textbox_font_size;
 pub(super) use textbox_editor::{
     annotation_style_toolbar_rect, editing_textbox_toolbar_rect, layout_textbox_galley,
     show_annotation_style_toolbar, show_textbox_editor, textbox_layout_cache_key,
@@ -30,6 +29,7 @@ pub(super) use textbox_editor::{
 pub(super) use textbox_editor::{
     textbox_content_rect, textbox_empty_hotspot_rect, textbox_text_interactive_rect_from_galley,
 };
+pub(crate) use textbox_editor::{textbox_font_size, textbox_size_for_text};
 
 #[cfg(test)]
 mod tests {

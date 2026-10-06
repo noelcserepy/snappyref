@@ -33,6 +33,27 @@ pub(crate) fn textbox_font_size(text_size: CanvasTextSize) -> f32 {
     }
 }
 
+/// World size of a textbox that shows `text` without wrapping at `zoom`.
+pub(crate) fn textbox_size_for_text(
+    ctx: &egui::Context,
+    text: &str,
+    text_size: CanvasTextSize,
+    zoom: f32,
+) -> egui::Vec2 {
+    let zoom = zoom.max(MIN_CANVAS_ZOOM);
+    let galley = ctx.fonts_mut(|fonts| {
+        fonts.layout_no_wrap(
+            text.to_owned(),
+            textbox_font_id(text_size, zoom),
+            egui::Color32::WHITE,
+        )
+    });
+    // Padding is screen-space, so zooming out leaves less room for text.
+    // One em of width keeps each line on one row a little below `zoom`.
+    let slack = egui::vec2(textbox_font_size(text_size), 0.0);
+    ((galley.size() + textbox_padding() * 2.0) / zoom + slack).max(MIN_TEXTBOX_WORLD_SIZE)
+}
+
 pub(crate) fn textbox_font_id(text_size: CanvasTextSize, zoom: f32) -> egui::FontId {
     egui::FontId::proportional(textbox_font_size(text_size) * zoom.max(MIN_CANVAS_ZOOM))
 }

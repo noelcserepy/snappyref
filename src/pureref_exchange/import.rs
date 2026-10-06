@@ -18,9 +18,10 @@ use crate::pureref_file::{
 };
 
 pub(crate) struct ImportedPureRefBoard {
-    /// Default viewport; the app frames [`Self::content_bounds`] once it knows the screen.
+    /// Default viewport, and textboxes with no size yet. The app sizes them with
+    /// its fonts and frames them with [`Self::image_bounds`] once it knows the screen.
     pub(crate) document: BoardDocumentSnapshot,
-    pub(crate) content_bounds: Option<Rect>,
+    pub(crate) image_bounds: Option<Rect>,
     /// Mirrored items, imported unmirrored because placements have no flip.
     pub(crate) flipped: usize,
     /// Items whose image was linked but missing, or could not be decoded.
@@ -61,7 +62,7 @@ pub(super) fn import_board(library: &Library, path: &Path) -> Result<ImportedPur
     let item_assets = item_assets(library, &board)?;
 
     let mut placements = Vec::new();
-    let mut content_bounds: Option<Rect> = None;
+    let mut image_bounds: Option<Rect> = None;
     let mut flipped = 0;
     let mut skipped = 0;
     for (item, asset) in board.image_items.iter().zip(item_assets) {
@@ -79,7 +80,7 @@ pub(super) fn import_board(library: &Library, path: &Path) -> Result<ImportedPur
             placements.len() as i32,
             false,
         );
-        include(&mut content_bounds, state.geometry.visual_bounds());
+        include(&mut image_bounds, state.geometry.visual_bounds());
         placements.push(Placement::loaded(state, asset));
     }
     let annotations: Vec<CanvasAnnotation> = board
@@ -87,12 +88,6 @@ pub(super) fn import_board(library: &Library, path: &Path) -> Result<ImportedPur
         .iter()
         .map(|note| note_textbox(library, note))
         .collect();
-    for annotation in &annotations {
-        include(
-            &mut content_bounds,
-            Rect::from_two_pos(annotation.start(), annotation.end()),
-        );
-    }
     // PureRef always draws notes above images.
     let stack_order = placements
         .iter()
@@ -113,7 +108,7 @@ pub(super) fn import_board(library: &Library, path: &Path) -> Result<ImportedPur
             stack_order,
             viewport: Default::default(),
         },
-        content_bounds,
+        image_bounds,
         flipped,
         skipped,
     })
@@ -262,7 +257,8 @@ impl ItemGeometry {
 }
 
 /// A note becomes a textbox centred where PureRef centres it, with the nearest text size.
-/// Rotation is dropped; the box size is estimated because fonts live on the UI thread.
+/// Rotation is dropped. The box starts empty at the note's centre because fonts
+/// live on the UI thread.
 fn note_textbox(library: &Library, note: &PureRefNote) -> CanvasAnnotation {
     let transform = note.transform;
     let note_font = NOTE_FONT_PX * transform.m11.hypot(transform.m12) as f32;
@@ -278,19 +274,12 @@ fn note_textbox(library: &Library, note: &PureRefNote) -> CanvasAnnotation {
         distance(*a).total_cmp(&distance(*b))
     })
     .unwrap_or_default();
-    let font = textbox_font_size(text_size);
-    let columns = note.text.lines().map(|line| line.chars().count()).max();
-    let rows = note.text.lines().count();
-    let size = vec2(
-        (columns.unwrap_or(0) as f32 * 0.65 + 1.0) * font,
-        (rows.max(1) as f32 * 1.4 + 1.0) * font,
-    );
     let (x, y) = transform.map_point(0.0, 0.0);
-    let start = pos2(x as f32, y as f32) - size / 2.0;
+    let center = pos2(x as f32, y as f32);
     library.new_canvas_annotation(
         CanvasAnnotationKind::Textbox,
-        start,
-        start + size,
+        center,
+        center,
         note.text.clone(),
         text_size,
         CanvasStrokeWidth::default(),

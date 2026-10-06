@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
+use crate::data::{BoardDocumentSnapshot, CanvasAnnotationGeometry, CanvasAnnotationKind};
 use crate::pureref_exchange::{ImportedPureRefBoard, PureRefExchangeResult, PureRefExportPlan};
 
 use super::SnappyRefApp;
@@ -64,7 +65,29 @@ impl SnappyRefApp {
     fn open_imported_pureref_board(&mut self, ctx: &egui::Context, imported: ImportedPureRefBoard) {
         let status = imported.status();
         let mut document = imported.document;
-        if let Some(bounds) = imported.content_bounds {
+        // Textboxes sized at zoom 1 decide the framing; then they are re-fit
+        // to the zoom the board opens at, where screen-space padding is larger.
+        let fit_textboxes = |document: &mut BoardDocumentSnapshot, zoom: f32| {
+            let mut bounds = imported.image_bounds;
+            for textbox in &mut document.annotations {
+                let size = crate::canvas::textbox_size_for_text(
+                    ctx,
+                    &textbox.text,
+                    textbox.text_size,
+                    zoom,
+                );
+                let center = egui::Rect::from_two_pos(textbox.start(), textbox.end()).center();
+                let rect = egui::Rect::from_center_size(center, size);
+                textbox.geometry = CanvasAnnotationGeometry::from_kind(
+                    CanvasAnnotationKind::Textbox,
+                    rect.min,
+                    rect.max,
+                );
+                bounds = Some(bounds.map_or(rect, |bounds| bounds.union(rect)));
+            }
+            bounds
+        };
+        if let Some(bounds) = fit_textboxes(&mut document, 1.0) {
             let screen_rect = ctx.viewport_rect();
             let (pan, zoom) = crate::canvas::focus_framing(
                 screen_rect,
@@ -74,6 +97,7 @@ impl SnappyRefApp {
             document.viewport.camera_pan_x = pan.x;
             document.viewport.camera_pan_y = pan.y;
             document.viewport.camera_zoom = zoom;
+            fit_textboxes(&mut document, zoom);
         }
         self.status = match self.board_lifecycle().create_from_document(document) {
             Ok(()) => status,

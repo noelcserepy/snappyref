@@ -22,7 +22,6 @@ pub(crate) use interaction::focus_framing;
 use interaction::{
     handle_input, handle_viewport_navigation_input, step_mouse_wheel_zoom_animation,
 };
-pub(crate) use render::textbox_font_size;
 use render::{
     annotation_style_toolbar_rect, editing_textbox_toolbar_rect, paint_annotation_draft,
     paint_background, paint_canvas_items, paint_crop_marquee, paint_guide_snap_indicators,
@@ -30,6 +29,7 @@ use render::{
     paint_selected_placement_borders, paint_selection_bounds, show_annotation_style_toolbar,
     show_textbox_editor,
 };
+pub(crate) use render::{textbox_font_size, textbox_size_for_text};
 pub(crate) use state::ActiveGesture;
 use state::{CanvasDocumentState, CanvasInteractionState, CanvasRenderState};
 
