@@ -302,7 +302,7 @@ fn inspect_pureref_import_writes_artifact() {
             && asset_ids[0] != asset_ids[3],
     );
     scenario.assertion(
-        "the crop asset holds exactly the cropped pixels",
+        "the crop asset has the crop's size",
         placements.get(2).is_some_and(|placement| {
             let asset = placement.require_loaded_asset();
             (asset.width, asset.height) == (staircase.width / 2, staircase.height / 2)

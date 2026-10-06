@@ -99,6 +99,13 @@ impl PureRefExportPlan {
     pub(crate) fn is_empty(&self) -> bool {
         self.placements.is_empty() && self.notes.is_empty()
     }
+
+    pub(crate) fn empty_status(&self) -> String {
+        format!(
+            "Nothing to export{}",
+            left_out(self.skipped_images, self.skipped_annotations)
+        )
+    }
 }
 
 pub(crate) struct ExportedPureRefBoard {
@@ -117,29 +124,30 @@ impl ExportedPureRefBoard {
             .file_name()
             .map(|name| name.to_string_lossy())
             .unwrap_or_default();
-        let mut status = format!(
-            "Exported {}, {} to {file_name}",
+        format!(
+            "Exported {}, {} to {file_name}{}",
             counted(self.images, "image", "images"),
-            counted(self.notes, "note", "notes")
-        );
-        if self.skipped_images > 0 {
-            status.push_str(&format!(
-                " ({} in unsupported formats left out)",
-                counted(self.skipped_images, "image", "images")
-            ));
-        }
-        if self.skipped_annotations > 0 {
-            status.push_str(&format!(
-                " ({} left out)",
-                counted(
-                    self.skipped_annotations,
-                    "line or arrow",
-                    "lines and arrows"
-                )
-            ));
-        }
-        status
+            counted(self.notes, "note", "notes"),
+            left_out(self.skipped_images, self.skipped_annotations)
+        )
     }
+}
+
+fn left_out(images: usize, annotations: usize) -> String {
+    let mut status = String::new();
+    if images > 0 {
+        status.push_str(&format!(
+            " ({} in unsupported formats left out)",
+            counted(images, "image", "images")
+        ));
+    }
+    if annotations > 0 {
+        status.push_str(&format!(
+            " ({} left out)",
+            counted(annotations, "line or arrow", "lines and arrows")
+        ));
+    }
+    status
 }
 
 pub(super) fn export_board(
@@ -217,14 +225,16 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut temporary = path.as_os_str().to_owned();
     temporary.push(format!(".{}.tmp", std::process::id()));
     let temporary = PathBuf::from(temporary);
-    std::fs::OpenOptions::new()
+    let error = |error: std::io::Error| format!("failed to write {}: {error}", path.display());
+    let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&temporary)
-        .and_then(|mut file| std::io::Write::write_all(&mut file, bytes))
+        .map_err(error)?;
+    std::io::Write::write_all(&mut file, bytes)
         .and_then(|()| std::fs::rename(&temporary, path))
-        .map_err(|error| {
+        .map_err(|io_error| {
             let _ = std::fs::remove_file(&temporary);
-            format!("failed to write {}: {error}", path.display())
+            error(io_error)
         })
 }

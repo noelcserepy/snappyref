@@ -26,7 +26,7 @@ impl SnappyRefApp {
     pub(super) fn export_pureref(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
         let plan = PureRefExportPlan::from_canvas(&self.canvas);
         if plan.is_empty() {
-            self.status = "Nothing to export".to_owned();
+            self.status = plan.empty_status();
             return;
         }
         let board_name = self
