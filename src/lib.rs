@@ -9,6 +9,8 @@ mod library;
 mod local_data_location;
 mod placement;
 mod platform;
+mod pureref_exchange;
+mod pureref_file;
 mod search;
 mod sources;
 #[cfg(test)]

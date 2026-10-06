@@ -29,6 +29,7 @@ pub(super) use textbox_editor::{
 pub(super) use textbox_editor::{
     textbox_content_rect, textbox_empty_hotspot_rect, textbox_text_interactive_rect_from_galley,
 };
+pub(crate) use textbox_editor::{textbox_font_size, textbox_size_for_text};
 
 #[cfg(test)]
 mod tests {

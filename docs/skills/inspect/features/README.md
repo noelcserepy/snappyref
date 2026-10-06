@@ -66,3 +66,5 @@ Windows.
   endpoint drags.
 - [Semantic Search](./semantic-search.md): install, the palette, image search,
   and placing results.
+- [PureRef exchange](./pureref-exchange.md): `.pur` drop import and ⇧⌘E
+  export.

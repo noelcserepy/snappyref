@@ -20,12 +20,15 @@ purpose:
 interface:
   operations:
     create-board:
-      description: Creates an empty named Board.
+      description: Creates a named Board, empty or seeded with an imported document.
 
       input:
         name:
           type: BoardName
           description: The user-visible Board name.
+        seed:
+          type: BoardDocument?
+          description: Imported Placements, textboxes, stack order, and viewport. Absent for an ordinary new Board.
 
       outcomes:
         created:
@@ -36,9 +39,10 @@ interface:
           retry_after: Duration?
 
       behavior:
-        empty-document: created must produce a Board with no Placements, annotations, or Groups.
+        empty-document: created without a seed must produce a Board with no Placements, annotations, or Groups.
+        seeded-document-durable: created with a seed must persist every seeded row with the Board, so a restart or an Undo then Redo restores the same document.
         durable-identity: created must assign a stable BoardId.
-        default-view: created must include a usable default viewport at zoom 0.45 and a default Board background.
+        default-view: created without a seed must include a usable default viewport at zoom 0.45 and a default Board background.
         history-recorded-once: created must add one undoable Board lifecycle history entry.
 
       caller_obligations: {}

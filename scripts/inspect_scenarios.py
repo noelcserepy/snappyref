@@ -17,6 +17,8 @@ SCENARIOS = {
     'annotation-editing': ('inspect_annotation_creation_editing_and_styles_writes_artifact', 'annotation-editing', False),
     'annotation-endpoint-drag': ('inspect_annotation_endpoint_drag_writes_artifact', 'annotation-endpoint-drag', False),
     'readme-board': ('inspect_readme_board_writes_artifact', 'readme-board', False),
+    'pureref-import': ('inspect_pureref_import_writes_artifact', 'pureref-import', False),
+    'pureref-export': ('inspect_pureref_export_writes_artifact', 'pureref-export', False),
     'image-format-gallery': ('inspect_image_format_gallery_writes_artifact', 'image-format-gallery', True),
     'group-picker-rename-create': ('inspect_group_picker_rename_and_create_writes_artifact', 'group-picker-rename-create', False),
     'check-harness': ('inspect_search_result_drag_to_canvas_writes_artifact', 'search-drag-to-canvas', False),

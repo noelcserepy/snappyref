@@ -23,6 +23,7 @@ mod dialogs;
 mod history;
 mod import_intake;
 pub(crate) mod perf_scenario;
+mod pureref_exchange;
 mod sidebar_session;
 
 use perf_scenario::{FramePerfState, PerfLogState, PerfScenarioState};
@@ -224,6 +225,11 @@ pub struct SnappyRefApp {
     /// the About / Updates button to one invocation per minute
     /// independent of wall-clock noise. `None` until the first click.
     last_manual_update_check: Option<Instant>,
+    pureref_exchange: crate::pureref_exchange::PureRefExchange,
+    /// Set by the export shortcut; `ui` opens the save panel because it needs the frame.
+    pureref_export_requested: bool,
+    /// Asks where to save an export. Tests replace the native save panel.
+    pureref_save_path: Box<dyn FnMut(&eframe::Frame, &str) -> Option<std::path::PathBuf>>,
 }
 
 impl SnappyRefApp {
@@ -331,6 +337,9 @@ impl SnappyRefApp {
             user_update_flow_active: false,
             update_smoke: None,
             last_manual_update_check: None,
+            pureref_exchange: Default::default(),
+            pureref_export_requested: false,
+            pureref_save_path: Box::new(crate::platform::save_dialog::pureref_save_path),
         }
     }
 
@@ -815,6 +824,7 @@ impl SnappyRefApp {
                 | SupportedShortcutAction::ApplyDefaultAverageArea
                 | SupportedShortcutAction::AverageSelectionArea
                 | SupportedShortcutAction::DedupeLibrary
+                | SupportedShortcutAction::ExportPureRef
                 | SupportedShortcutAction::Arrange(_) => shortcut
                     .binding
                     .is_some_and(|binding| shortcut_pressed(ctx, binding)),
@@ -891,6 +901,9 @@ impl SnappyRefApp {
                 }
                 SupportedShortcutAction::DedupeLibrary => {
                     self.dedupe_library_from_shortcut();
+                }
+                SupportedShortcutAction::ExportPureRef => {
+                    self.pureref_export_requested = true;
                 }
             }
             break;
@@ -1208,6 +1221,7 @@ impl eframe::App for SnappyRefApp {
         self.frame_perf.import_results_drained = 0;
         self.frame_perf.import_result_drain_ms = 0.0;
         self.handle_import_results(ctx);
+        self.handle_pureref_exchange_results(ctx);
         self.search.handle_results();
         self.drive_semantic_search_install(ctx);
         self.drive_embedding_backfill(ctx);
@@ -1222,7 +1236,7 @@ impl eframe::App for SnappyRefApp {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let screen_rect = ui.ctx().viewport_rect();
         self.update_window_state(ui.ctx());
         ui.set_clip_rect(screen_rect);
@@ -1253,6 +1267,9 @@ impl eframe::App for SnappyRefApp {
         }
         self.handle_board_shortcuts(ui.ctx());
         self.handle_selection_shortcuts(ui.ctx(), screen_rect);
+        if std::mem::take(&mut self.pureref_export_requested) {
+            self.export_pureref(ui.ctx(), frame);
+        }
         let sidebar_open = self.sidebar_open;
         if self.should_block_sidebar_input() {
             block_sidebar_input(ui.ctx(), sidebar_rect(screen_rect));

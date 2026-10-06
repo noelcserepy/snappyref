@@ -127,32 +127,16 @@ fn persist_lifecycle_change(
             document,
             active_board_id,
         } => {
+            // The restore owns every board column; the insert only makes the row exist.
             transaction
                 .execute(
-                    "INSERT INTO boards (
-                        id, name, archived, camera_pan_x, camera_pan_y, camera_zoom,
-                        canvas_background
-                     ) VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6)
-                     ON CONFLICT(id) DO UPDATE SET
-                        name = excluded.name,
-                        archived = 0,
-                        camera_pan_x = excluded.camera_pan_x,
-                        camera_pan_y = excluded.camera_pan_y,
-                        camera_zoom = excluded.camera_zoom,
-                        canvas_background = excluded.canvas_background",
-                    params![
-                        document.board.id,
-                        document.board.name,
-                        document.viewport.camera_pan_x,
-                        document.viewport.camera_pan_y,
-                        document.viewport.camera_zoom,
-                        document.viewport.canvas_background.as_str(),
-                    ],
+                    "INSERT INTO boards (id, name) VALUES (?1, ?2) ON CONFLICT(id) DO NOTHING",
+                    params![document.board.id, document.board.name],
                 )
                 .map_err(|error| {
                     format!("failed to create board {}: {error}", document.board.id)
                 })?;
-            super::boards::persist_active_board_id(transaction, *active_board_id)?;
+            super::boards::restore_board_document_rows(transaction, document, *active_board_id)?;
         }
         BoardLifecyclePersistence::Rename { board_id, name } => {
             let trimmed_name = name.trim();

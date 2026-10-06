@@ -18,6 +18,7 @@ use crate::data::{
 };
 use crate::placement::arrangement::PlacementArrangementInput;
 use eframe::egui;
+pub(crate) use interaction::focus_framing;
 use interaction::{
     handle_input, handle_viewport_navigation_input, step_mouse_wheel_zoom_animation,
 };
@@ -28,6 +29,7 @@ use render::{
     paint_selected_placement_borders, paint_selection_bounds, show_annotation_style_toolbar,
     show_textbox_editor,
 };
+pub(crate) use render::{textbox_font_size, textbox_size_for_text};
 pub(crate) use state::ActiveGesture;
 use state::{CanvasDocumentState, CanvasInteractionState, CanvasRenderState};
 

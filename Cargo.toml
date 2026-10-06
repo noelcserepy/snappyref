@@ -21,11 +21,12 @@ exr = "1.74.0"
 hex = "0.4.3"
 image = { version = "0.25.10", default-features = false, features = ["default-formats"] }
 jxl-oxide = { version = "0.12.5", features = ["image", "moxcms"] }
+md-5 = "0.10.6"
 png = "0.18.1"
 ndarray = "0.17.2"
 ort = "2.0.0-rc.12"
 reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "rustls-tls"] }
-rusqlite = { version = "0.39.0", features = ["bundled"] }
+rusqlite = { version = "0.39.0", features = ["bundled", "serialize"] }
 semver = "1.0.23"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
@@ -56,10 +57,12 @@ libc = "0.2"
 objc2 = "0.5.2"
 objc2-app-kit = { version = "0.2.2", features = ["NSResponder", "NSView", "NSWindow", "NSBitmapImageRep", "NSImageRep", "NSPasteboard", "NSPasteboardItem"] }
 objc2-foundation = { version = "0.2.2", features = ["NSDictionary", "NSData", "NSString", "NSURL"] }
+rfd = { version = "0.17.2", default-features = false }
 winit = "0.30.13"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 raw-window-handle = "0.6.2"
+rfd = { version = "0.17.2", default-features = false }
 windows-core = "0.62.2"
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Ole", "Win32_System_SystemServices", "Win32_UI_WindowsAndMessaging"] }
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_UI_Shell"] }

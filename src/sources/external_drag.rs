@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 use eframe::egui;
 
@@ -8,6 +9,8 @@ use crate::sources::url::normalize_import_url;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ExternalDragIntake {
     pub(crate) sources: Vec<ImportSource>,
+    /// Dropped `.pur` files open as new boards instead of becoming placements.
+    pub(crate) pureref_boards: Vec<PathBuf>,
     pub(crate) screen_pos: Option<egui::Pos2>,
 }
 
@@ -24,10 +27,7 @@ pub(crate) fn hovered(ui: &egui::Ui) -> ExternalDragIntake {
     );
     let screen_pos = native.screen_pos.or(egui_pos);
 
-    ExternalDragIntake {
-        sources,
-        screen_pos,
-    }
+    intake(sources, screen_pos)
 }
 
 pub(crate) fn take_drop(ui: &egui::Ui) -> ExternalDragIntake {
@@ -43,8 +43,23 @@ pub(crate) fn take_drop(ui: &egui::Ui) -> ExternalDragIntake {
     );
     let screen_pos = native.screen_pos.or(egui_pos);
 
+    intake(sources, screen_pos)
+}
+
+fn intake(merged: Vec<ImportSource>, screen_pos: Option<egui::Pos2>) -> ExternalDragIntake {
+    let mut sources = Vec::new();
+    let mut pureref_boards = Vec::new();
+    for source in merged {
+        match source {
+            ImportSource::Path(path) if crate::pureref_exchange::is_pureref_board_path(&path) => {
+                pureref_boards.push(path)
+            }
+            source => sources.push(source),
+        }
+    }
     ExternalDragIntake {
         sources,
+        pureref_boards,
         screen_pos,
     }
 }

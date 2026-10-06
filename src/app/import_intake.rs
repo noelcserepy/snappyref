@@ -86,14 +86,13 @@ impl SnappyRefApp {
     }
 
     pub(super) fn handle_dropped_files(&mut self, ui: &egui::Ui, screen_rect: egui::Rect) {
-        if self.import_worker.is_none() {
-            return;
-        }
-
         let drop_intake = crate::sources::external_drag::take_drop(ui);
+        for path in drop_intake.pureref_boards {
+            self.start_pureref_import(ui.ctx(), path);
+        }
         let dropped_sources = drop_intake.sources;
         let drop_screen_pos = drop_intake.screen_pos;
-        if dropped_sources.is_empty() {
+        if self.import_worker.is_none() || dropped_sources.is_empty() {
             return;
         }
 

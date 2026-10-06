@@ -9,6 +9,8 @@ view, and the sidebar state come back after a restart.
 
 - `board-create` uses the "New board" row or ⌘N / Ctrl+N. It names the new
   board "Board N" with the smallest free N.
+  Dropping a `.pur` file also creates a board. See
+  [PureRef exchange](./pureref-exchange.md).
 - `board-rename` uses a double-click on the name and the "Board name" field.
   Enter or a click away commits, and Escape discards.
 - `board-switch` uses a click on a `Board {name}` row or ⌘1…⌘9 and ⌘0.

@@ -122,7 +122,7 @@ interface:
       reason: Supplies valid Board identities for restoration and fallback activation.
     board-creation:
       target: "[[board-document#/interface/operations/create-board/outcomes/created]]"
-      reason: Creates the default Board when restoration finds no active Board.
+      reason: Creates the default Board when restoration finds no active Board, and the seeded Board that a PureRef import activates.
     board-open:
       target: "[[board-document#/interface/operations/open-board/outcomes/opened]]"
       reason: Supplies the target Board document and Board-owned view state.
