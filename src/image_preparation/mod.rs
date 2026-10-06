@@ -1,4 +1,5 @@
 mod image_formats;
+pub(super) use image_formats::decode_image_bytes_with_max_side;
 pub use image_formats::decode_image_file_perf_report;
 #[cfg(test)]
 pub(crate) use image_formats::{AnimatedPreview, AnimatedPreviewFrame};
@@ -15,6 +16,7 @@ mod preview_texture;
 mod request;
 
 use crop::crop_item;
+pub(super) use crop::store_cropped_original;
 pub(crate) use decode::print_imageprep_output_from_args;
 use existing_load::backfill_cache_lod;
 pub use existing_load::load_canvas_snapshot_pixels;

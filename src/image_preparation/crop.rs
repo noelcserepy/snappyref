@@ -1,7 +1,10 @@
-use image::RgbaImage;
+use std::path::{Path, PathBuf};
 
+use image::{ImageBuffer, Rgba, RgbaImage};
+
+use crate::canvas::PixelCropRect;
 use crate::data::CanvasImageLod;
-use crate::image_preparation::image_formats::{PreviewImage, decode_image_file};
+use crate::image_preparation::image_formats::{DecodedImage, PreviewImage, decode_image_file};
 use crate::library::storage::Library;
 
 use super::preview_texture::build_preview_texture;
@@ -40,42 +43,13 @@ pub(super) fn crop_item(
             };
         }
     };
-    let image = match RgbaImage::from_vec(decoded.width, decoded.height, decoded.rgba) {
-        Some(image) => image,
-        None => {
-            return ImagePrepResult::Failed {
-                target_board_id: None,
-                queue_id: None,
-                placement_id: Some(request.placement_id),
-                context: source_context,
-                error: "failed to rebuild source image pixels for crop".to_owned(),
-            };
-        }
-    };
-
-    let cropped = image::imageops::crop_imm(
-        &image,
-        request.crop_rect.x,
-        request.crop_rect.y,
-        request.crop_rect.width,
-        request.crop_rect.height,
-    )
-    .to_image();
-    let cropped_rgba = cropped.into_raw();
-    let width = request.crop_rect.width;
-    let height = request.crop_rect.height;
-
-    let base_name = std::path::Path::new(&request.source_asset.filename)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("image");
-    let stored_path = match library.store_cropped_rgba_image(
-        &format!("{base_name}-crop"),
-        &cropped_rgba,
-        width,
-        height,
+    let (stored_path, cropped) = match store_cropped_original(
+        library,
+        &decoded,
+        request.crop_rect,
+        &request.source_asset.filename,
     ) {
-        Ok(path) => path,
+        Ok(stored) => stored,
         Err(error) => {
             return ImagePrepResult::Failed {
                 target_board_id: None,
@@ -86,6 +60,8 @@ pub(super) fn crop_item(
             };
         }
     };
+    let (width, height) = cropped.dimensions();
+    let cropped_rgba = cropped.into_raw();
 
     let file_size = match std::fs::metadata(&stored_path) {
         Ok(metadata) => metadata.len(),
@@ -146,6 +122,38 @@ pub(super) fn crop_item(
         loaded_lod: CanvasImageLod::Overview,
         crop_offset_local: request.crop_offset_local,
     })
+}
+
+/// Crops decoded pixels to `rect`, clamped to the image, and stores them as a new PNG original.
+pub(crate) fn store_cropped_original(
+    library: &Library,
+    decoded: &DecodedImage,
+    rect: PixelCropRect,
+    source_filename: &str,
+) -> Result<(PathBuf, RgbaImage), String> {
+    let image = ImageBuffer::<Rgba<u8>, &[u8]>::from_raw(
+        decoded.width,
+        decoded.height,
+        decoded.rgba.as_slice(),
+    )
+    .ok_or_else(|| "failed to rebuild source image pixels for crop".to_owned())?;
+    let (x, y) = (rect.x.min(image.width()), rect.y.min(image.height()));
+    let cropped = RgbaImage::from_fn(
+        rect.width.min(image.width() - x),
+        rect.height.min(image.height() - y),
+        |column, row| *image.get_pixel(x + column, y + row),
+    );
+    let base_name = Path::new(source_filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("image");
+    let stored_path = library.store_cropped_rgba_image(
+        &format!("{base_name}-crop"),
+        cropped.as_raw(),
+        cropped.width(),
+        cropped.height(),
+    )?;
+    Ok((stored_path, cropped))
 }
 
 fn fast_preview_image_from_rgba(

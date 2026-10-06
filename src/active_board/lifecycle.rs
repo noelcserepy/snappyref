@@ -450,17 +450,27 @@ impl BoardLifecycle<'_> {
     pub(crate) fn create(&mut self) -> Result<String, String> {
         let library = self.library.ok_or("Storage unavailable")?;
         let board = library.new_board(generated_board_name(self.editing.documents.summaries()));
-        let document = BoardDocumentSnapshot {
-            board: board.clone(),
+        let message = format!("Created {}", board.name);
+        self.create_from_document(BoardDocumentSnapshot {
+            board,
             placements: Vec::new(),
             annotations: Vec::new(),
             groups: Vec::new(),
             stack_order: Vec::new(),
             viewport: Default::default(),
-        };
+        })?;
+        Ok(message)
+    }
+
+    /// Creates and activates a board seeded with `document`, as one undoable step.
+    pub(crate) fn create_from_document(
+        &mut self,
+        document: BoardDocumentSnapshot,
+    ) -> Result<(), String> {
+        let board_id = document.board.id;
         self.queue_current()?;
         self.editing.history.record_applied(
-            board.id,
+            board_id,
             HistoryAction::Board(BoardLifecycleHistoryAction::Created {
                 document: document.clone(),
                 active_before: *self.active_board_id,
@@ -469,13 +479,12 @@ impl BoardLifecycle<'_> {
         self.editing.persistence.enqueue_board_lifecycle_unit(
             super::persistence::BoardLifecyclePersistence::Create {
                 document: document.clone(),
-                active_board_id: board.id,
+                active_board_id: board_id,
             },
             &self.editing.history,
         )?;
         self.editing.documents.restore_document(&document);
-        self.open_board_document_snapshot(None, &document)?;
-        Ok(format!("Created {}", board.name))
+        self.open_board_document_snapshot(None, &document)
     }
 
     pub(crate) fn rename(&mut self, board_id: i64, name: &str) -> Result<Option<String>, String> {

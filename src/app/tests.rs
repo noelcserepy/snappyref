@@ -43,6 +43,7 @@ use std::time::{Duration, Instant};
 
 mod groups;
 mod inspect_operations;
+mod inspect_pureref;
 mod session_settings;
 
 #[derive(Clone, Copy, PartialEq)]

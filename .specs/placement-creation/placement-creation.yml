@@ -3,7 +3,7 @@ schema: v0.1
 purpose:
   outcome: Turn external image sources or existing Assets into coherent Placement batches whose lifecycle matches how the user accepted them.
   owns:
-    - Source intake for files, URLs, clipboard images, PureRef references, and existing Assets.
+    - Source intake for files, URLs, clipboard images, PureRef clipboard references, and existing Assets.
     - Initial Placement geometry planning.
     - Provisional preview and accepted-source lifecycle selection.
     - Correlation of asynchronous preparation results to Placements.
@@ -12,6 +12,7 @@ purpose:
     - Image decoding and derivative generation.
     - Asset identity and managed storage.
     - Spatial layout algorithms.
+    - PureRef board files, which Board Exchange opens as new Boards.
     - Board persistence and document history implementation.
 
 interface:
@@ -58,7 +59,7 @@ interface:
 
       behavior:
         visible-immediately: created must return committed Loading or Loaded Placements before external content finishes preparing.
-        accepted-source-only: File picker, URL, clipboard, PureRef, and accepted drop intake may use create-committed without a provisional preview.
+        accepted-source-only: File picker, URL, clipboard, PureRef clipboard, and accepted drop intake may use create-committed without a provisional preview.
         known-size-used: Initial geometry must use known source or Asset dimensions when available.
         approximate-size-revisable: Missing dimensions may use approximate geometry that content resolution later corrects.
         one-document-change: created must enter Board persistence and history as one document change.
@@ -158,7 +159,7 @@ interface:
     shared-creation-capability: Every source uses the same geometry planning, Placement construction, and content-resolution correlation rules.
     shared-placement-gap: Initial group layout must use Spatial Layout's Placement Gap meaning.
     automatic-initial-sizing: New image intake and Search result placements must use the automatic target-area sizing policy without a workspace setting to disable it. Existing accepted geometry and internal copies must retain their own geometry rules.
-    boundary-validation: Raw files, URLs, clipboard payloads, PureRef content, and platform drop data must become typed source intent before internal use.
+    boundary-validation: Raw files, URLs, clipboard payloads, PureRef clipboard content, and platform drop data must become typed source intent before internal use. Dropped `.pur` files leave drop intake as Board Exchange intent and never become Placement sources or provisional previews.
     target-board-isolation: A creation remains bound to its target Board through preparation, commit, failure, and final layout.
     one-accepted-batch-history-entry: One accepted multi-item addition creates exactly one Board Document history entry.
     complete-resolution-ownership: Placement Creation must own result correlation, stale-result rejection, reservation completion, final batch layout, and submission of accepted content changes through Board Document. Callers must not coordinate these steps separately.

@@ -79,19 +79,10 @@ impl CanvasState {
             return false;
         };
 
-        let padded_size = target_rect
-            .shrink(FOCUS_SELECTION_PADDING_SCREEN)
-            .size()
-            .max(egui::vec2(1.0, 1.0));
-        let width_zoom = padded_size.x / bounds.width().max(1.0);
-        let height_zoom = padded_size.y / bounds.height().max(1.0);
-        self.zoom = width_zoom
-            .min(height_zoom)
-            .clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
-
-        let center_world = bounds.center().to_vec2();
+        let (pan, zoom) = focus_framing(canvas_rect, target_rect, bounds);
         self.interaction.mouse_wheel_zoom_animation = None;
-        self.pan = target_rect.center() - canvas_rect.center() - center_world * self.zoom;
+        self.pan = pan;
+        self.zoom = zoom;
         true
     }
 
@@ -102,23 +93,14 @@ impl CanvasState {
         bounds: egui::Rect,
         padding_screen: f32,
     ) -> bool {
-        let padded_size = target_rect
-            .shrink(padding_screen)
-            .size()
-            .max(egui::vec2(1.0, 1.0));
-        let width_zoom = padded_size.x / bounds.width().max(1.0);
-        let height_zoom = padded_size.y / bounds.height().max(1.0);
-        let target_zoom = width_zoom
-            .min(height_zoom)
-            .clamp(MIN_CANVAS_ZOOM, self.zoom);
-        if target_zoom >= self.zoom {
+        let (pan, zoom) = framing(canvas_rect, target_rect, bounds, padding_screen, self.zoom);
+        if zoom >= self.zoom {
             return false;
         }
 
-        let center_world = bounds.center().to_vec2();
         self.interaction.mouse_wheel_zoom_animation = None;
-        self.zoom = target_zoom;
-        self.pan = target_rect.center() - canvas_rect.center() - center_world * self.zoom;
+        self.pan = pan;
+        self.zoom = zoom;
         true
     }
 
@@ -514,6 +496,39 @@ impl CanvasState {
             .selected_annotation_ids
             .contains(&annotation_id)
     }
+}
+
+/// Pan and zoom that frame world `bounds` inside `target_rect`, as Focus Selection does.
+pub(crate) fn focus_framing(
+    canvas_rect: egui::Rect,
+    target_rect: egui::Rect,
+    bounds: egui::Rect,
+) -> (egui::Vec2, f32) {
+    framing(
+        canvas_rect,
+        target_rect,
+        bounds,
+        FOCUS_SELECTION_PADDING_SCREEN,
+        MAX_CANVAS_ZOOM,
+    )
+}
+
+fn framing(
+    canvas_rect: egui::Rect,
+    target_rect: egui::Rect,
+    bounds: egui::Rect,
+    padding_screen: f32,
+    max_zoom: f32,
+) -> (egui::Vec2, f32) {
+    let padded_size = target_rect
+        .shrink(padding_screen)
+        .size()
+        .max(egui::vec2(1.0, 1.0));
+    let width_zoom = padded_size.x / bounds.width().max(1.0);
+    let height_zoom = padded_size.y / bounds.height().max(1.0);
+    let zoom = width_zoom.min(height_zoom).clamp(MIN_CANVAS_ZOOM, max_zoom);
+    let pan = target_rect.center() - canvas_rect.center() - bounds.center().to_vec2() * zoom;
+    (pan, zoom)
 }
 
 fn guide_snap_signature(indicators: &[crate::canvas::GuideSnapIndicator]) -> u64 {

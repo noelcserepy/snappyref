@@ -31,6 +31,7 @@ pub(super) use textbox::{
     normalized_textbox_rect, resized_textbox_rect, textbox_resize_cursor_icon, textbox_screen_rect,
     textbox_world_rect,
 };
+pub(crate) use view::focus_framing;
 
 use std::time::Duration;
 #[cfg(test)]

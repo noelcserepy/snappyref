@@ -68,3 +68,5 @@ Preconditions:
 - Status text such as "Queued import: …" and "Undid Import images" expires.
   Read it soon after the action.
 - Undo of an import shows "Undid Import images" even for a single file.
+- Dropped `.pur` files open as a new board instead of placements. See
+  [PureRef exchange](./pureref-exchange.md).

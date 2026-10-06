@@ -22,6 +22,7 @@ pub(super) enum SupportedShortcutAction {
     ApplyDefaultAverageArea,
     AverageSelectionArea,
     DedupeLibrary,
+    ExportPureRef,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -172,6 +173,16 @@ pub(crate) const CORE_SHORTCUTS: &[SupportedShortcut] = &[
         keys: &[Key::Named("T"), Key::Gesture("Click/Drag")],
         binding: None,
         shortcut_action: None,
+    },
+    SupportedShortcut {
+        action: "Export board to PureRef",
+        keys: &[Key::Command, Key::Shift, Key::Named("E")],
+        binding: Some(ShortcutBinding {
+            key: egui::Key::E,
+            command: true,
+            shift: true,
+        }),
+        shortcut_action: Some(SupportedShortcutAction::ExportPureRef),
     },
 ];
 
