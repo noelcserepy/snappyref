@@ -219,6 +219,13 @@ fn inspect_pureref_import_writes_artifact() {
 
     let imported = drop_pureref_board(&mut harness, pur_path);
     scenario.assertion("dropping the .pur file opens a new board", imported);
+    // The status clears on a wall-clock timer, so read it before images load.
+    let status = harness.state().status.clone();
+    scenario.fact("status", serde_json::json!(status));
+    scenario.assertion(
+        "status reports the flipped image",
+        status.contains("1 flipped image imported unflipped"),
+    );
     scenario.capture_screen("dropped", &mut harness);
     let loaded = step_until(&mut harness, images_loaded);
     scenario.assertion("every imported image loads", loaded);
@@ -226,16 +233,11 @@ fn inspect_pureref_import_writes_artifact() {
 
     let app = harness.state();
     let board_id = app.active_board_id;
-    scenario.fact("status", serde_json::json!(app.status));
     scenario.assertion(
         "board is named after the file",
         app.board_summaries()
             .iter()
             .any(|summary| summary.board.id == board_id && summary.board.name == "Moodboard"),
-    );
-    scenario.assertion(
-        "status reports the flipped image",
-        app.status.contains("1 flipped image imported unflipped"),
     );
 
     let placements = placements_back_to_front(app);

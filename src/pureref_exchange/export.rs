@@ -26,9 +26,11 @@ const PUREREF_IMAGE_MIME_TYPES: &[&str] = &[
 ];
 
 pub(crate) struct PureRefExportPlan {
-    /// Loaded placements, back to front.
+    /// Loaded placements in formats PureRef can open, back to front.
     placements: Vec<(Asset, RectGeometry)>,
     notes: Vec<PureRefNote>,
+    /// Placements in formats PureRef can't open.
+    skipped_images: usize,
     /// Lines and arrows, which PureRef has no item for.
     skipped_annotations: usize,
 }
@@ -52,12 +54,20 @@ impl PureRefExportPlan {
         let mut plan = Self {
             placements: Vec::new(),
             notes: Vec::new(),
+            skipped_images: 0,
             skipped_annotations: 0,
         };
         for item in canvas.canvas_stack_order() {
             match item {
                 CanvasStackItem::Placement(id) => {
-                    plan.placements.extend(placements.get(&id).cloned());
+                    let Some((asset, geometry)) = placements.get(&id) else {
+                        continue;
+                    };
+                    if PUREREF_IMAGE_MIME_TYPES.contains(&asset.mime_type.as_str()) {
+                        plan.placements.push((asset.clone(), *geometry));
+                    } else {
+                        plan.skipped_images += 1;
+                    }
                 }
                 CanvasStackItem::Annotation(id) => {
                     let Some(annotation) = annotations.get(&id) else {
@@ -141,15 +151,12 @@ pub(super) fn export_board(
         image_items: Vec::new(),
         notes: plan.notes,
     };
-    // Each asset is read once; `None` marks one PureRef can't show.
+    // Each asset is read once; `None` marks one whose original is gone.
     let mut image_indices: HashMap<i64, Option<usize>> = HashMap::new();
-    let mut skipped_images = 0;
+    let mut skipped_images = plan.skipped_images;
     for (asset, geometry) in &plan.placements {
         let image = *image_indices.entry(asset.id).or_insert_with(|| {
-            let bytes = PUREREF_IMAGE_MIME_TYPES
-                .contains(&asset.mime_type.as_str())
-                .then(|| std::fs::read(&asset.original_path).ok())
-                .flatten()?;
+            let bytes = std::fs::read(&asset.original_path).ok()?;
             board.images.push(PureRefImage {
                 bytes: Some(bytes),
                 source: Some(asset.original_path.to_string_lossy().into_owned()),
@@ -204,11 +211,17 @@ fn item_transform(geometry: RectGeometry, width: u32, height: u32) -> PureRefTra
     }
 }
 
+/// Writes a fresh sibling file, then renames it over `path`. `create_new` refuses
+/// an existing path, so a leftover file or symlink there is never written through.
 fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut temporary = path.as_os_str().to_owned();
-    temporary.push(".tmp");
+    temporary.push(format!(".{}.tmp", std::process::id()));
     let temporary = PathBuf::from(temporary);
-    std::fs::write(&temporary, bytes)
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, bytes))
         .and_then(|()| std::fs::rename(&temporary, path))
         .map_err(|error| {
             let _ = std::fs::remove_file(&temporary);

@@ -70,7 +70,8 @@ pub(super) fn read(bytes: &[u8]) -> Result<PureRefBoard, String> {
                                 images.push(embedded_image(
                                     &bytes[owner_blob.start..owner_blob.end],
                                     source,
-                                )?);
+                                    image_transform,
+                                ));
                                 image_by_owner.insert(owner, images.len() - 1);
                                 images.len() - 1
                             }
@@ -225,18 +226,24 @@ fn read_record(reader: &mut QtReader, parent: Option<usize>) -> Result<(Record, 
     Ok((record, child_count))
 }
 
-fn embedded_image(bytes: &[u8], source: Option<String>) -> Result<PureRefImage, String> {
+/// Unreadable pixels keep the stored size so the rest of the board still loads.
+fn embedded_image(
+    bytes: &[u8],
+    source: Option<String>,
+    image_transform: PureRefTransform,
+) -> PureRefImage {
+    let stored = linked_image(source, image_transform);
     let (width, height) = image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
-        .map_err(|error| error.to_string())?
-        .into_dimensions()
-        .map_err(|error| format!("embedded image has no readable size: {error}"))?;
-    Ok(PureRefImage {
+        .ok()
+        .and_then(|reader| reader.into_dimensions().ok())
+        .unwrap_or((stored.width, stored.height));
+    PureRefImage {
         bytes: Some(bytes.to_vec()),
-        source,
         width,
         height,
-    })
+        ..stored
+    }
 }
 
 /// Without pixels the size only survives in the image transform, `translate(-w/2, -h/2)`.
