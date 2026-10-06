@@ -40,7 +40,7 @@ interface:
         geometry-preserved: Each image item's crop corners must land where PureRef draws them, through position, uniform or non-uniform scale, and rotation.
         stack-preserved: Images keep PureRef's back-to-front order, and notes stack above every image.
         crops-stored: An item showing part of its image must get a cropped original of exactly those pixels. Items that show the same image with the same crop share one Asset.
-        notes-become-textboxes: Each note must become a textbox centred where PureRef centres the note, with the nearest textbox text size. PureRef sizes notes to their text and stores no box size, so the textbox size is estimated.
+        notes-become-textboxes: Each note must become a textbox centred where PureRef centres the note, with the nearest textbox text size. PureRef stores no note box size, so the textbox is sized to hold its text unwrapped at the zoom the Board opens at.
         losses-reported: The status must count mirrored items imported unmirrored and items whose image was missing or undecodable.
         one-board-create: imported must enter Board Document as one create-board with a seed, so one Undo removes the Board and returns to the previous active Board.
         content-framed: The new Board's viewport must frame all imported content.

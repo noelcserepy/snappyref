@@ -52,9 +52,9 @@ Preconditions:
   export does nothing there.
 - Neither scenario opens a file in PureRef itself. Compatibility rests on the
   codec's own tests.
-- Mirrored images come in unmirrored, and note rotation is dropped. Textbox
-  size is estimated from the note's text, so a round trip keeps position and
-  text size but not the box size.
+- Mirrored images come in unmirrored, and note rotation is dropped. The app
+  sizes each textbox to its text at the zoom the board opens at, so a round
+  trip keeps the centre and text size but not the box size.
 - Image opacity and PureRef groups are ignored on import.
 - Import and export run on a background thread. Step the harness until the
   status starts with "Imported" or "Exported" before asserting.
