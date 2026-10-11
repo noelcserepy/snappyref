@@ -1038,7 +1038,6 @@ pub(super) fn test_canvas_annotation(id: i64, start: egui::Pos2) -> crate::data:
         CanvasStrokeWidth::M,
         crate::data::CanvasAnnotationColor::Gold,
         false,
-        false,
     )
 }
 

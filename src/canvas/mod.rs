@@ -2,6 +2,7 @@ pub(crate) mod residency;
 use render::images::{CanvasTexture, PendingCropPreview, PlacementImage, RenderedPlacement};
 use std::sync::Arc;
 
+pub(crate) mod annotation_style;
 mod document;
 mod geometry;
 mod group_dock;
@@ -23,10 +24,9 @@ use interaction::{
     handle_input, handle_viewport_navigation_input, step_mouse_wheel_zoom_animation,
 };
 use render::{
-    annotation_style_toolbar_rect, editing_textbox_toolbar_rect, paint_annotation_draft,
-    paint_background, paint_canvas_items, paint_crop_marquee, paint_guide_snap_indicators,
-    paint_hover_hairline, paint_marquee, paint_provisional_placement_previews,
-    paint_selected_placement_borders, paint_selection_bounds, show_annotation_style_toolbar,
+    paint_annotation_draft, paint_background, paint_canvas_items, paint_crop_marquee,
+    paint_guide_snap_indicators, paint_hover_hairline, paint_marquee,
+    paint_provisional_placement_previews, paint_selected_placement_borders, paint_selection_bounds,
     show_textbox_editor,
 };
 pub(crate) use render::{textbox_font_size, textbox_size_for_text};
@@ -46,14 +46,10 @@ const PLACEMENT_ROTATE_HANDLE_RADIUS_SCREEN: f32 = 7.0;
 const PLACEMENT_ROTATE_HANDLE_HIT_RADIUS_SCREEN: f32 = 13.0;
 const SELECTION_BORDER_REAPPEAR_SECONDS: f64 = 2.0;
 const PLACEMENT_DRAG_THRESHOLD_SCREEN: f32 = 4.0;
-const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(240.0, 56.0);
+/// Smallest rectangle. Labels take their size from their text.
+const MIN_TEXTBOX_WORLD_SIZE: egui::Vec2 = egui::vec2(16.0, 16.0);
 const TEXTBOX_RESIZE_HIT_RADIUS: f32 = 14.0;
 const TEXTBOX_DRAG_THRESHOLD_SCREEN: f32 = 4.0;
-const TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH: f32 = 80.0;
-const TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH: f32 = 120.0;
-const TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH: f32 = 44.0;
-const TEXTBOX_EDITOR_TOOLBAR_CLEARANCE: f32 = crate::ui::theme::SPACE_2;
-const TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN: f32 = crate::ui::theme::SPACE_2;
 const ANNOTATION_HIT_RADIUS: f32 = 10.0;
 pub(crate) const FOCUS_SELECTION_PADDING_SCREEN: f32 = 48.0;
 const BACKGROUND_BASE_WORLD_STEP: f32 = 64.0;
@@ -288,7 +284,6 @@ struct TextboxLayoutCacheKey {
 struct TextboxLayoutCacheEntry {
     key: TextboxLayoutCacheKey,
     galley: Arc<egui::Galley>,
-    required_world_height: f32,
 }
 
 #[derive(Clone)]
@@ -335,23 +330,13 @@ impl AnnotationDraftState {
 pub struct PendingAnnotation {
     pub kind: CanvasAnnotationKind,
     pub geometry: CanvasAnnotationGeometry,
-    pub text: String,
-    pub text_size: CanvasTextSize,
 }
 
 impl PendingAnnotation {
-    fn new(
-        kind: CanvasAnnotationKind,
-        start_world: egui::Pos2,
-        end_world: egui::Pos2,
-        text: String,
-        text_size: CanvasTextSize,
-    ) -> Self {
+    fn new(kind: CanvasAnnotationKind, start_world: egui::Pos2, end_world: egui::Pos2) -> Self {
         Self {
             kind,
             geometry: CanvasAnnotationGeometry::from_kind(kind, start_world, end_world),
-            text,
-            text_size,
         }
     }
 
@@ -432,16 +417,14 @@ pub fn show(
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_millis(8));
     }
-    let toolbar_rect = state
-        .show_group_controls(ui, rect)
-        .or_else(|| editing_textbox_toolbar_rect(state, rect))
-        .or_else(|| annotation_style_toolbar_rect(state, rect));
+    let toolbar_rect = state.show_group_controls(ui, rect);
     let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
     match input_policy {
         CanvasInputPolicy::Full => {
             if state.interaction.group_picker.is_none()
                 && !state.handle_group_pointer(ui, rect, input_rect, toolbar_rect)
             {
+                annotation_style::handle_keys(ui, state);
                 let origin = state.group_transform_origin();
                 handle_input(ui, rect, input_rect, toolbar_rect, state, &response);
                 state.follow_group_member_transforms(origin);
@@ -485,8 +468,8 @@ pub fn show(
     paint_crop_marquee(&painter, rect, state);
     paint_annotation_draft(&painter, rect, state);
     paint_marquee(&painter, state);
-    show_annotation_style_toolbar(ui, rect, state);
     show_textbox_editor(ui, rect, state);
+    annotation_style::show_hud(ui, rect, state);
     CanvasFrameMetrics { image_pass }
 }
 

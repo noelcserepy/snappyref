@@ -460,18 +460,17 @@ impl BoardEditing {
 
         while let Some(request) = context.canvas.take_pending_annotation() {
             let before_stack_order = context.canvas.canvas_stack_order();
-            let background_enabled = request.kind == crate::data::CanvasAnnotationKind::Textbox
-                && context.settings.default_textbox_background;
-            let annotation = library.new_canvas_annotation(
+            let style = context.canvas.next_annotation_style();
+            let mut annotation = library.new_canvas_annotation(
                 request.kind,
                 request.start_world(),
                 request.end_world(),
-                request.text,
-                request.text_size,
-                crate::data::CanvasStrokeWidth::default(),
-                crate::data::CanvasAnnotationColor::default(),
-                background_enabled,
+                String::new(),
+                style.text_size,
+                style.stroke_width,
+                style.color,
             );
+            annotation.fill = style.fill;
             let should_focus_text = annotation.kind == crate::data::CanvasAnnotationKind::Textbox;
             let annotation_id = annotation.id;
             context.canvas.add_annotation(annotation);
@@ -486,6 +485,7 @@ impl BoardEditing {
                             crate::data::CanvasAnnotationKind::Arrow => "Added arrow",
                             crate::data::CanvasAnnotationKind::Line => "Added line",
                             crate::data::CanvasAnnotationKind::Textbox => "Added textbox",
+                            crate::data::CanvasAnnotationKind::Rectangle => "Added rectangle",
                         }
                         .to_owned(),
                         Vec::new(),
@@ -501,13 +501,17 @@ impl BoardEditing {
                 );
                 self.queue_canvas_document(context.canvas, context.board_id)?;
             }
+            // A new annotation is selected so the style keys reach it at once.
             if should_focus_text {
                 context.canvas.begin_textbox_edit(annotation_id);
+            } else {
+                context.canvas.select_content(&[], &[annotation_id]);
             }
             status = Some(match request.kind {
                 crate::data::CanvasAnnotationKind::Arrow => "Added arrow".to_owned(),
                 crate::data::CanvasAnnotationKind::Line => "Added line".to_owned(),
                 crate::data::CanvasAnnotationKind::Textbox => "Added textbox".to_owned(),
+                crate::data::CanvasAnnotationKind::Rectangle => "Added rectangle".to_owned(),
             });
         }
         Ok(status)

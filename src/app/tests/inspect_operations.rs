@@ -381,15 +381,12 @@ fn inspect_canvas_edit_operations_writes_artifact() {
     );
     scenario.capture_screen("screen-005-scaled", &mut harness);
 
-    // Textbox: T + click on empty canvas, type, Escape.
+    // Textbox: T over empty canvas, type, Escape.
     let textbox_screen = screen.center() + egui::vec2(0.0, -250.0);
-    scenario.action("hold T and click empty canvas", textbox_screen);
-    harness.key_down(egui::Key::T);
+    scenario.action("press T over empty canvas", textbox_screen);
+    harness.hover_at(textbox_screen);
     harness.step();
-    inspect_click_at(&harness, textbox_screen, egui::Modifiers::NONE);
-    harness.step();
-    harness.key_up(egui::Key::T);
-    harness.step();
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::T);
     harness.step();
     harness
         .input_mut()
@@ -993,7 +990,6 @@ fn space_focus_fits_multiple_images_textbox_and_mixed_selection() {
         CanvasTextSize::M,
         CanvasStrokeWidth::M,
         crate::data::CanvasAnnotationColor::Sky,
-        false,
         false,
     );
     harness.state_mut().canvas.add_annotation(annotation);

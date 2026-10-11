@@ -132,7 +132,6 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
             CanvasTextSize::M,
             CanvasStrokeWidth::M,
             crate::data::CanvasAnnotationColor::Sky,
-            true,
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -249,7 +248,6 @@ fn duplicate_offsets_mixed_selection_on_same_board_and_selects_new_content() {
             CanvasTextSize::M,
             CanvasStrokeWidth::M,
             crate::data::CanvasAnnotationColor::Gold,
-            false,
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -327,7 +325,6 @@ fn command_a_selects_all_active_board_images_and_annotations() {
             CanvasStrokeWidth::M,
             crate::data::CanvasAnnotationColor::Default,
             false,
-            false,
         ));
     app.canvas
         .add_annotation(crate::data::CanvasAnnotation::new(
@@ -339,7 +336,6 @@ fn command_a_selects_all_active_board_images_and_annotations() {
             CanvasTextSize::M,
             CanvasStrokeWidth::M,
             crate::data::CanvasAnnotationColor::Default,
-            false,
             false,
         ));
     app.canvas.select_content(&[], &[]);
@@ -394,7 +390,6 @@ fn delete_from_board_archives_image_placements_and_annotations() {
             CanvasTextSize::M,
             CanvasStrokeWidth::M,
             crate::data::CanvasAnnotationColor::Default,
-            false,
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -785,7 +780,6 @@ fn deleting_active_board_restores_accepted_fallback_content_while_persistence_re
         CanvasTextSize::M,
         CanvasStrokeWidth::M,
         crate::data::CanvasAnnotationColor::Sky,
-        true,
     );
     app.canvas.add_annotation(annotation.clone());
     app.canvas.mark_annotation_for_persistence(annotation.id);
@@ -860,7 +854,6 @@ fn undoing_board_create_reopens_accepted_previous_board_while_persistence_retrie
         CanvasTextSize::M,
         CanvasStrokeWidth::M,
         crate::data::CanvasAnnotationColor::Sky,
-        true,
     );
     app.canvas.add_annotation(annotation.clone());
     app.canvas.mark_annotation_for_persistence(annotation.id);
@@ -1172,7 +1165,6 @@ fn board_delete_undo_restores_document_view_history_and_active_fallback() {
             CanvasTextSize::L,
             CanvasStrokeWidth::M,
             crate::data::CanvasAnnotationColor::Sky,
-            true,
         )
         .unwrap();
     let mut other = placement.clone();

@@ -514,7 +514,7 @@ impl SnappyRefApp {
         let choice = Dialog {
             id: "delete-board",
             title: &title,
-            detail: "The images stay in your library. Arrows, lines, and textboxes on this board are deleted.",
+            detail: "The images stay in your library. Arrows, lines, rectangles, and textboxes on this board are deleted.",
             cancel: "Cancel",
             action: DialogAction::Destructive("Delete board"),
         }

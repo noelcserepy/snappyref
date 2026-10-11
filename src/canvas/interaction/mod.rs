@@ -84,7 +84,6 @@ pub(super) fn handle_input(
     let primary_down = ui.input(|i| i.pointer.primary_down());
     let crop_key_held = ui.input(|i| i.key_down(egui::Key::C));
     let rotation_handle_key_held = super::rotation_handle_key_held(ui.ctx());
-    let draw_kind = drawing_annotation_kind(ui);
     let shift_held = ui.input(|i| i.modifiers.shift);
     let alt_held = ui.input(|i| i.modifiers.alt);
     let placement_drag_scale_modifier_held = ui.input(|i| scale_drag_active(i.modifiers));
@@ -94,6 +93,15 @@ pub(super) fn handle_input(
                 && !overlay_rect.is_some_and(|overlay_rect| overlay_rect.contains(pointer_pos))
         })
         .unwrap_or(false);
+
+    handle_annotation_tool_keys(
+        ui,
+        state,
+        pointer_pos
+            .filter(|_| pointer_in_canvas_rect)
+            .unwrap_or(rect.center()),
+        rect,
+    );
 
     if pointer_in_canvas_rect && response.dragged_by(egui::PointerButton::Middle) {
         state.interaction.mouse_wheel_zoom_animation = None;
@@ -160,7 +168,7 @@ pub(super) fn handle_input(
     } else if let Some(pointer_pos) = pointer_pos
         && let Some(annotation_id) = state.single_selected_annotation_id()
         && let Some(annotation) = state.annotation_by_id(annotation_id).cloned()
-        && annotation.kind == CanvasAnnotationKind::Textbox
+        && annotation.kind.is_rect()
         && let Some(region) = textbox_pointer_region(ui, rect, state, &annotation, pointer_pos)
     {
         match region {
@@ -186,7 +194,9 @@ pub(super) fn handle_input(
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     }
 
-    if let Some(pointer_pos) = pointer_pos
+    if state.interaction.armed_annotation_kind.is_some() && pointer_in_canvas_rect {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    } else if let Some(pointer_pos) = pointer_pos
         && let Some(image) = state.selected_single_placement()
         && let Some(handle) = hit_test_placement_resize_handle(state, rect, image, pointer_pos)
     {
@@ -210,7 +220,7 @@ pub(super) fn handle_input(
         && primary_pressed
         && let Some(pointer_pos) = pointer_pos
     {
-        if let Some(kind) = draw_kind {
+        if let Some(kind) = state.interaction.armed_annotation_kind.take() {
             let pointer_world = state.screen_to_world(pointer_pos, rect);
             state.clear_selection();
             state.interaction.gesture = Some(ActiveGesture::AnnotationDraft(
@@ -238,7 +248,7 @@ pub(super) fn handle_input(
             return;
         } else if let Some(annotation_id) = state.single_selected_annotation_id()
             && let Some(annotation) = state.annotation_by_id(annotation_id).cloned()
-            && annotation.kind == CanvasAnnotationKind::Textbox
+            && annotation.kind.is_rect()
             && matches!(
                 textbox_pointer_region(ui, rect, state, &annotation, pointer_pos),
                 Some(TextboxPointerRegion::Resize(_))
@@ -271,7 +281,7 @@ pub(super) fn handle_input(
                         return;
                     }
                     if let Some(annotation) = annotation
-                        && annotation.kind == CanvasAnnotationKind::Textbox
+                        && annotation.kind.is_rect()
                     {
                         if handle_textbox_primary_press(ui, rect, state, &annotation, pointer_pos) {
                             return;
@@ -602,25 +612,7 @@ pub(super) fn handle_input(
         }
     }
 
-    if primary_released
-        && primary_double_clicked
-        && pointer_in_canvas_rect
-        && let Some(pointer_pos) = pointer_pos
-        && let Some(placement_id) = hit_test_placement(state, rect, pointer_pos)
-    {
-        if let Some(id) = state.group_for_member(placement_id) {
-            state.interaction.editing_group_id = Some(id);
-            state.interaction.selected_group_ids.clear();
-            state.set_single_selection(placement_id);
-            return;
-        }
-        if !state.is_selected(placement_id) {
-            state.set_single_selection(placement_id);
-        }
-        state.interaction.pending_focus_selection_request = true;
-        return;
-    }
-
+    // A label usually sits on an image, so its edit wins the double-click.
     if primary_released
         && primary_double_clicked
         && pointer_in_canvas_rect
@@ -640,6 +632,25 @@ pub(super) fn handle_input(
             return;
         }
         state.begin_textbox_edit(annotation_id);
+        return;
+    }
+
+    if primary_released
+        && primary_double_clicked
+        && pointer_in_canvas_rect
+        && let Some(pointer_pos) = pointer_pos
+        && let Some(placement_id) = hit_test_placement(state, rect, pointer_pos)
+    {
+        if let Some(id) = state.group_for_member(placement_id) {
+            state.interaction.editing_group_id = Some(id);
+            state.interaction.selected_group_ids.clear();
+            state.set_single_selection(placement_id);
+            return;
+        }
+        if !state.is_selected(placement_id) {
+            state.set_single_selection(placement_id);
+        }
+        state.interaction.pending_focus_selection_request = true;
         return;
     }
 
@@ -672,6 +683,7 @@ pub(super) fn handle_input(
     }
 
     if let Some(annotation_id) = state.single_selected_annotation_id()
+        && state.interaction.editing_text_annotation_id.is_none()
         && ui.input(|i| i.key_pressed(egui::Key::Enter))
     {
         state.begin_textbox_edit(annotation_id);
@@ -686,19 +698,51 @@ pub(super) fn handle_input(
     apply_canvas_navigation(ui, state, rect, pointer_pos);
 }
 
-fn drawing_annotation_kind(ui: &egui::Ui) -> Option<CanvasAnnotationKind> {
+/// A, L, and S arm a draw mode that the next press on the canvas uses up.
+/// The armed key again, or Escape, disarms. T places a label at `pointer`.
+fn handle_annotation_tool_keys(
+    ui: &egui::Ui,
+    state: &mut CanvasState,
+    pointer: egui::Pos2,
+    rect: egui::Rect,
+) {
     if ui.ctx().egui_wants_keyboard_input() {
-        return None;
+        return;
     }
-
-    if ui.input(|i| i.key_down(egui::Key::A)) {
-        Some(CanvasAnnotationKind::Arrow)
-    } else if ui.input(|i| i.key_down(egui::Key::L)) {
-        Some(CanvasAnnotationKind::Line)
-    } else if ui.input(|i| i.key_down(egui::Key::T)) {
-        Some(CanvasAnnotationKind::Textbox)
-    } else {
-        None
+    let tapped = |key: egui::Key| {
+        ui.input(|input| {
+            input.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key { key: pressed_key, pressed: true, repeat: false, modifiers, .. }
+                        if *pressed_key == key && modifiers.is_none()
+                )
+            })
+        })
+    };
+    for (key, kind) in [
+        (egui::Key::A, CanvasAnnotationKind::Arrow),
+        (egui::Key::L, CanvasAnnotationKind::Line),
+        (egui::Key::S, CanvasAnnotationKind::Rectangle),
+    ] {
+        if tapped(key) {
+            let armed = &mut state.interaction.armed_annotation_kind;
+            *armed = (*armed != Some(kind)).then_some(kind);
+        }
+    }
+    if tapped(egui::Key::T) {
+        state.interaction.armed_annotation_kind = None;
+        state.clear_selection();
+        state.interaction.pending_annotation =
+            pending_annotation_from_draft(AnnotationDraftState::new(
+                CanvasAnnotationKind::Textbox,
+                state.screen_to_world(pointer, rect),
+            ));
+    }
+    if state.interaction.armed_annotation_kind.is_some()
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        state.interaction.armed_annotation_kind = None;
     }
 }
 
@@ -993,7 +1037,6 @@ mod tests {
             CanvasTextSize::default(),
             CanvasStrokeWidth::default(),
             CanvasAnnotationColor::Sky,
-            false,
             false,
         ));
         canvas.select_placements(&[2]);

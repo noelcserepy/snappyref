@@ -230,7 +230,6 @@ mod tests {
             crate::data::CanvasStrokeWidth::M,
             crate::data::CanvasAnnotationColor::Default,
             false,
-            false,
         ));
         canvas.select_content(&[1], &[20]);
 
@@ -433,7 +432,7 @@ pub(crate) struct ClipboardAnnotation {
     pub(crate) text_size: String,
     pub(crate) stroke_width: String,
     pub(crate) color: String,
-    pub(crate) background_enabled: bool,
+    pub(crate) fill: String,
 }
 
 impl ClipboardAnnotation {
@@ -511,7 +510,7 @@ pub(crate) fn copy_selected_board_payload(canvas: &CanvasState) -> Option<Clipbo
             text_size: annotation.text_size.as_str().to_owned(),
             stroke_width: annotation.stroke_width.as_str().to_owned(),
             color: annotation.color.as_str().to_owned(),
-            background_enabled: annotation.background_enabled,
+            fill: annotation.fill.as_str().to_owned(),
         });
     }
 
@@ -712,6 +711,7 @@ pub(crate) fn validate_clipboard_payload(payload: &ClipboardBoardSelection) -> R
             || CanvasTextSize::from_str(&annotation.text_size).is_none()
             || CanvasStrokeWidth::from_str(&annotation.stroke_width).is_none()
             || crate::data::CanvasAnnotationColor::from_str(&annotation.color).is_none()
+            || crate::data::CanvasRectangleFill::from_str(&annotation.fill).is_none()
         {
             return Err(invalid());
         }

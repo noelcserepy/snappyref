@@ -341,7 +341,6 @@ fn filled_textbox_renders_its_allocated_size() {
         Default::default(),
         Default::default(),
         false,
-        false,
     ));
     canvas.create_named_group(7, "Group".into(), &[1]).unwrap();
     canvas
@@ -365,50 +364,6 @@ fn filled_textbox_renders_its_allocated_size() {
             crate::canvas::interaction::textbox_world_rect(textbox).width(),
             width
         );
-    }
-}
-
-/// Saved Fill height stays dormant in Free and for Absolute members, so only
-/// active Fill stops the editor from growing the textbox.
-#[test]
-fn textbox_editor_grows_unless_height_fill_is_active() {
-    for (mode, grows) in [("active", false), ("free", true), ("absolute", true)] {
-        let mut canvas = CanvasState::default();
-        canvas.add_annotation(crate::data::CanvasAnnotation::new(
-            1,
-            crate::data::CanvasAnnotationKind::Textbox,
-            egui::pos2(0.0, 0.0),
-            egui::pos2(240.0, 56.0),
-            "1\n2\n3\n4\n5\n6\n7\n8".into(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            false,
-            false,
-        ));
-        canvas.create_named_group(7, "Group".into(), &[1]).unwrap();
-        canvas
-            .group_edit(|s| {
-                s.set_axis_mode(7, 1, AxisMode::Fixed(100.0)).unwrap();
-                s.set_member_mode(7, 1, 1, true).unwrap();
-                match mode {
-                    "free" => s.set_flow(7, crate::data::GroupFlow::Free),
-                    "absolute" => s.toggle_absolute(7, 1, 0),
-                    _ => Ok(()),
-                }
-            })
-            .unwrap();
-        let before = canvas.group_member_geometry(1).unwrap().size.y;
-        canvas.begin_textbox_edit(1);
-        let mut harness = egui_kittest::Harness::builder().build_ui_state(
-            |ui, canvas: &mut CanvasState| {
-                super::super::render::show_textbox_editor(ui, ui.max_rect(), canvas)
-            },
-            canvas,
-        );
-        harness.run();
-        let after = harness.state().group_member_geometry(1).unwrap().size.y;
-        assert_eq!(after > before, grows, "{mode}: {before} -> {after}");
     }
 }
 

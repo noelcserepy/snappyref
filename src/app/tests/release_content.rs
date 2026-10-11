@@ -238,43 +238,37 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
         .canvas
         .select_content(&[], &segment_ids[..1]);
     harness.step();
-    for (label, width) in [
-        ("S", CanvasStrokeWidth::S),
-        ("M", CanvasStrokeWidth::M),
-        ("L", CanvasStrokeWidth::L),
-    ] {
-        harness.get_by_label(label).click();
-        harness.step();
-        assert_eq!(
-            harness
-                .state()
-                .canvas
-                .annotation_for_id(segment_ids[0])
-                .unwrap()
-                .stroke_width,
-            width
-        );
-    }
-    for color in [
-        crate::data::CanvasAnnotationColor::Default,
-        crate::data::CanvasAnnotationColor::Coral,
-        crate::data::CanvasAnnotationColor::Gold,
-        crate::data::CanvasAnnotationColor::Mint,
-        crate::data::CanvasAnnotationColor::Sky,
-    ] {
+    let selected = |harness: &Harness<'_, SnappyRefApp>| {
         harness
-            .state_mut()
+            .state()
             .canvas
-            .apply_color_to_selected_annotation(color);
-        assert_eq!(
-            harness
-                .state()
-                .canvas
-                .annotation_for_id(segment_ids[0])
-                .unwrap()
-                .color,
-            color
-        );
+            .annotation_for_id(segment_ids[0])
+            .unwrap()
+    };
+    for (key, width) in [
+        (egui::Key::Num1, CanvasStrokeWidth::S),
+        (egui::Key::Num5, CanvasStrokeWidth::Xxl),
+        (egui::Key::Num3, CanvasStrokeWidth::L),
+    ] {
+        shortcut(&mut harness, egui::Modifiers::SHIFT, key);
+        assert_eq!(selected(&harness).stroke_width, width);
+    }
+    for (key, color) in [
+        egui::Key::Num1,
+        egui::Key::Num2,
+        egui::Key::Num3,
+        egui::Key::Num4,
+        egui::Key::Num5,
+    ]
+    .into_iter()
+    .zip(crate::data::CanvasAnnotationColor::ALL)
+    {
+        shortcut(&mut harness, egui::Modifiers::NONE, key);
+        assert_eq!(selected(&harness).color, color);
+    }
+    for kind in [CanvasAnnotationKind::Line, CanvasAnnotationKind::Arrow] {
+        shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::H);
+        assert_eq!(selected(&harness).kind, kind);
     }
     assert_eq!(
         harness
@@ -318,12 +312,9 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
     );
     scenario.capture_screen("segments", &mut harness);
     let note_point = center + egui::vec2(-280., 40.);
-    harness.key_down(egui::Key::T);
+    harness.hover_at(note_point);
     harness.step();
-    inspect_click_at(&harness, note_point, egui::Modifiers::NONE);
-    harness.step();
-    harness.key_up(egui::Key::T);
-    harness.step();
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::T);
     harness.step();
     let text = "Grüezi 日本語\nsecond line gqwe alt";
     harness.event(egui::Event::Text(text.into()));
@@ -338,14 +329,15 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
             .text,
         text
     );
-    for (label, size) in [
-        ("S", CanvasTextSize::S),
-        ("M", CanvasTextSize::M),
-        ("L", CanvasTextSize::L),
-        ("XL", CanvasTextSize::Xl),
+    // Style keys type text while the label is open; Escape leaves it selected.
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Escape);
+    assert!(!harness.ctx.egui_wants_keyboard_input());
+    for (key, size) in [
+        (egui::Key::Num1, CanvasTextSize::S),
+        (egui::Key::Num5, CanvasTextSize::Xxl),
+        (egui::Key::Num3, CanvasTextSize::L),
     ] {
-        harness.get_by_label(label).click();
-        harness.step();
+        shortcut(&mut harness, egui::Modifiers::SHIFT, key);
         assert_eq!(
             harness
                 .state()
@@ -356,47 +348,17 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
             size
         );
     }
-    let before_bg = harness
-        .state()
-        .canvas
-        .annotation_for_id(note_id)
-        .unwrap()
-        .background_enabled;
-    for color in [
-        crate::data::CanvasAnnotationColor::Default,
-        crate::data::CanvasAnnotationColor::Coral,
-        crate::data::CanvasAnnotationColor::Gold,
-        crate::data::CanvasAnnotationColor::Mint,
-        crate::data::CanvasAnnotationColor::Sky,
-    ] {
-        harness
-            .state_mut()
-            .canvas
-            .apply_color_to_editing_textbox(color);
-        assert_eq!(
-            harness
-                .state()
-                .canvas
-                .annotation_for_id(note_id)
-                .unwrap()
-                .color,
-            color
-        );
-    }
-    harness.get_by_label("BG").click();
-    harness.step();
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Num2);
     assert_eq!(
         harness
             .state()
             .canvas
             .annotation_for_id(note_id)
             .unwrap()
-            .background_enabled,
-        !before_bg
+            .color,
+        crate::data::CanvasAnnotationColor::Coral
     );
-    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Escape);
-    assert!(!harness.ctx.egui_wants_keyboard_input());
-    harness.state_mut().canvas.select_content(&[], &[note_id]);
+    harness.hover_at(center + egui::vec2(350., 230.));
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Enter);
     harness.step();
     assert!(harness.ctx.egui_wants_keyboard_input());
@@ -423,14 +385,12 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
     harness.step();
     assert!(!harness.ctx.egui_wants_keyboard_input());
     scenario.assertion(
-        "multiline Unicode, size, BG, Enter, Escape and text Backspace stay editor owned",
+        "multiline Unicode, size, Enter, Escape and text Backspace stay editor owned",
         true,
     );
     scenario.capture_screen("text-edited", &mut harness);
-    // Drag creation uses the same accepted textbox path, with a different default.
-    harness.state_mut().settings.default_textbox_background = true;
     let from = center + egui::vec2(70., 100.);
-    harness.key_down(egui::Key::T);
+    harness.key_down(egui::Key::S);
     harness.step();
     drag(
         &mut harness,
@@ -438,38 +398,12 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
         from + egui::vec2(260., 70.),
         egui::Modifiers::NONE,
     );
-    harness.key_up(egui::Key::T);
+    harness.key_up(egui::Key::S);
     harness.step();
-    harness.step();
-    harness.event(egui::Event::Text("drag created".into()));
-    harness.step();
-    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Escape);
     let id = *harness.state().canvas.all_annotation_ids().last().unwrap();
-    assert_ne!(id, note_id);
-    assert!(
-        harness
-            .state()
-            .canvas
-            .annotation_for_id(id)
-            .unwrap()
-            .background_enabled
-    );
     assert_eq!(
-        harness.state().canvas.annotation_for_id(id).unwrap().text,
-        "drag created"
-    );
-    assert_eq!(
-        harness
-            .state()
-            .canvas
-            .annotation_for_id(note_id)
-            .unwrap()
-            .background_enabled,
-        !before_bg
-    );
-    scenario.assertion(
-        "drag creates text using current background default without changing old text",
-        true,
+        harness.state().canvas.annotation_for_id(id).unwrap().kind,
+        CanvasAnnotationKind::Rectangle
     );
     harness.state_mut().canvas.select_content(&[], &[id]);
     harness.step();
@@ -483,7 +417,6 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
     );
     let resized = harness.state().canvas.annotation_for_id(id).unwrap();
     assert!(resized.end().x > before.end().x + 40.);
-    assert_eq!(resized.text, before.text);
     let body = inspect_world_to_screen(resized.end() - egui::vec2(40., 20.), screen);
     drag(
         &mut harness,
@@ -493,8 +426,25 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
     );
     let moved = harness.state().canvas.annotation_for_id(id).unwrap();
     assert!((moved.start() - resized.start() - egui::vec2(-30., 50.)).length() < 1.);
-    assert_eq!(moved.text, before.text);
-    let text_point = inspect_world_to_screen(moved.start() + egui::vec2(20., 20.), screen);
+    scenario.assertion(
+        "S-drag creates a rectangle, corner resize and body move reshape it",
+        true,
+    );
+    scenario.capture_screen("rectangle-moved", &mut harness);
+
+    harness.state_mut().canvas.select_content(&[], &[note_id]);
+    harness.step();
+    let label = harness.state().canvas.annotation_for_id(note_id).unwrap();
+    let body = inspect_world_to_screen(label.start().lerp(label.end(), 0.5), screen);
+    drag(
+        &mut harness,
+        body,
+        body + egui::vec2(-30., 50.),
+        egui::Modifiers::NONE,
+    );
+    let moved = harness.state().canvas.annotation_for_id(note_id).unwrap();
+    assert!((moved.start() - label.start() - egui::vec2(-30., 50.)).length() < 1.);
+    let text_point = inspect_world_to_screen(moved.start().lerp(moved.end(), 0.5), screen);
     for _ in 0..40 {
         harness.step();
     }
@@ -515,18 +465,21 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
     harness.event(egui::Event::Text("edited after moving".into()));
     harness.step();
     assert_eq!(
-        harness.state().canvas.annotation_for_id(id).unwrap().text,
+        harness
+            .state()
+            .canvas
+            .annotation_for_id(note_id)
+            .unwrap()
+            .text,
         "edited after moving"
     );
     scenario.capture_screen("text-editing-after-move", &mut harness);
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Escape);
     assert!(!harness.ctx.egui_wants_keyboard_input());
     scenario.assertion(
-        "textbox corner resize and body move preserve text, double-click edits it, Escape commits",
+        "label body move preserves text, double-click edits it, Escape commits",
         true,
     );
-
-    scenario.capture_screen("text-drag-created", &mut harness);
     assert!(scenario.finish().passed);
 }
 
@@ -550,7 +503,6 @@ fn inspect_annotation_endpoint_drag_writes_artifact() {
                 CanvasTextSize::M,
                 CanvasStrokeWidth::M,
                 crate::data::CanvasAnnotationColor::Default,
-                false,
             )
             .unwrap();
         ids.push(annotation.id);

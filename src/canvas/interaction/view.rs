@@ -62,6 +62,10 @@ impl CanvasState {
         self.interaction.selected_annotation_ids.clone()
     }
 
+    pub fn next_annotation_style(&self) -> super::super::annotation_style::AnnotationStyle {
+        self.interaction.next_annotation_style
+    }
+
     pub fn background(&self) -> CanvasBackground {
         self.background
     }

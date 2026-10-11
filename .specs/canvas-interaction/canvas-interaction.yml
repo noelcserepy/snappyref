@@ -77,6 +77,10 @@ interface:
         pointer-mode-explicit: Mouse mode must map wheel notches to pointer-centered zoom and high-resolution scroll to pan; Trackpad mode must map pinch to pointer-centered zoom and translation to pan.
         source-preserving-crop: Crop actions must not alter the source Asset.
         annotation-endpoints: Dragging either selected line or arrow endpoint must keep the opposite endpoint fixed and record one undoable edit. Dragging its body must translate the whole segment.
+        annotation-creation-keys: T must place a label under the pointer and start editing it. A, L, and S must arm arrow, line, and rectangle drawing for the next drag only. A click without a drag, the same key, or Escape must disarm without creating anything.
+        annotation-style-keys: 1 to 5 must set color, Shift+1 to 5 must set a label's text size or the weight of a stroke or rectangle border, H must toggle a stroke's arrowhead, and F must step a rectangle's fill through none, tint, and solid. The keys must change the selected annotations, or the next annotation's style when nothing is selected or a draw mode is armed, and every change must carry into the next annotation.
+        annotation-world-weights: Stroke and rectangle border weights must be Board units that scale with zoom.
+        rectangle-pass-through: An unselected rectangle without a solid fill must take presses on its border only, so content under it stays reachable.
         clipboard-delegated: Copy and paste must use Clipboard Exchange so internal mixed content and native external image content follow one boundary policy.
         external-paste-creates: Accepted external image clipboard content must use Placement Creation's committed creation path.
         windows-file-drop-continuity: Installing richer Windows URL-drop handling must preserve file drops supplied by an existing window drop target.

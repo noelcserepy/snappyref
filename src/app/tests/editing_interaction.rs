@@ -77,7 +77,6 @@ fn delete_selected_annotation_records_undo_history() {
             CanvasTextSize::M,
             CanvasStrokeWidth::M,
             crate::data::CanvasAnnotationColor::Sky,
-            true,
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -280,7 +279,6 @@ fn undo_and_redo_defer_storage_until_explicit_flush() {
             CanvasTextSize::M,
             CanvasStrokeWidth::M,
             crate::data::CanvasAnnotationColor::Sky,
-            true,
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -726,7 +724,6 @@ fn context_menu_enables_actions_for_selection() {
             CanvasStrokeWidth::M,
             crate::data::CanvasAnnotationColor::Default,
             false,
-            false,
         ));
     let selection_actions = [
         Copy,
@@ -919,7 +916,6 @@ fn bring_to_front_context_action_persists_canvas_stack_order() {
             CanvasTextSize::default(),
             CanvasStrokeWidth::default(),
             crate::data::CanvasAnnotationColor::default(),
-            false,
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));
@@ -1268,7 +1264,6 @@ fn context_menu_bring_to_front_routes_through_rendered_menu_row() {
             CanvasTextSize::M,
             CanvasStrokeWidth::M,
             crate::data::CanvasAnnotationColor::Gold,
-            false,
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));

@@ -262,18 +262,13 @@ impl ItemGeometry {
 fn note_textbox(library: &Library, note: &PureRefNote) -> CanvasAnnotation {
     let transform = note.transform;
     let note_font = NOTE_FONT_PX * transform.m11.hypot(transform.m12) as f32;
-    let text_size = [
-        CanvasTextSize::S,
-        CanvasTextSize::M,
-        CanvasTextSize::L,
-        CanvasTextSize::Xl,
-    ]
-    .into_iter()
-    .min_by(|a, b| {
-        let distance = |size| (textbox_font_size(size) - note_font).abs();
-        distance(*a).total_cmp(&distance(*b))
-    })
-    .unwrap_or_default();
+    let text_size = CanvasTextSize::ALL
+        .into_iter()
+        .min_by(|a, b| {
+            let distance = |size| (textbox_font_size(size) - note_font).abs();
+            distance(*a).total_cmp(&distance(*b))
+        })
+        .unwrap_or_default();
     let (x, y) = transform.map_point(0.0, 0.0);
     let center = pos2(x as f32, y as f32);
     library.new_canvas_annotation(
@@ -284,7 +279,6 @@ fn note_textbox(library: &Library, note: &PureRefNote) -> CanvasAnnotation {
         text_size,
         CanvasStrokeWidth::default(),
         CanvasAnnotationColor::default(),
-        false,
     )
 }
 

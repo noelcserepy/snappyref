@@ -68,8 +68,7 @@ fn textbox_resize_respects_minimum_size() {
     );
 
     assert_eq!(resized.min, eframe::egui::pos2(20.0, 40.0));
-    assert_eq!(resized.width(), 240.0);
-    assert_eq!(resized.height(), 56.0);
+    assert_eq!(resized.size(), crate::canvas::MIN_TEXTBOX_WORLD_SIZE);
 }
 
 #[test]
@@ -104,7 +103,6 @@ fn textbox_resize_hit_test_matches_visible_right_edge_zone() {
         default_text_size(),
         default_stroke_width(),
         default_annotation_color(),
-        false,
         false,
     );
 
@@ -189,26 +187,7 @@ fn placement_resize_respects_minimum_scale() {
 }
 
 #[test]
-fn textbox_empty_hotspot_preserves_draggable_body_area() {
-    eframe::egui::__run_test_ui(|ui| {
-        let content_rect = eframe::egui::Rect::from_min_size(
-            eframe::egui::pos2(24.0, 24.0),
-            eframe::egui::vec2(280.0, 96.0),
-        );
-        let hotspot = textbox_empty_hotspot_rect(ui, content_rect, default_text_size(), 1.0);
-
-        assert!(hotspot.width() < content_rect.width());
-        assert!(hotspot.height() < content_rect.height());
-        assert!(hotspot.contains(content_rect.min));
-        assert!(!hotspot.contains(eframe::egui::pos2(
-            content_rect.right() - 8.0,
-            content_rect.bottom() - 8.0,
-        )));
-    });
-}
-
-#[test]
-fn textbox_edge_press_on_selected_textbox_starts_resize() {
+fn rectangle_edge_press_on_selected_rectangle_starts_resize() {
     eframe::egui::__run_test_ui(|ui| {
         let mut state = CanvasState::default();
         let canvas_rect = eframe::egui::Rect::from_min_max(
@@ -217,14 +196,13 @@ fn textbox_edge_press_on_selected_textbox_starts_resize() {
         );
         state.add_annotation(CanvasAnnotation::new(
             19,
-            CanvasAnnotationKind::Textbox,
+            CanvasAnnotationKind::Rectangle,
             eframe::egui::pos2(20.0, 40.0),
             eframe::egui::pos2(320.0, 180.0),
             "short".to_owned(),
             default_text_size(),
             default_stroke_width(),
             default_annotation_color(),
-            false,
             false,
         ));
         state.interaction.selected_annotation_ids = vec![19];
@@ -281,7 +259,6 @@ fn marquee_selects_textboxes_and_shift_marquee_adds_to_them() {
             default_text_size(),
             default_stroke_width(),
             default_annotation_color(),
-            false,
             false,
         ));
     }
@@ -449,7 +426,6 @@ fn moved_canvas_stack_order_controls_overlapping_context_selection() {
         default_stroke_width(),
         default_annotation_color(),
         false,
-        false,
     ));
     state.set_canvas_stack_order(vec![
         CanvasStackItem::Annotation(20),
@@ -485,7 +461,6 @@ fn context_click_inside_existing_mixed_selection_preserves_selection() {
         default_stroke_width(),
         default_annotation_color(),
         false,
-        false,
     ));
     state.select_content(&[1], &[20]);
 
@@ -515,7 +490,6 @@ fn context_click_on_grouped_image_selects_group_textbox_members() {
         default_text_size(),
         default_stroke_width(),
         default_annotation_color(),
-        false,
         false,
     ));
     state.restore_groups(vec![crate::data::Group {

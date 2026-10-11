@@ -107,8 +107,10 @@ fn paste_payload(
             .ok_or_else(|| format!("unknown copied stroke width: {}", annotation.stroke_width))?;
         let color = crate::data::CanvasAnnotationColor::from_str(&annotation.color)
             .ok_or_else(|| format!("unknown copied annotation color: {}", annotation.color))?;
+        let fill = crate::data::CanvasRectangleFill::from_str(&annotation.fill)
+            .ok_or_else(|| format!("unknown copied rectangle fill: {}", annotation.fill))?;
         let geometry = annotation.translated_geometry(kind, delta);
-        let pasted = library.new_canvas_annotation(
+        let mut pasted = library.new_canvas_annotation(
             kind,
             geometry.start(),
             geometry.end(),
@@ -116,8 +118,8 @@ fn paste_payload(
             text_size,
             stroke_width,
             color,
-            annotation.background_enabled,
         );
+        pasted.fill = fill;
         pasted_annotation_ids.push(pasted.id);
         context.canvas.mark_annotation_for_persistence(pasted.id);
         context.canvas.add_annotation(pasted);
