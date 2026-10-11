@@ -254,7 +254,8 @@ fn tools() -> Vec<Tool> {
         read(
             "screenshot",
             "Returns a PNG of the app window as the user sees it. Fails while the window is \
-             hidden or minimized.",
+             minimized or fully covered by other windows, which is likely right after a tool \
+             call started the app behind them.",
             json!({}),
             &[],
         ),

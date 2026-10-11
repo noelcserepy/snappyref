@@ -81,7 +81,7 @@ looks like this, with the path to your install:
 ```
 
 The client starts `snappyref --mcp`, which talks to the running app and starts
-it when it is closed. There are 19 tools. `get_board` returns the open board as
+it behind your other windows when it is closed. There are 19 tools. `get_board` returns the open board as
 JSON and `edit_board` applies a batch of edits as one undo step. The rest cover
 boards, image import, library search, the view, selection, screenshots, PureRef
 export and settings. The app listens on 127.0.0.1 only, and a client needs the

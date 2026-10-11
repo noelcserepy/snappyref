@@ -158,12 +158,14 @@ impl AppConnection {
 }
 
 /// Starts the GUI as its own process so it outlives this MCP session. It
-/// inherits the environment, so a data root override carries over.
+/// inherits the environment, so a data root override carries over. The user is
+/// working in another app when a client calls, so the window opens behind it.
 fn launch_app() -> Result<(), String> {
     let exe =
         std::env::current_exe().map_err(|error| format!("Failed to locate SnappyRef: {error}"))?;
     let mut command = std::process::Command::new(exe);
     command
+        .arg("--no-startup-focus")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());

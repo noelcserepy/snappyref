@@ -95,6 +95,7 @@ interface:
         endpoint-file-private: The endpoint file must be readable by the user only where the platform supports it.
         catalogue-without-app: Listing tools must work while the app is closed.
         launches-when-on: With access on and no app answering, a tool call must start the app and wait for it.
+        launches-behind: The app a tool call starts must not take focus or come in front of the app the user is working in.
         never-launches-when-off: With access Off, a tool call must explain where to turn access on and must not start the app.
 
       caller_obligations: {}
