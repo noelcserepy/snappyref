@@ -21,6 +21,8 @@ pub(super) use overlays::{
     paint_crop_marquee, paint_guide_snap_indicators, paint_hover_hairline, paint_marquee,
     paint_provisional_placement_previews, paint_selected_placement_borders, paint_selection_bounds,
 };
+#[cfg(test)]
+pub(super) use textbox_editor::fit_label_to_text;
 pub(super) use textbox_editor::{
     layout_textbox_galley, show_textbox_editor, textbox_layout_cache_key, textbox_pointer_region,
 };

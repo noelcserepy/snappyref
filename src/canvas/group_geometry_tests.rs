@@ -359,6 +359,15 @@ fn filled_textbox_renders_its_allocated_size() {
                 s.use_dock(Control::Padding(padding))
             })
             .unwrap();
+        // Painting fits a label to its text, except along a filled axis.
+        let mut harness = egui_kittest::Harness::builder().build_ui_state(
+            |ui, canvas: &mut CanvasState| {
+                super::super::render::fit_label_to_text(ui.ctx(), canvas, 0)
+            },
+            std::mem::take(&mut canvas),
+        );
+        harness.run();
+        canvas = std::mem::take(harness.state_mut());
         let textbox = canvas.annotation_by_id(1).unwrap();
         assert_eq!(
             crate::canvas::interaction::textbox_world_rect(textbox).width(),

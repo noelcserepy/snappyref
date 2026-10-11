@@ -41,10 +41,19 @@ pub(crate) fn begin_annotation_drag(
         .iter()
         .filter_map(|selected_id| {
             state.annotation_by_id(*selected_id).map(|annotation| {
-                (
-                    *selected_id,
-                    SegmentGeometry::new(annotation.start(), annotation.end(), 0),
-                )
+                // A dragged end starts where its handle shows, which is the
+                // label's edge when the end sits on a label.
+                let (shown_start, shown_end) = annotation_screen_points(state, rect, annotation);
+                let (start, end) = match endpoint {
+                    Some(AnnotationEndpoint::Start) => {
+                        (state.screen_to_world(shown_start, rect), annotation.end())
+                    }
+                    Some(AnnotationEndpoint::End) => {
+                        (annotation.start(), state.screen_to_world(shown_end, rect))
+                    }
+                    None => (annotation.start(), annotation.end()),
+                };
+                (*selected_id, SegmentGeometry::new(start, end, 0))
             })
         })
         .collect::<Vec<_>>();

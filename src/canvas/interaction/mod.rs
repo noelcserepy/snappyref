@@ -9,9 +9,10 @@ mod selection;
 mod textbox;
 mod viewport;
 
+pub(crate) use annotation::annotation_screen_points;
 pub(super) use annotation::{
-    annotation_hit_test, annotation_screen_points, annotation_screen_rect, annotation_world_rect,
-    begin_annotation_drag, hit_test_annotation, pending_annotation_from_draft,
+    annotation_hit_test, annotation_screen_rect, annotation_world_rect, begin_annotation_drag,
+    hit_test_annotation, pending_annotation_from_draft,
 };
 pub(super) use crop::begin_crop;
 pub(super) use placement_transform::{

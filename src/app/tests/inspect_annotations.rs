@@ -549,6 +549,43 @@ fn inspect_annotation_style_keys_writes_artifact() {
                 == crate::data::CanvasAnnotationKind::Arrow,
     );
 
+    let drawn = last_annotation(&harness);
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::A);
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::H);
+    drag(
+        &mut harness,
+        at("woman-water-pitcher", 0.3, 0.3),
+        at("woman-water-pitcher", 0.6, 0.6),
+        egui::Modifiers::NONE,
+    );
+    scenario.assertion(
+        "H on an armed arrow draws a line and leaves the arrow drawn before it alone",
+        annotation(&harness, drawn).kind == crate::data::CanvasAnnotationKind::Arrow
+            && annotation(&harness, last_annotation(&harness)).kind
+                == crate::data::CanvasAnnotationKind::Line,
+    );
+
+    // The arrow starts on a label, so its start handle shows at the label's edge.
+    let point = along(&harness, arrow, 0.6);
+    settle_at(&mut harness, Some(point), empty);
+    let handle = crate::canvas::annotation_screen_points(
+        &harness.state().canvas,
+        screen,
+        &annotation(&harness, arrow),
+    )
+    .0;
+    let drop = handle + egui::vec2(-60., 90.);
+    drag(&mut harness, handle, drop, egui::Modifiers::NONE);
+    let start = inspect_world_to_screen(annotation(&harness, arrow).start(), screen);
+    scenario.fact(
+        "endpoint_drop_miss",
+        serde_json::json!(start.distance(drop)),
+    );
+    scenario.assertion(
+        "an end dragged off a label lands where it is dropped",
+        start.distance(drop) < 2.,
+    );
+
     let report = scenario.finish();
     assert!(report.passed, "{}", report.artifact_dir.display());
 }

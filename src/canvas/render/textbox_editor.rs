@@ -71,14 +71,22 @@ pub(crate) fn textbox_size_for_text(
     text_extent + 2.0 * label_text_offset(text_size)
 }
 
-/// Keeps a label's stored rect equal to its text. The top-left stays put.
+/// Keeps a label's stored rect equal to its text, except on an axis a Group
+/// fills. The top-left stays put.
 pub(crate) fn fit_label_to_text(ctx: &egui::Context, state: &mut CanvasState, index: usize) {
     let annotation = &state.document.annotations[index];
     if annotation.kind != CanvasAnnotationKind::Textbox {
         return;
     }
-    let size = textbox_size_for_text(ctx, &annotation.text, annotation.text_size);
+    let mut size = textbox_size_for_text(ctx, &annotation.text, annotation.text_size);
     let world_rect = textbox_world_rect(annotation);
+    // A Group's Fill owns that axis of a member label.
+    let fill = state.group_member_fill(annotation.id);
+    for axis in 0..2 {
+        if fill[axis] {
+            size[axis] = world_rect.size()[axis];
+        }
+    }
     if (world_rect.size() - size).abs().max_elem() < 0.01 {
         return;
     }
