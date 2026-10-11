@@ -104,7 +104,8 @@ pub(super) fn handle_keys(ui: &egui::Ui, state: &mut CanvasState) {
 
     let mut change = None;
     // An armed draw mode is about the next annotation, so its style keys
-    // leave the selection alone. H swaps an armed arrow and line.
+    // drop the selection instead of restyling it. H swaps an armed arrow and
+    // line.
     if let Some(armed) = state.interaction.armed_annotation_kind
         && (head || fill || !digits.is_empty())
     {

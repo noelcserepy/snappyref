@@ -550,6 +550,7 @@ fn inspect_annotation_style_keys_writes_artifact() {
     );
 
     let drawn = last_annotation(&harness);
+    harness.state_mut().canvas.select_content(&[], &[drawn]);
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::A);
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::H);
     drag(

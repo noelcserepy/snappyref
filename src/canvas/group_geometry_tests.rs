@@ -360,17 +360,29 @@ fn filled_textbox_renders_its_allocated_size() {
             })
             .unwrap();
         // Painting fits a label to its text, except along a filled axis.
-        let mut harness = egui_kittest::Harness::builder().build_ui_state(
-            |ui, canvas: &mut CanvasState| {
-                super::super::render::fit_label_to_text(ui.ctx(), canvas, 0)
+        let rect = egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(2000.0, 2000.0));
+        let _ = crate::ui::test_frame::run_ui(
+            &egui::Context::default(),
+            egui::RawInput {
+                screen_rect: Some(rect),
+                ..Default::default()
             },
-            std::mem::take(&mut canvas),
+            |ui| {
+                crate::canvas::show(
+                    ui,
+                    rect,
+                    rect,
+                    &mut canvas,
+                    None,
+                    false,
+                    crate::canvas::CanvasInputPolicy::Full,
+                    false,
+                );
+            },
         );
-        harness.run();
-        canvas = std::mem::take(harness.state_mut());
-        let textbox = canvas.annotation_by_id(1).unwrap();
+        let textbox = canvas.annotation_for_id(1).unwrap();
         assert_eq!(
-            crate::canvas::interaction::textbox_world_rect(textbox).width(),
+            crate::canvas::interaction::textbox_world_rect(&textbox).width(),
             width
         );
     }
