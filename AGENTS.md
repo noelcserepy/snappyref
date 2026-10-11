@@ -9,6 +9,7 @@ several roles. [src/lib.rs](src/lib.rs) dispatches on the launch arguments:
 - no flag: the GUI process
 - `--imageprep`: a short-lived helper subprocess that decodes and prepares one image
 - `--semantic-embed-server`: a subprocess hosting the SigLIP2 model for embedding requests
+- `--mcp`: an MCP server on stdio that forwards an AI client's tool calls to the GUI process
 - `--windows-self-replace-runner`: Windows only. Swaps `snappyref.exe` after the
   GUI exits, in [windows_self_replace.rs](src/updater/windows_self_replace.rs)
 
@@ -55,6 +56,10 @@ their imported images and the downloaded model.
   [Local data location](src/local_data_location.rs) resolves shared roots.
 - [Semantic Search](src/search/semantic/mod.rs) owns model readiness and indexing.
   [Updater](src/updater/mod.rs) owns discovery and staging.
+
+- [AI control](src/control/mod.rs) owns the `--mcp` role, the tool catalogue, and
+  the local endpoint. [App control](src/app/control/mod.rs) runs each tool call
+  on the UI thread.
 
 The [.specs tree](.specs/) records product contracts. Shared visual rules live
 in [theme](src/ui/theme.rs) and [motion](src/ui/motion.rs).

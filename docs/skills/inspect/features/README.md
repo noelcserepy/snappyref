@@ -68,3 +68,5 @@ Windows.
   and placing results.
 - [PureRef exchange](./pureref-exchange.md): `.pur` drop import and ⇧⌘E
   export.
+- [AI control](./ai-control.md): the access setting, MCP tool calls, and the
+  confirmation an AI client waits on.

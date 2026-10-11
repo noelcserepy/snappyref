@@ -1,5 +1,6 @@
-//! The Settings tab: a page bar over General and Keys. General ends with
-//! Semantic Search and About, the two things the app installs or updates.
+//! The Settings tab: a page bar over General and Keys. General ends with AI
+//! control, then Semantic Search and About, the two things the app installs
+//! or updates.
 
 use eframe::egui::{self, Align2, FontId, RichText};
 
@@ -9,7 +10,7 @@ use super::{
     about,
 };
 use crate::app::TOGGLE_ALWAYS_ON_TOP;
-use crate::data::{CanvasBackground, PointerMode};
+use crate::data::{AiControlAccess, CanvasBackground, PointerMode};
 use crate::ui::{card, theme};
 
 /// Two controls side by side on the card's inner column.
@@ -79,6 +80,7 @@ pub(super) fn show(
     super::scroll(ui, ("sidebar_settings", page), |ui| match page {
         Page::General => {
             result.settings_changed |= general(ui, settings, canvas);
+            ai_control(ui, settings, result);
             card::section(ui, "Semantic search");
             if status_row(ui, &search) {
                 result.semantic_search_action = Some(search_action);
@@ -144,6 +146,44 @@ fn general(
         changed = true;
     }
     changed
+}
+
+/// Who may drive the app through `snappyref --mcp`, and the config an AI
+/// client needs to do it.
+fn ai_control(
+    ui: &mut egui::Ui,
+    settings: &mut crate::data::WorkspaceSettings,
+    result: &mut SidebarRenderResult,
+) {
+    card::section(ui, "AI control");
+    let levels = [
+        (AiControlAccess::Off, "Off", Icon::NoGuide),
+        (AiControlAccess::Ask, "Ask", Icon::Ask),
+        (AiControlAccess::Full, "Full", Icon::FullAccess),
+    ];
+    if let Some(level) = choice(ui, &levels, settings.ai_control) {
+        settings.ai_control = level;
+        result.settings_changed = true;
+    }
+    detail(
+        ui,
+        match settings.ai_control {
+            AiControlAccess::Off => "AI clients cannot reach SnappyRef.",
+            AiControlAccess::Ask => {
+                "AI clients on this computer can read and edit your boards. You confirm \
+                 before they remove library images or change the search model."
+            }
+            AiControlAccess::Full => {
+                "AI clients on this computer can do everything without asking, including \
+                 removing library images."
+            }
+        },
+    );
+    if settings.ai_control != AiControlAccess::Off
+        && card::action(ui, "Copy MCP config", true).clicked()
+    {
+        result.copy_mcp_config_clicked = true;
+    }
 }
 
 /// A wrapped line of quiet text under the control it explains.

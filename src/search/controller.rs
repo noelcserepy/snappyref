@@ -45,6 +45,8 @@ pub(crate) struct SearchController {
     pub(super) embedding_backfill: EmbeddingBackfillScheduler,
     pending_demand_embeddings: HashSet<i64>,
     next_search_request_id: u64,
+    /// Searches app control waits on, apart from the overlay's query.
+    direct_searches: HashMap<u64, Option<SearchQueryResult>>,
     pub(super) recent_searches: Vec<String>,
     recent_searches_dirty: bool,
     pub(super) local_model_store_status: Option<LocalModelStoreStatus>,
@@ -118,10 +120,11 @@ impl SearchController {
             .is_some_and(LocalModelStoreStatus::assets_available)
     }
 
-    pub(crate) fn local_model_assets_missing(&self) -> bool {
+    /// Known to be absent, whether never downloaded or after a failed download.
+    pub(crate) fn local_model_needs_install(&self) -> bool {
         matches!(
             self.local_model_store_status,
-            Some(LocalModelStoreStatus::Missing)
+            Some(LocalModelStoreStatus::Missing | LocalModelStoreStatus::Failed(_))
         )
     }
 
@@ -357,12 +360,49 @@ impl SearchController {
         }
 
         for result in search_results {
-            self.process_search_result(result);
+            match self.direct_searches.get_mut(&result.request_id()) {
+                Some(waiting) => *waiting = Some(result),
+                None => self.process_search_result(result),
+            }
         }
 
         if refresh_active_query {
             self.submit_query();
         }
+    }
+
+    /// Starts a search outside the overlay. `take_direct_search_result`
+    /// returns its result once the service answers.
+    pub(crate) fn start_direct_search(
+        &mut self,
+        query: Option<&str>,
+        similar_to: Option<i64>,
+        limit: usize,
+    ) -> Result<u64, String> {
+        let request_id = self.next_request_id();
+        let service = self.service.as_ref().ok_or("Search is unavailable")?;
+        match similar_to {
+            Some(asset_id) => service
+                .enqueue_search_with_image_pivot_with_limit(request_id, asset_id, query, limit)?,
+            None => {
+                service.enqueue_search_with_limit(request_id, query.unwrap_or_default(), limit)?
+            }
+        }
+        self.direct_searches.insert(request_id, None);
+        Ok(request_id)
+    }
+
+    pub(crate) fn take_direct_search_result(
+        &mut self,
+        request_id: u64,
+    ) -> Option<SearchQueryResult> {
+        let result = self.direct_searches.get_mut(&request_id)?.take()?;
+        self.direct_searches.remove(&request_id);
+        Some(result)
+    }
+
+    pub(crate) fn forget_direct_search(&mut self, request_id: u64) {
+        self.direct_searches.remove(&request_id);
     }
 
     pub(super) fn search_work_in_flight(&self, now: Instant) -> bool {
@@ -1006,7 +1046,7 @@ mod tests {
         assert!(search.embedding_backfill.exhausted);
 
         search.remove_semantic_search_assets_with(&mut status, || Ok(()));
-        assert!(search.local_model_assets_missing());
+        assert!(search.local_model_needs_install());
         assert!(matches!(search.overlay.status, SearchOverlayStatus::Ready));
         assert!(!search.embedding_backfill.exhausted);
         assert_eq!(status, "Semantic Search removed");

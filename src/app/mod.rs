@@ -19,6 +19,7 @@ const STARTUP_VIEWPORT_SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
 const USER_SESSION_SAVE_DEBOUNCE: Duration = Duration::from_millis(750);
 
 mod context_menu;
+mod control;
 mod dialogs;
 mod history;
 mod import_intake;
@@ -230,6 +231,7 @@ pub struct SnappyRefApp {
     pureref_export_requested: bool,
     /// Asks where to save an export. Tests replace the native save panel.
     pureref_save_path: Box<dyn FnMut(&eframe::Frame, &str) -> Option<std::path::PathBuf>>,
+    control: control::AppControl,
 }
 
 impl SnappyRefApp {
@@ -277,6 +279,9 @@ impl SnappyRefApp {
         app.library = Some(library);
         app.apply_user_session(startup.session);
         app.refresh_board_summaries();
+        if let Ok(library_root) = config.library_root() {
+            app.start_control(&cc.egui_ctx, library_root.to_path_buf());
+        }
         app.search.sync_service(
             app.library.as_ref(),
             &mut app.status,
@@ -340,6 +345,7 @@ impl SnappyRefApp {
             pureref_exchange: Default::default(),
             pureref_export_requested: false,
             pureref_save_path: Box::new(crate::platform::save_dialog::pureref_save_path),
+            control: Default::default(),
         }
     }
 
@@ -674,34 +680,34 @@ impl SnappyRefApp {
     }
 
     fn confirm_pending_library_remove(&mut self) {
-        let Some(pending) = self.pending_library_remove.take() else {
-            return;
-        };
+        if let Some(pending) = self.pending_library_remove.take() {
+            self.remove_library_assets(&pending.asset_ids);
+        }
+    }
 
+    fn remove_library_assets(&mut self, asset_ids: &[i64]) {
         let Some(library) = &self.library else {
             self.status = "Storage unavailable".to_owned();
             return;
         };
 
-        if let Err(error) = library.archive_assets(&pending.asset_ids) {
+        if let Err(error) = library.archive_assets(asset_ids) {
             self.status = error;
             return;
         }
 
-        self.board_editing
-            .documents
-            .remove_assets(&pending.asset_ids);
-        self.canvas.remove_assets(&pending.asset_ids);
+        self.board_editing.documents.remove_assets(asset_ids);
+        self.canvas.remove_assets(asset_ids);
         {
             self.search.invalidate_library_search_cache();
         }
         self.refresh_board_summaries();
-        let noun = if pending.asset_ids.len() == 1 {
+        let noun = if asset_ids.len() == 1 {
             "asset"
         } else {
             "assets"
         };
-        self.status = format!("Removed {} library {noun}", pending.asset_ids.len());
+        self.status = format!("Removed {} library {noun}", asset_ids.len());
     }
 
     fn canvas_input_policy(&self, ctx: &egui::Context) -> crate::canvas::CanvasInputPolicy {
@@ -735,7 +741,7 @@ impl SnappyRefApp {
         let choice = Dialog {
             id: "remove-from-library",
             title: &title,
-            detail,
+            detail: &self.ai_request_note(detail),
             cancel: "Cancel",
             action: DialogAction::Destructive("Remove"),
         }
@@ -1223,6 +1229,7 @@ impl eframe::App for SnappyRefApp {
         self.handle_import_results(ctx);
         self.handle_pureref_exchange_results(ctx);
         self.search.handle_results();
+        self.drive_control(ctx);
         self.drive_semantic_search_install(ctx);
         self.drive_embedding_backfill(ctx);
         let settled_idle = self.app_settled_idle();
@@ -1374,6 +1381,7 @@ impl eframe::App for SnappyRefApp {
             if self.settings.always_on_top != always_on_top_before {
                 self.apply_always_on_top_window_level(ui.ctx());
             }
+            self.sync_control_server(ui.ctx());
             self.search.sync_service(
                 self.library.as_ref(),
                 &mut self.status,
@@ -1382,6 +1390,9 @@ impl eframe::App for SnappyRefApp {
         }
         if sidebar_result.update_action_clicked {
             self.handle_update_action_click(ui.ctx());
+        }
+        if sidebar_result.copy_mcp_config_clicked {
+            self.copy_mcp_config(ui.ctx());
         }
         let mut settings_changed = sidebar_result.settings_changed;
         if self.sync_last_update_check_timestamp() {

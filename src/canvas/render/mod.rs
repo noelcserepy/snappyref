@@ -22,7 +22,8 @@ pub(super) use overlays::{
     paint_provisional_placement_previews, paint_selected_placement_borders, paint_selection_bounds,
 };
 pub(super) use textbox_editor::{
-    layout_textbox_galley, show_textbox_editor, textbox_layout_cache_key, textbox_pointer_region,
+    fit_label_to_text, layout_textbox_galley, show_textbox_editor, textbox_layout_cache_key,
+    textbox_pointer_region,
 };
 pub(crate) use textbox_editor::{textbox_font_size, textbox_size_for_text};
 

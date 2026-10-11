@@ -1,5 +1,6 @@
 mod board_lifecycle;
 mod completion;
+mod control;
 mod editing_interaction;
 mod inspect_media;
 mod inspect_scenarios;

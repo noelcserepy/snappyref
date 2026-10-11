@@ -57,6 +57,36 @@ through ONNX Runtime. Queries and embeddings never leave your machine. The
 model lives in a `models/` folder next to the Library, and app updates do not
 touch either.
 
+## AI control
+
+Off until you turn it on. In the sidebar open Settings, General, AI control and
+choose a level:
+
+- Ask. AI clients on this computer can read and edit your boards. You confirm
+  in the app before they remove library images or change the search model.
+- Full access. Nothing asks.
+
+Then press Copy MCP config and paste it into your AI client's MCP settings. It
+looks like this, with the path to your install:
+
+```json
+{
+  "mcpServers": {
+    "snappyref": {
+      "command": "/Applications/SnappyRef.app/Contents/MacOS/snappyref",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+The client starts `snappyref --mcp`, which talks to the running app and starts
+it when it is closed. There are 19 tools. `get_board` returns the open board as
+JSON and `edit_board` applies a batch of edits as one undo step. The rest cover
+boards, image import, library search, the view, selection, screenshots, PureRef
+export and settings. The app listens on 127.0.0.1 only, and a client needs the
+token in `control.json` inside your Library folder.
+
 ## Build from source
 
 You need Rust stable and a C compiler. SQLite is compiled from source by

@@ -375,6 +375,7 @@ fn library_written_by_v0_2_0_opens_with_boards_content_and_session() {
                 rotation_snap_degrees: 30.0,
                 pointer_mode: PointerMode::Trackpad,
                 always_on_top: true,
+                ai_control: Default::default(),
                 last_update_check_at: Some(1_779_000_000_000),
             },
             sidebar_open: true,

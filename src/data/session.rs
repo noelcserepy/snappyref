@@ -33,6 +33,17 @@ pub enum PointerMode {
     Trackpad,
 }
 
+/// Whether an AI client may drive the app through `snappyref --mcp`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiControlAccess {
+    #[default]
+    Off,
+    /// The user confirms in the app before an action Undo cannot reverse.
+    Ask,
+    Full,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ViewportState {
     pub camera_pan_x: f32,
@@ -96,6 +107,8 @@ pub struct WorkspaceSettings {
     pub pointer_mode: PointerMode,
     #[serde(default)]
     pub always_on_top: bool,
+    #[serde(default)]
+    pub ai_control: AiControlAccess,
     /// Unix-epoch milliseconds of the most recent completed update
     /// discovery check. `None` means the app has not yet performed a
     /// check on this machine; About / Updates renders that as "never".
@@ -129,6 +142,7 @@ impl Default for WorkspaceSettings {
             rotation_snap_degrees: DEFAULT_ROTATION_SNAP_DEGREES,
             pointer_mode: PointerMode::default(),
             always_on_top: false,
+            ai_control: AiControlAccess::default(),
             last_update_check_at: None,
         }
     }

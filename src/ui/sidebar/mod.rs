@@ -42,6 +42,7 @@ pub(crate) struct SidebarRenderResult {
     /// True when the About update action was activated this frame.
     pub update_action_clicked: bool,
     pub semantic_search_action: Option<SemanticSearchSettingsAction>,
+    pub copy_mcp_config_clicked: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,6 +135,7 @@ pub(crate) fn show_sidebar(
         board_action: None,
         update_action_clicked: false,
         semantic_search_action: None,
+        copy_mcp_config_clicked: false,
     };
     if !sidebar_open {
         return result;
@@ -208,6 +210,7 @@ pub(crate) fn show_sidebar(
         result.board_action = None;
         result.update_action_clicked = false;
         result.semantic_search_action = None;
+        result.copy_mcp_config_clicked = false;
     }
     result
 }

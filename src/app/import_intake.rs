@@ -161,7 +161,7 @@ impl SnappyRefApp {
     ) {
         self.enqueue_sources_at(sources, screen_rect, desired_world, None);
     }
-    fn enqueue_sources_at(
+    pub(super) fn enqueue_sources_at(
         &mut self,
         sources: Vec<ImportSource>,
         screen_rect: egui::Rect,

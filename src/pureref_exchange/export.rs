@@ -25,6 +25,14 @@ const PUREREF_IMAGE_MIME_TYPES: &[&str] = &[
     "image/tiff",
 ];
 
+/// What an export does with a file already at its path.
+#[derive(Clone, Copy)]
+pub(crate) enum ExistingFile {
+    /// The save dialog asked the user first.
+    Replace,
+    Keep,
+}
+
 pub(crate) struct PureRefExportPlan {
     /// Loaded placements in formats PureRef can open, back to front.
     placements: Vec<(Asset, RectGeometry)>,
@@ -153,7 +161,14 @@ fn left_out(images: usize, annotations: usize) -> String {
 pub(super) fn export_board(
     plan: PureRefExportPlan,
     path: PathBuf,
+    existing: ExistingFile,
 ) -> Result<ExportedPureRefBoard, String> {
+    // Claiming the path before any original is read refuses an existing file
+    // at once, and nothing can take the path while the board is read.
+    let claimed = match existing {
+        ExistingFile::Keep => Some(claim_new_file(&path)?),
+        ExistingFile::Replace => None,
+    };
     let mut board = PureRefBoard {
         images: Vec::new(),
         image_items: Vec::new(),
@@ -191,7 +206,21 @@ pub(super) fn export_board(
         });
     }
 
-    write_atomically(&path, &write_board(&board)?)?;
+    let bytes = write_board(&board);
+    match claimed {
+        Some(mut file) => {
+            let written = bytes.and_then(|bytes| {
+                std::io::Write::write_all(&mut file, &bytes)
+                    .map_err(|error| write_error(&path, error))
+            });
+            drop(file);
+            if written.is_err() {
+                let _ = std::fs::remove_file(&path);
+            }
+            written?;
+        }
+        None => write_atomically(&path, &bytes?)?,
+    }
     Ok(ExportedPureRefBoard {
         path,
         images: board.image_items.len(),
@@ -219,22 +248,57 @@ fn item_transform(geometry: RectGeometry, width: u32, height: u32) -> PureRefTra
     }
 }
 
+fn write_error(path: &Path, error: std::io::Error) -> String {
+    format!("failed to write {}: {error}", path.display())
+}
+
+/// `create_new` fails when anything sits at `path`, so the claim and the
+/// refusal are one step.
+fn claim_new_file(path: &Path) -> Result<std::fs::File, String> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::AlreadyExists => format!("{} already exists", path.display()),
+            _ => write_error(path, error),
+        })
+}
+
 /// Writes a fresh sibling file, then renames it over `path`. `create_new` refuses
 /// an existing path, so a leftover file or symlink there is never written through.
 fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut temporary = path.as_os_str().to_owned();
     temporary.push(format!(".{}.tmp", std::process::id()));
     let temporary = PathBuf::from(temporary);
-    let error = |error: std::io::Error| format!("failed to write {}: {error}", path.display());
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(error)?;
+    let mut file = claim_new_file(&temporary)?;
     std::io::Write::write_all(&mut file, bytes)
         .and_then(|()| std::fs::rename(&temporary, path))
-        .map_err(|io_error| {
+        .map_err(|error| {
             let _ = std::fs::remove_file(&temporary);
-            error(io_error)
+            write_error(path, error)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_keeps_a_file_already_at_its_path() {
+        let root = crate::test_support::TempRoot::new("snappyref-pureref-export-keep");
+        let path = root.join("board.pur");
+        std::fs::write(&path, b"theirs").unwrap();
+        let plan = PureRefExportPlan {
+            placements: Vec::new(),
+            notes: Vec::new(),
+            skipped_images: 0,
+            skipped_annotations: 0,
+        };
+
+        let refused = export_board(plan, path.clone(), ExistingFile::Keep);
+
+        assert!(refused.is_err_and(|error| error.ends_with("already exists")));
+        assert_eq!(std::fs::read(&path).unwrap(), b"theirs");
+    }
 }

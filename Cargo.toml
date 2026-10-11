@@ -13,11 +13,13 @@ turbojpeg-native = ["dep:turbojpeg"]
 
 [dependencies]
 arboard = "3.6.1"
+base64 = "0.22.1"
 bytemuck = { version = "1.24.0", features = ["derive"] }
 ed25519-dalek = { version = "2.1.1", default-features = false }
 eframe = "0.36.2"
 egui_extras = { version = "0.36.2", features = ["svg"] }
 exr = "1.74.0"
+getrandom = "0.3.4"
 hex = "0.4.3"
 image = { version = "0.25.10", default-features = false, features = ["default-formats"] }
 jxl-oxide = { version = "0.12.5", features = ["image", "moxcms"] }
