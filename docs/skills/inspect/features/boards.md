@@ -8,15 +8,16 @@ view, and the sidebar state come back after a restart.
 ## Sub-features
 
 - `board-create` uses the "New board" row or ⌘N / Ctrl+N. It names the new
-  board "Board N" with the smallest free N.
+  board "Board N" with the smallest free N, starting at 2.
   Dropping a `.pur` file also creates a board. See
   [PureRef exchange](./pureref-exchange.md).
 - `board-rename` uses a double-click on the name and the "Board name" field.
   Enter or a click away commits, and Escape discards.
 - `board-switch` uses a click on a `Board {name}` row or ⌘1…⌘9 and ⌘0.
 - `board-delete` uses a hover, then "Delete", then the dialog
-  `Delete "{name}"?` with "Cancel" and the red "Delete board". The app then
-  activates a fallback board.
+  `Delete "{name}"?` with "Cancel" and the red "Delete board". Deleting the
+  active board activates a fallback board. Deleting another board leaves the
+  active one open.
 - `board-history` covers ⌘Z and ⇧⌘Z across create, rename, and delete.
 - `nav-pan-zoom` covers the mouse wheel zoom, middle-drag, Alt+drag, and Space
   to focus the selection.
@@ -32,6 +33,9 @@ view, and the sidebar state come back after a restart.
 - Press ⌘N, ⌘1…⌘0, and ⌘Z / ⇧⌘Z.
 - On the canvas, use the wheel, a middle-drag, an Alt+drag, and Space.
 - Quit and relaunch the app.
+- An AI client calls `list_boards`, `create_board`, `rename_board`,
+  `open_board`, `delete_board`, and `set_view`. See
+  [AI control](./ai-control.md).
 
 ## Driving it with inspect
 
@@ -40,20 +44,27 @@ Preconditions:
 - `doctor.sh` exits 0.
 
 - **Lifecycle with history.** Run `run-scenario.sh board-lifecycle-undo-redo`.
-  It clicks "New board", "Delete board Lifecycle Board", and the dialog's
-  "Delete board". It then presses ⌘Z and ⇧⌘Z through the whole history. The
-  rename is a direct action and not a double-click. "final lifecycle replay is
-  durable" reads the boards and the active board back from the library.
+  The open sidebar is seeded in code. It clicks "New board", "Delete board
+  Lifecycle Board", and the dialog's "Delete board". It then presses ⌘Z and
+  ⇧⌘Z through the whole history. The rename is a direct action and not a
+  double-click. "final lifecycle replay is durable" reads the boards and the
+  active board back from the library.
 - **Navigation and shortcuts.** Run `run-scenario.sh canvas-navigation-boards`.
   It drives the wheel, a middle-drag, an Alt+drag, Space, ⌘B, ⌘N, and ⌘1.
-  "both Boards are durable" checks the stored list.
+  The selection that Space focuses is set in code. "both Boards are durable"
+  checks the stored list.
 - **Delete dialog safety.** Run `run-scenario.sh delete-board-modal-flash`.
   Enter must not confirm, and Escape must keep the board. The board list is
   read back from the library.
 - **Sidebar pages.** Run `run-scenario.sh sidebar-pages`. It renders the
   "Boards", "General", and "Keys" pages with long board names.
 - **Restart.** Run `run-scenario.sh session-restart-restore`. It drives a drag,
-  a zoom, and ⌘B. A second app instance then reopens the same library in code.
+  a zoom, and ⌘B, then saves and flushes in code. A second app instance then
+  reopens the same library in code.
+- **Board tools in the real app.** Run
+  `scripts/mcp-drive.py scripts/mcp-all-tools.json`. It creates, renames,
+  opens, and deletes a board through the tools, and lists the boards before
+  and after. It drives no sidebar row, shortcut, or dialog.
 
 ## Gotchas
 
@@ -63,11 +74,14 @@ Preconditions:
 - Restoring the active board among several boards after a restart has no
   scenario. The restart scenario has one board.
 - The last board cannot be deleted.
-- Deleting a board archives it. The app moves to the previous board in the
-  list, or the next one when the first board was deleted.
-- ⌘N keeps the sidebar closed. The "New board" row keeps it open.
+- Deleting a board archives it. When it was the active board, the app moves
+  to the previous board in the list, or the next one when the first board was
+  deleted.
+- The `delete_board` tool deletes without the dialog, at Ask as well as Full.
+- ⌘N leaves the sidebar as it was. The "New board" row keeps it open.
 - Each board has its own Undo history. Undoing a create or delete switches the
   active board.
 - In Mouse mode the wheel zooms. In Trackpad mode scrolling pans. Scenarios use
   the default, Mouse mode.
-- The session saves 750 ms after a change. A kill inside that window loses it.
+- A change to the view or the sidebar alone saves the session 750 ms later. A
+  kill inside that window loses it. A board edit saves the session at once.

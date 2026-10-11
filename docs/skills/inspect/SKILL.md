@@ -1,7 +1,7 @@
 ---
 name: inspect
 description: |
-  Reproduce, inspect, diagnose, and verify SnappyRef app behavior with deterministic in-process scenarios, full-app screenshots, structured artifacts, and harness-driven clicks/drags/keyboard input. Use for UI behavior, visual state, app interaction, search palette workflows, imports, progress states, and screenshot-backed verification. features/ maps each user-facing feature to its entry points, scenarios, and coverage gaps.
+  Reproduce, inspect, diagnose, and verify SnappyRef app behavior with deterministic in-process scenarios, full-app screenshots, structured artifacts, and harness-driven clicks/drags/keyboard input. Use for UI behavior, visual state, app interaction, search palette workflows, imports, progress states, and screenshot-backed verification. Also drives the real app through its MCP tools with mcp-drive.py. features/ maps each user-facing feature to its entry points, scenarios, and coverage gaps.
 user-invocable: true
 argument-hint: "[behavior-or-scenario]"
 ---
@@ -35,7 +35,8 @@ Agents verify SnappyRef through these in-process scenarios, not by launching
 the GUI. A scenario builds the full app inside a `cargo test`, drives it with
 `egui_kittest`, and writes the artifact. There is no server to start or keep
 alive. The first run compiles the test binary, which takes a few minutes. Later
-runs take seconds.
+runs take seconds. The one scripted exception is `mcp-drive.py`, under
+"Driving the real app through MCP" below.
 
 [features/README.md](features/README.md) maps each user-facing feature to its
 entry points, scenarios, and coverage gaps. Read the matching feature file
@@ -51,8 +52,8 @@ docs/skills/inspect/scripts/doctor.sh
 
 It exits 1 when `CARGO_TARGET_DIR` points outside this checkout. In that case a
 different worktree's binary would answer for this one, so unset it. It also
-lists test binaries from this checkout that are still running, and prints the
-latest artifact and its status.
+lists test binaries and apps from this checkout that are still running, and
+prints the latest artifact and its status.
 
 List available scenarios:
 
@@ -94,6 +95,33 @@ Use `--list` for the current scenario catalogue. Useful starting examples:
 `semantic-search-real-install` uses the real networked installer. Use it only
 when verifying that integration.
 
+## Driving the real app through MCP
+
+`mcp-drive.py` starts the shipping binary the way an AI client does and replays
+a list of AI control tool calls through `snappyref --mcp`:
+
+```sh
+cargo build --locked --bin snappyref
+docs/skills/inspect/scripts/mcp-drive.py docs/skills/inspect/scripts/mcp-all-tools.json
+```
+
+Use it when a change touches the `--mcp` role, the launch, a tool, or anything
+that only the real window and the real helper subprocesses show. It writes the
+same artifact shape as a scenario under
+`target/snappyref-inspect/mcp-drive/run-<nanos>/`, so `summarize-artifact.py`
+and `latest-artifact.sh mcp-drive` read it. Each call is `[tool, arguments]`,
+or `[tool, arguments, "refused"]` for a call the app must refuse. An assertion
+says only that the call answered or was refused, so read the replies in
+`events.ndjson`.
+
+The app opens behind the frontmost window and does not take focus. A fully
+covered window is not drawn, so `screenshot` calls are skipped. Add `--front`
+when a screenshot is the evidence. The app then takes focus for the length of
+the run, about 6 seconds for `mcp-all-tools.json`.
+
+No tool sends a click, a key, or a drag. This route proves what the tools read
+and write. Gestures, shortcuts, menus, and dialogs still need a scenario.
+
 ## Isolation and cleanup
 
 Each scenario opens its library in a fresh directory under the OS temp dir and
@@ -103,6 +131,12 @@ resolved data root and leaves it there. `semantic-search-sidebar-status` only
 reads model status from that root, so its screenshot depends on the machine. Runs
 from the same checkout queue on cargo's build lock, so start them one after
 another.
+
+`mcp-drive.py` sets `SNAPPYREF_DATA_ROOT` to a fresh temp directory and removes
+it at the end. It points the update check at a dead local address, so the run
+stays off the network. It stops the app it started by PID, on a failed run too.
+If it is killed first, `doctor.sh` lists the app left running from this
+checkout.
 
 Apart from that exception, nothing outlives a run except the artifact. If a run hangs, stop the
 `run-scenario.sh` or cargo process you started, using its PID. Never kill by

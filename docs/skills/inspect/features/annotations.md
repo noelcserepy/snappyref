@@ -15,9 +15,9 @@ endpoint of a line or arrow can be dragged on its own.
 - `annot-arrow` and `annot-line` are drawn by pressing A or L, then dragging.
   The press that starts the drag uses the mode up, so a plain click draws
   nothing and disarms. The same key again, or Escape, also disarms. While a
-  mode is armed the key row reads Drag, Color, Size, and Cancel, plus Fill
-  for a rectangle or Head for an arrow or line. H swaps an armed arrow and
-  line.
+  mode is armed the key row has a "Drag" key chip labelled "Arrow", "Line",
+  or "Rectangle", then "Color", "Size", "Fill" for a rectangle or "Head" for
+  an arrow or line, and "Cancel". H swaps an armed arrow and line.
 - `annot-label` is placed by pressing T. It lands under the pointer, or at the
   canvas center when the pointer is elsewhere. Editing starts at once.
 - `annot-rectangle` is drawn by pressing S, then dragging. Only its edge takes
@@ -44,6 +44,8 @@ endpoint of a line or arrow can be dragged on its own.
   them as "Place label", "Draw arrow", "Draw line", and "Draw rectangle".
 - Double-click a label, or select it and press Enter.
 - Click a line once to select it, then drag one of its ends.
+- An AI client adds and restyles labels, rectangles, arrows, and lines through
+  `edit_board`. See [AI control](./ai-control.md).
 
 ## Driving it with inspect
 
@@ -71,9 +73,9 @@ Preconditions:
 - **Endpoints.** Run `run-scenario.sh annotation-endpoint-drag`. It selects a
   seeded line and a seeded arrow, drags each endpoint, and presses ⌘Z and ⇧⌘Z
   after each drag.
-- **Stored label.** Run `run-scenario.sh canvas-edit-operations`. It is the
-  only scenario that reads an annotation back from the library. It creates the
-  label with a T press and checks it after a flush.
+- **Stored label.** Run `run-scenario.sh canvas-edit-operations`. It creates
+  a label with a T press and reads it back from the library after a flush.
+  `pureref-import` is the only other scenario that reads an annotation back.
 
 ## Gotchas
 

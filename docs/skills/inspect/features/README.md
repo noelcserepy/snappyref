@@ -24,6 +24,13 @@ with inspect scenarios. Read this index, then follow the matching feature file.
 - When no scenario drives the entry point you changed, write one. "Writing A
   New Scenario" in [../SKILL.md](../SKILL.md) covers how. Do not launch the GUI
   by hand.
+- `docs/skills/inspect/scripts/mcp-drive.py <calls.json>` is the one route that
+  runs the shipping binary in a real window. It replays AI control tool calls
+  through `snappyref --mcp` on a throwaway data root and stops the app it
+  started. It proves what the tools read and write, with real image
+  preparation. It proves nothing about gestures, shortcuts, menus, or dialogs,
+  because no tool sends input. [AI control](./ai-control.md) lists what it
+  covers.
 - Native OS paths need a real platform check, and in-process scenarios cannot
   reach them. These are clipboard reads, Finder and browser drops, PureRef
   paste, and the Windows build. Use [use-windows](../../use-windows/SKILL.md)
@@ -62,11 +69,11 @@ Windows.
   zoom, the sidebar, and session restore.
 - [Groups](./groups.md): group, ungroup, the picker, the group dock, and the
   member dock.
-- [Annotations](./annotations.md): arrows, lines, textboxes, styles, and
-  endpoint drags.
+- [Annotations](./annotations.md): labels, arrows, lines, rectangles, styles,
+  and endpoint drags.
 - [Semantic Search](./semantic-search.md): install, the palette, image search,
   and placing results.
 - [PureRef exchange](./pureref-exchange.md): `.pur` drop import and ⇧⌘E
   export.
-- [AI control](./ai-control.md): the access setting, MCP tool calls, and the
-  confirmation an AI client waits on.
+- [AI control](./ai-control.md): the access setting, MCP tool calls, the
+  background launch, and the confirmation an AI client waits on.
