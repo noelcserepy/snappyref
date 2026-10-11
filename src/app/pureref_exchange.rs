@@ -5,23 +5,33 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use crate::data::{BoardDocumentSnapshot, CanvasAnnotationGeometry, CanvasAnnotationKind};
-use crate::pureref_exchange::{ImportedPureRefBoard, PureRefExchangeResult, PureRefExportPlan};
+use crate::pureref_exchange::{
+    ExistingFile, ImportedPureRefBoard, PureRefExchangeResult, PureRefExportPlan,
+};
 
 use super::SnappyRefApp;
 
 impl SnappyRefApp {
-    pub(super) fn start_pureref_import(&mut self, ctx: &egui::Context, path: PathBuf) {
+    /// Returns the job the import runs as, or None with the reason in the
+    /// status line.
+    pub(super) fn start_pureref_import(
+        &mut self,
+        ctx: &egui::Context,
+        path: PathBuf,
+    ) -> Option<u64> {
         let Some(library) = &self.library else {
             self.status = "Storage unavailable".to_owned();
-            return;
+            return None;
         };
         let stem = path
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_default();
         self.status = format!("Importing PureRef board {stem}…");
-        self.pureref_exchange
-            .start_import(ctx, library.clone(), path);
+        Some(
+            self.pureref_exchange
+                .start_import(ctx, library.clone(), path),
+        )
     }
 
     pub(super) fn export_pureref(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
@@ -40,27 +50,28 @@ impl SnappyRefApp {
             return;
         };
         self.status = format!("Exporting {board_name} to PureRef…");
-        self.pureref_exchange.start_export(ctx, plan, path);
+        self.pureref_exchange
+            .start_export(ctx, plan, path, ExistingFile::Replace);
     }
 
     pub(super) fn handle_pureref_exchange_results(&mut self, ctx: &egui::Context) {
         while let Some(result) = self.pureref_exchange.try_recv() {
-            let (path, outcome) = match result {
-                PureRefExchangeResult::Imported(path, imported) => (
-                    path,
+            let (job, outcome) = match result {
+                PureRefExchangeResult::Imported(job, imported) => (
+                    job,
                     imported
                         .map_err(|error| format!("PureRef import failed: {error}"))
                         .and_then(|imported| self.open_imported_pureref_board(ctx, imported)),
                 ),
-                PureRefExchangeResult::Exported(path, exported) => (
-                    path,
+                PureRefExchangeResult::Exported(job, exported) => (
+                    job,
                     exported
                         .map(|exported| exported.status())
                         .map_err(|error| format!("PureRef export failed: {error}")),
                 ),
             };
             self.status = outcome.clone().unwrap_or_else(|error| error);
-            self.answer_pureref_control_call(&path, outcome);
+            self.answer_pureref_control_call(job, outcome);
         }
     }
 

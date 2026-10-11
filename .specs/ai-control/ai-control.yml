@@ -69,8 +69,9 @@ interface:
         refs-name-new-items: An edit may name the item or Group it creates, and later edits in the same call may refer to it by that name.
         errors-say-what-to-do: A refusal must name the edit and field at fault and what would be accepted.
         user-vocabulary: Tool names, argument names, and results use the words the app shows the user.
-        export-never-replaces: `export_board` must refuse a path where a file already exists.
-        answers-match-their-call: A PureRef import or export must answer the call that named its file, and no other.
+        export-never-replaces: `export_board` must refuse a path where a file already exists, and must not replace one that appears while the export runs.
+        answers-match-their-call: A PureRef import or export must answer the call that started it, and no other. Two calls that name the same file are still two jobs.
+        imports-answer-for-their-board: `add_images` must report the images on the Board it placed them on, even after another Board opens.
 
       caller_obligations: {}
 

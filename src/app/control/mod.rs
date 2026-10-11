@@ -5,7 +5,7 @@
 mod describe;
 mod edits;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -42,15 +42,19 @@ struct Waiting {
 
 pub(super) enum WaitingOn {
     Screenshot(u64),
-    Images(Vec<i64>),
+    /// Placements an import reserved, and the Board they load onto.
+    Images {
+        board: i64,
+        ids: Vec<i64>,
+    },
     Search {
         request_id: u64,
         query: Option<String>,
         similar_to: Option<i64>,
         limit: usize,
     },
-    /// The `.pur` file a background import or export works on.
-    PureRef(PathBuf),
+    /// The job number of a background `.pur` import or export.
+    PureRef(u64),
     Confirm(Confirm),
 }
 
@@ -361,21 +365,20 @@ impl SnappyRefApp {
                 if !crate::pureref_exchange::is_pureref_board_path(&path) {
                     return Err(format!("{} does not end in .pur.", path.display()));
                 }
-                // The user's own export asks before it replaces a file.
-                if path.exists() {
-                    return Err(format!(
-                        "{} already exists. Give a path no file has.",
-                        path.display()
-                    ));
-                }
                 let plan = crate::pureref_exchange::PureRefExportPlan::from_canvas(&self.canvas);
                 if plan.is_empty() {
                     return Err(plan.empty_status());
                 }
-                self.pureref_exchange.start_export(ctx, plan, path.clone());
+                // The user's own export asks before it replaces a file.
+                let job = self.pureref_exchange.start_export(
+                    ctx,
+                    plan,
+                    path,
+                    crate::pureref_exchange::ExistingFile::Keep,
+                );
                 Ok(Step::Wait(
                     Duration::from_secs(120),
-                    WaitingOn::PureRef(path),
+                    WaitingOn::PureRef(job),
                 ))
             }
             "get_settings" => {
@@ -556,7 +559,10 @@ impl SnappyRefApp {
         }
         Ok(Step::Wait(
             Duration::from_secs(60),
-            WaitingOn::Images(added),
+            WaitingOn::Images {
+                board: self.active_board_id,
+                ids: added,
+            },
         ))
     }
 
@@ -610,13 +616,12 @@ impl SnappyRefApp {
                 if !path.is_file() {
                     return Err(format!("{} is not a file.", path.display()));
                 }
-                if self.library.is_none() {
-                    return Err("Storage unavailable".to_owned());
-                }
-                self.start_pureref_import(ctx, path.clone());
+                let job = self
+                    .start_pureref_import(ctx, path)
+                    .ok_or_else(|| self.status.clone())?;
                 Ok(Step::Wait(
                     Duration::from_secs(120),
-                    WaitingOn::PureRef(path),
+                    WaitingOn::PureRef(job),
                 ))
             }
             (Some(name), None) => {
@@ -912,32 +917,10 @@ impl SnappyRefApp {
                     None => return Some(waiting),
                 }
             }
-            WaitingOn::Images(ids) => {
-                let loading = |id: &i64| {
-                    self.canvas.placement_for_id(*id).is_some_and(|placement| {
-                        matches!(
-                            placement.content,
-                            crate::data::PlacementContent::Loading { .. }
-                        )
-                    })
-                };
-                if !timed_out && ids.iter().any(loading) {
-                    return Some(waiting);
-                }
-                let items = ids
-                    .iter()
-                    .filter_map(|id| describe::item(&self.canvas, *id))
-                    .collect::<Vec<_>>();
-                if items.is_empty() {
-                    Err(format!("No image was added. {}", self.status))
-                } else if items.len() < ids.len() {
-                    Ok(
-                        json!({"items": items, "failed": ids.len() - items.len(), "status": self.status}),
-                    )
-                } else {
-                    Ok(json!({"items": items}))
-                }
-            }
+            WaitingOn::Images { board, ids } => match self.added_images(*board, ids, timed_out) {
+                Some(result) => result,
+                None => return Some(waiting),
+            },
             WaitingOn::Search {
                 request_id,
                 query,
@@ -1007,18 +990,68 @@ impl SnappyRefApp {
         None
     }
 
-    /// The PureRef import or export of `path` finished. The user's own
-    /// imports and exports pass through here too and answer no call.
+    /// What `add_images` answers, or None while an image still loads. The
+    /// images load onto the Board the call reserved them on, even after the
+    /// user opens another.
+    pub(super) fn added_images(
+        &self,
+        board: i64,
+        ids: &[i64],
+        timed_out: bool,
+    ) -> Option<Result<Value, String>> {
+        let items = if board == self.active_board_id {
+            ids.iter()
+                .filter_map(|id| describe::item(&self.canvas, *id))
+                .collect::<Vec<_>>()
+        } else {
+            match self.accepted_items(board, ids) {
+                Ok(items) => items,
+                Err(error) => return Some(Err(error)),
+            }
+        };
+        if !timed_out && items.iter().any(|item| item["status"] == "loading") {
+            return None;
+        }
+        if items.is_empty() {
+            return Some(Err(format!("No image was added. {}", self.status)));
+        }
+        let mut added = json!({"items": items});
+        if items.len() < ids.len() {
+            added["failed"] = json!(ids.len() - items.len());
+            added["status"] = json!(self.status);
+        }
+        if board != self.active_board_id {
+            added["note"] = json!(format!(
+                "The open board changed. These images are on board {board}."
+            ));
+        }
+        Some(Ok(added))
+    }
+
+    /// Items of a Board that is not open, read from its accepted document.
+    fn accepted_items(&self, board: i64, ids: &[i64]) -> Result<Vec<Value>, String> {
+        let library = self.library.as_ref().ok_or("Storage unavailable")?;
+        let document = self.board_editing.accepted_board_document(library, board)?;
+        let (mut items, _) = describe::document(
+            &document.placements,
+            &document.annotations,
+            &document.groups,
+            &document.stack_order,
+        );
+        items.retain(|item| item["id"].as_i64().is_some_and(|id| ids.contains(&id)));
+        Ok(items)
+    }
+
+    /// A PureRef import or export finished. The user's own imports and
+    /// exports pass through here too and answer no call.
     pub(super) fn answer_pureref_control_call(
         &mut self,
-        path: &Path,
+        job: u64,
         outcome: Result<String, String>,
     ) {
-        let Some(index) =
-            self.control.waiting.iter().position(
-                |waiting| matches!(&waiting.on, WaitingOn::PureRef(file) if file == path),
-            )
-        else {
+        let Some(index) = self.control.waiting.iter().position(
+            |waiting| matches!(waiting.on, WaitingOn::PureRef(running) if running == job),
+        ) else {
             return;
         };
         let result = outcome.map(|status| {
