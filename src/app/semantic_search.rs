@@ -88,7 +88,7 @@ impl SnappyRefApp {
         let choice = Dialog {
             id: "enable-semantic-search",
             title: "Enable Semantic Search?",
-            detail: &detail,
+            detail: &self.ai_request_note(&detail),
             cancel: "Not now",
             action: DialogAction::Primary("Enable"),
         }
@@ -113,7 +113,7 @@ impl SnappyRefApp {
         let choice = Dialog {
             id: "remove-semantic-search",
             title: "Remove Semantic Search?",
-            detail: &detail,
+            detail: &self.ai_request_note(&detail),
             cancel: "Cancel",
             action: DialogAction::Destructive("Remove"),
         }

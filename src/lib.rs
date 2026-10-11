@@ -1,6 +1,7 @@
 mod active_board;
 mod app;
 mod canvas;
+mod control;
 mod data;
 mod diagnostics;
 pub mod grouping;
@@ -42,6 +43,15 @@ pub fn run() -> eframe::Result<()> {
         .any(|argument| argument == "--semantic-embed-server")
     {
         if let Err(error) = search::semantic::run_embed_image_server() {
+            return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
+                error,
+            ))));
+        }
+        return Ok(());
+    }
+
+    if std::env::args().skip(1).any(|argument| argument == "--mcp") {
+        if let Err(error) = control::run_mcp_stdio() {
             return Err(eframe::Error::AppCreation(Box::new(std::io::Error::other(
                 error,
             ))));

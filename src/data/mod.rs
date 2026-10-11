@@ -19,7 +19,7 @@ pub use placement::{
     PlacementState,
 };
 pub use session::{
-    CanvasImageLod, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_PLACEMENT_GAP,
+    AiControlAccess, CanvasImageLod, DEFAULT_CANVAS_IMAGE_MAX_SIDE, DEFAULT_PLACEMENT_GAP,
     DEFAULT_PLACEMENT_TARGET_AREA, DEFAULT_ROTATION_SNAP_DEGREES, DEFAULT_VIEWPORT_ZOOM,
     PointerMode, UserSession, ViewportState, WindowState, WorkspaceSettings,
 };

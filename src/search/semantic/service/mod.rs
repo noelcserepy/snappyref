@@ -104,6 +104,16 @@ pub enum SearchQueryResult {
     },
 }
 
+impl SearchQueryResult {
+    pub(crate) fn request_id(&self) -> u64 {
+        match self {
+            Self::ModelPending { request_id }
+            | Self::Completed { request_id, .. }
+            | Self::Failed { request_id, .. } => *request_id,
+        }
+    }
+}
+
 enum ModelState {
     Uninitialized,
     Loading,

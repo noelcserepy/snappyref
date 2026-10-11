@@ -3,6 +3,7 @@ use render::images::{CanvasTexture, PendingCropPreview, PlacementImage, Rendered
 use std::sync::Arc;
 
 pub(crate) mod annotation_style;
+mod direct_edits;
 mod document;
 mod geometry;
 mod group_dock;

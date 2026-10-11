@@ -45,24 +45,28 @@ impl SnappyRefApp {
 
     pub(super) fn handle_pureref_exchange_results(&mut self, ctx: &egui::Context) {
         while let Some(result) = self.pureref_exchange.try_recv() {
-            match result {
+            let outcome = match result {
                 PureRefExchangeResult::Imported(Ok(imported)) => {
-                    self.open_imported_pureref_board(ctx, imported);
+                    self.open_imported_pureref_board(ctx, imported)
                 }
                 PureRefExchangeResult::Imported(Err(error)) => {
-                    self.status = format!("PureRef import failed: {error}");
+                    Err(format!("PureRef import failed: {error}"))
                 }
-                PureRefExchangeResult::Exported(Ok(exported)) => {
-                    self.status = exported.status();
-                }
+                PureRefExchangeResult::Exported(Ok(exported)) => Ok(exported.status()),
                 PureRefExchangeResult::Exported(Err(error)) => {
-                    self.status = format!("PureRef export failed: {error}");
+                    Err(format!("PureRef export failed: {error}"))
                 }
-            }
+            };
+            self.status = outcome.clone().unwrap_or_else(|error| error);
+            self.answer_pureref_control_call(outcome);
         }
     }
 
-    fn open_imported_pureref_board(&mut self, ctx: &egui::Context, imported: ImportedPureRefBoard) {
+    fn open_imported_pureref_board(
+        &mut self,
+        ctx: &egui::Context,
+        imported: ImportedPureRefBoard,
+    ) -> Result<String, String> {
         let status = imported.status();
         let mut document = imported.document;
         // Labels take their size from their text, which decides the framing.
@@ -93,9 +97,8 @@ impl SnappyRefApp {
             document.viewport.camera_pan_y = pan.y;
             document.viewport.camera_zoom = zoom;
         }
-        self.status = match self.board_lifecycle().create_from_document(document) {
-            Ok(()) => status,
-            Err(error) => error,
-        };
+        self.board_lifecycle()
+            .create_from_document(document)
+            .map(|()| status)
     }
 }

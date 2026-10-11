@@ -13,6 +13,8 @@ pub(super) enum Icon {
     Rotation,
     Gap,
     OnTop,
+    Ask,
+    FullAccess,
     General,
     Keys,
 }
@@ -88,6 +90,24 @@ pub(super) fn paint(p: &egui::Painter, center: Pos2, icon: Icon, color: Color32)
                 1.5 * scale,
                 color,
             );
+        }
+        Icon::Ask => {
+            frame(1.5, 2.0, 13.0, 9.5, 2.5);
+            line(&[(5.0, 11.5), (5.0, 14.5), (8.5, 11.5)]);
+            for x in [5.0, 8.0, 11.0] {
+                dot(x, 6.8, 0.9);
+            }
+        }
+        Icon::FullAccess => {
+            line(&[
+                (9.5, 1.5),
+                (4.0, 9.0),
+                (8.0, 9.0),
+                (6.5, 14.5),
+                (12.0, 7.0),
+                (8.0, 7.0),
+                (9.5, 1.5),
+            ]);
         }
         Icon::General => {
             line(&[(2.0, 5.0), (14.0, 5.0)]);
