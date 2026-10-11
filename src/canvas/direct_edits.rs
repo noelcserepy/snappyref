@@ -5,6 +5,13 @@ use super::CanvasState;
 use crate::data::{CanvasAnnotation, GroupId, RectGeometry};
 use eframe::egui;
 
+pub(crate) struct Selection {
+    placements: Vec<i64>,
+    annotations: Vec<i64>,
+    groups: Vec<GroupId>,
+    editing_group: Option<GroupId>,
+}
+
 impl CanvasState {
     /// Geometry of an image, label or rectangle.
     pub(crate) fn rect_item_geometry(&self, id: i64) -> Option<RectGeometry> {
@@ -86,19 +93,33 @@ impl CanvasState {
         self.group_edit(|state| state.detach(group, member))
     }
 
-    /// Runs edits that borrow the selection, then puts the user's selection
-    /// back.
-    pub(crate) fn preserving_selection<T>(&mut self, edit: impl FnOnce(&mut Self) -> T) -> T {
-        let placements = self.interaction.selected_placement_ids.clone();
-        let annotations = self.interaction.selected_annotation_ids.clone();
-        let groups = self.interaction.selected_group_ids.clone();
-        let result = edit(self);
-        self.select_content(&placements, &annotations);
-        self.interaction.selected_group_ids = groups
-            .into_iter()
-            .filter(|id| self.groups().iter().any(|group| group.id == *id))
-            .collect();
-        result
+    /// Whether the user is dragging, drawing, cropping or typing. An edit by
+    /// id would cut that short, so its caller waits.
+    pub(crate) fn user_edit_in_progress(&self) -> bool {
+        self.interaction.gesture.is_some()
+            || self.interaction.group_gesture.is_some()
+            || self.interaction.editing_text_annotation_id.is_some()
+    }
+
+    /// What the user has selected, to put back after edits that borrow the
+    /// selection.
+    pub(crate) fn selection(&self) -> Selection {
+        Selection {
+            placements: self.interaction.selected_placement_ids.clone(),
+            annotations: self.interaction.selected_annotation_ids.clone(),
+            groups: self.interaction.selected_group_ids.clone(),
+            editing_group: self.interaction.editing_group_id,
+        }
+    }
+
+    /// Whatever the edits removed drops out of the selection.
+    pub(crate) fn restore_selection(&mut self, selection: Selection) {
+        let exists = |id: &GroupId| self.groups().iter().any(|group| group.id == *id);
+        let groups = selection.groups.into_iter().filter(exists).collect();
+        let editing_group = selection.editing_group.filter(exists);
+        self.select_content(&selection.placements, &selection.annotations);
+        self.interaction.selected_group_ids = groups;
+        self.interaction.editing_group_id = editing_group;
     }
 
     /// Selects items and Groups by id. Ids that name nothing are ignored.

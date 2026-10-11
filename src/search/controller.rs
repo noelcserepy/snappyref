@@ -120,10 +120,11 @@ impl SearchController {
             .is_some_and(LocalModelStoreStatus::assets_available)
     }
 
-    pub(crate) fn local_model_assets_missing(&self) -> bool {
+    /// Known to be absent, whether never downloaded or after a failed download.
+    pub(crate) fn local_model_needs_install(&self) -> bool {
         matches!(
             self.local_model_store_status,
-            Some(LocalModelStoreStatus::Missing)
+            Some(LocalModelStoreStatus::Missing | LocalModelStoreStatus::Failed(_))
         )
     }
 
@@ -1045,7 +1046,7 @@ mod tests {
         assert!(search.embedding_backfill.exhausted);
 
         search.remove_semantic_search_assets_with(&mut status, || Ok(()));
-        assert!(search.local_model_assets_missing());
+        assert!(search.local_model_needs_install());
         assert!(matches!(search.overlay.status, SearchOverlayStatus::Ready));
         assert!(!search.embedding_backfill.exhausted);
         assert_eq!(status, "Semantic Search removed");

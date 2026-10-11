@@ -54,14 +54,6 @@ impl Tool {
     }
 }
 
-fn ids(description: &str) -> Value {
-    json!({
-        "type": "array",
-        "items": {"type": ["integer", "string"]},
-        "description": description,
-    })
-}
-
 fn tools() -> Vec<Tool> {
     let read = |name, description, properties, required| Tool {
         name,
@@ -126,8 +118,7 @@ fn tools() -> Vec<Tool> {
              size, color. rectangle: x, y, width, height, rotation, color, fill, stroke. \
              arrow and line: x1, y1, x2, y2, color, stroke. group: x, y, width, height, name, \
              flow, gap, padding.\n\
-             If an edit fails, the earlier edits in the call stay applied and the error says \
-             which ones.",
+             If an edit fails, nothing in the call is applied.",
             json!({
                 "edits": {
                     "type": "array",
@@ -139,7 +130,7 @@ fn tools() -> Vec<Tool> {
                             "type": {"enum": ["image", "label", "rectangle", "arrow", "line"]},
                             "ref": {"type": "string", "description": "Name for the item or group this edit creates."},
                             "id": {"type": ["integer", "string"]},
-                            "ids": ids("Item or group ids, or \"$name\" refs."),
+                            "ids": {"type": "array", "items": {"type": ["integer", "string"]}, "description": "Item or group ids, or \"$name\" refs."},
                             "group": {"type": ["integer", "string"]},
                             "asset": {"type": "integer"},
                             "x": {"type": "number"},
@@ -176,8 +167,9 @@ fn tools() -> Vec<Tool> {
             "add_images",
             "Imports image files or image URLs into the library and places them on the open \
              board. Waits until they load, then returns the new items. One undo step. Without \
-             x and y the images land in the visible area, packed together. To place an image \
-             that is already in the library, use edit_board instead.",
+             x and y the images land in the visible area, packed together. The new images \
+             become the selection, as they do when the user imports. To place an image that \
+             is already in the library, use edit_board instead.",
             json!({
                 "sources": {
                     "type": "array",
@@ -256,7 +248,7 @@ fn tools() -> Vec<Tool> {
             "select",
             "Selects items or groups in the app so the user sees them highlighted. An empty \
              list clears the selection. Editing does not need a selection.",
-            json!({"ids": ids("Item or group ids.")}),
+            json!({"ids": {"type": "array", "items": {"type": "integer"}, "description": "Item or group ids."}}),
             &["ids"],
         ),
         read(
@@ -268,8 +260,8 @@ fn tools() -> Vec<Tool> {
         ),
         write(
             "export_board",
-            "Saves the open board as a PureRef .pur file.",
-            json!({"path": {"type": "string", "description": "Absolute path of the file to write."}}),
+            "Saves the open board as a new PureRef .pur file. It does not replace a file.",
+            json!({"path": {"type": "string", "description": "Absolute path ending in .pur that no file has yet."}}),
             &["path"],
         ),
         read(
@@ -300,8 +292,9 @@ fn tools() -> Vec<Tool> {
         destroy(
             "search_model",
             "Installs or removes the model search_library needs. Install downloads it in the \
-             background, and get_settings reports progress. Remove during a download cancels \
-             it. Unless AI control is set to full access, the user confirms in the app first.",
+             background, and get_settings reports progress. Unless AI control is set to full \
+             access, the user confirms in the app first. With full access, remove during a \
+             download cancels it.",
             json!({"action": {"enum": ["install", "remove"]}}),
             &["action"],
         ),

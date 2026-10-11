@@ -24,9 +24,10 @@ pub(crate) fn is_pureref_board_path(path: &std::path::Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("pur"))
 }
 
+/// Each result names the file it worked on, so a caller can tell jobs apart.
 pub(crate) enum PureRefExchangeResult {
-    Imported(Result<ImportedPureRefBoard, String>),
-    Exported(Result<ExportedPureRefBoard, String>),
+    Imported(PathBuf, Result<ImportedPureRefBoard, String>),
+    Exported(PathBuf, Result<ExportedPureRefBoard, String>),
 }
 
 pub(crate) struct PureRefExchange {
@@ -44,13 +45,15 @@ impl Default for PureRefExchange {
 impl PureRefExchange {
     pub(crate) fn start_import(&self, ctx: &egui::Context, library: Library, path: PathBuf) {
         self.spawn(ctx, move || {
-            PureRefExchangeResult::Imported(import::import_board(&library, &path))
+            let imported = import::import_board(&library, &path);
+            PureRefExchangeResult::Imported(path, imported)
         });
     }
 
     pub(crate) fn start_export(&self, ctx: &egui::Context, plan: PureRefExportPlan, path: PathBuf) {
         self.spawn(ctx, move || {
-            PureRefExchangeResult::Exported(export::export_board(plan, path))
+            let exported = export::export_board(plan, path.clone());
+            PureRefExchangeResult::Exported(path, exported)
         });
     }
 

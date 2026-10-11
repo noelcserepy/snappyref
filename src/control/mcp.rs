@@ -14,10 +14,13 @@ const PROTOCOL_VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", 
 const ACCESS_OFF: &str = "AI control is off in SnappyRef. Ask the user to open SnappyRef, go to \
     Settings > General > AI control and choose Ask or Full access, then try again.";
 const LAUNCH_WAIT: Duration = Duration::from_secs(30);
+/// Longer than the app lets any tool wait.
+const CALL_WAIT: Duration = Duration::from_secs(150);
+const NO_ANSWER: &str = "SnappyRef did not answer. The call may have run, so read the board \
+    before you send it again.";
 
 pub(crate) fn run_mcp_stdio() -> Result<(), String> {
     let library_root = crate::local_data_location::resolve_library_root()?;
-    let mut app = None;
     let mut stdout = std::io::stdout().lock();
     for line in std::io::stdin().lock().lines() {
         let line = line.map_err(|error| format!("Failed to read stdin: {error}"))?;
@@ -25,7 +28,14 @@ pub(crate) fn run_mcp_stdio() -> Result<(), String> {
             continue;
         }
         let response = match serde_json::from_str::<Value>(&line) {
-            Ok(message) => answer(&message, &library_root, &mut app),
+            Ok(Value::Array(batch)) => {
+                let answers = batch
+                    .iter()
+                    .filter_map(|message| answer(message, &library_root))
+                    .collect::<Vec<_>>();
+                (!answers.is_empty()).then_some(Value::Array(answers))
+            }
+            Ok(message) => answer(&message, &library_root),
             Err(error) => Some(json!({
                 "jsonrpc": "2.0",
                 "id": null,
@@ -42,7 +52,7 @@ pub(crate) fn run_mcp_stdio() -> Result<(), String> {
 }
 
 /// Notifications get no answer.
-fn answer(message: &Value, library_root: &Path, app: &mut Option<AppConnection>) -> Option<Value> {
+fn answer(message: &Value, library_root: &Path) -> Option<Value> {
     let id = message.get("id")?.clone();
     let params = message.get("params");
     let result = match message.get("method").and_then(Value::as_str)? {
@@ -64,7 +74,7 @@ fn answer(message: &Value, library_root: &Path, app: &mut Option<AppConnection>)
         }
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({"tools": tools::catalogue()})),
-        "tools/call" => Ok(call_tool(params, library_root, app)),
+        "tools/call" => Ok(call_tool(params, library_root)),
         method => Err(json!({"code": -32601, "message": format!("Method not found: {method}")})),
     };
     Some(match result {
@@ -73,32 +83,22 @@ fn answer(message: &Value, library_root: &Path, app: &mut Option<AppConnection>)
     })
 }
 
-fn call_tool(
-    params: Option<&Value>,
-    library_root: &Path,
-    app: &mut Option<AppConnection>,
-) -> Value {
+/// A call that was sent is never sent again. The app may have run it before
+/// the connection broke, and a second run would repeat its edits.
+fn call_tool(params: Option<&Value>, library_root: &Path) -> Value {
     let call = json!({
         "tool": params.and_then(|params| params.get("name")).cloned().unwrap_or_default(),
         "arguments": params.and_then(|params| params.get("arguments")).cloned().unwrap_or_default(),
     });
-    // The app may have quit since the last call. Reconnect once before giving up.
-    for _ in 0..2 {
-        let connection = match app {
-            Some(connection) => connection,
-            None => match AppConnection::open(library_root) {
-                Ok(connection) => app.insert(connection),
-                Err(error) => return tool_error(&error),
-            },
-        };
-        if let Some(result) = connection.call(&call) {
-            return result;
-        }
-        *app = None;
+    match AppConnection::open(library_root) {
+        Ok(connection) => connection
+            .call(&call)
+            .unwrap_or_else(|| tool_error(NO_ANSWER)),
+        Err(error) => tool_error(&error),
     }
-    tool_error("SnappyRef closed the connection. Try again.")
 }
 
+/// A connection the app took the token on. It carries one call.
 pub(super) struct AppConnection {
     reader: BufReader<TcpStream>,
     writer: TcpStream,
@@ -133,7 +133,8 @@ impl AppConnection {
         let address = SocketAddr::from((Ipv4Addr::LOCALHOST, endpoint.port));
         let mut writer = TcpStream::connect_timeout(&address, Duration::from_millis(500)).ok()?;
         let mut reader = BufReader::new(writer.try_clone().ok()?);
-        // Something else may own a stale port. Only the app answers the token.
+        // Something else may own a stale port. It proves nothing about who
+        // listens, but only the app answers "ok" to this token.
         writer.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
         writeln!(writer, "{}", endpoint.token).ok()?;
         let mut line = String::new();
@@ -141,12 +142,12 @@ impl AppConnection {
         if line.trim_end() != "ok" {
             return None;
         }
-        writer.set_read_timeout(None).ok()?;
+        writer.set_read_timeout(Some(CALL_WAIT)).ok()?;
         Some(Self { reader, writer })
     }
 
-    /// None when the connection broke.
-    pub(super) fn call(&mut self, call: &Value) -> Option<Value> {
+    /// None when the connection broke or the app took too long.
+    pub(super) fn call(mut self, call: &Value) -> Option<Value> {
         writeln!(self.writer, "{call}").ok()?;
         let mut line = String::new();
         if self.reader.read_line(&mut line).ok()? == 0 {
@@ -191,11 +192,9 @@ mod tests {
     #[test]
     fn mcp_handshake_lists_tools_without_the_app() {
         let root = crate::test_support::TempRoot::new("control-mcp");
-        let mut app = None;
         let initialize = answer(
             &json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}}),
             &root,
-            &mut app,
         )
         .unwrap();
         assert_eq!(initialize["result"]["protocolVersion"], "2025-06-18");
@@ -203,14 +202,12 @@ mod tests {
             answer(
                 &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
                 &root,
-                &mut app
             )
             .is_none()
         );
         let listed = answer(
             &json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
             &root,
-            &mut app,
         )
         .unwrap();
         let tools = listed["result"]["tools"].as_array().unwrap();
@@ -221,7 +218,6 @@ mod tests {
         let called = answer(
             &json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_board"}}),
             &root,
-            &mut app,
         )
         .unwrap();
         assert_eq!(called["result"]["isError"], true);
@@ -240,7 +236,7 @@ mod tests {
         };
         assert!(AppConnection::connect(&stranger).is_none());
 
-        let mut connection = AppConnection::connect(&endpoint).unwrap();
+        let connection = AppConnection::connect(&endpoint).unwrap();
         let ui_thread = std::thread::spawn(move || {
             loop {
                 if let Some(request) = server.try_recv() {

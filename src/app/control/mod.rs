@@ -5,7 +5,7 @@
 mod describe;
 mod edits;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -49,7 +49,8 @@ pub(super) enum WaitingOn {
         similar_to: Option<i64>,
         limit: usize,
     },
-    PureRef,
+    /// The `.pur` file a background import or export works on.
+    PureRef(PathBuf),
     Confirm(Confirm),
 }
 
@@ -196,7 +197,11 @@ impl SnappyRefApp {
         };
         if self.settings.ai_control == AiControlAccess::Off {
             self.control.server = None;
-            self.control.waiting.clear();
+            for waiting in self.control.waiting.drain(..) {
+                if let WaitingOn::Search { request_id, .. } = waiting.on {
+                    self.search.forget_direct_search(request_id);
+                }
+            }
             crate::control::withdraw(root);
         } else if self.control.server.is_none() {
             match ControlServer::start(root, ctx.clone()) {
@@ -353,12 +358,25 @@ impl SnappyRefApp {
             "export_board" => {
                 let ExportBoard { path } = arguments(input)?;
                 let path = absolute_path(&path)?;
+                if !crate::pureref_exchange::is_pureref_board_path(&path) {
+                    return Err(format!("{} does not end in .pur.", path.display()));
+                }
+                // The user's own export asks before it replaces a file.
+                if path.exists() {
+                    return Err(format!(
+                        "{} already exists. Give a path no file has.",
+                        path.display()
+                    ));
+                }
                 let plan = crate::pureref_exchange::PureRefExportPlan::from_canvas(&self.canvas);
                 if plan.is_empty() {
                     return Err(plan.empty_status());
                 }
-                self.pureref_exchange.start_export(ctx, plan, path);
-                Ok(Step::Wait(Duration::from_secs(120), WaitingOn::PureRef))
+                self.pureref_exchange.start_export(ctx, plan, path.clone());
+                Ok(Step::Wait(
+                    Duration::from_secs(120),
+                    WaitingOn::PureRef(path),
+                ))
             }
             "get_settings" => {
                 arguments::<NoArguments>(input)?;
@@ -592,8 +610,14 @@ impl SnappyRefApp {
                 if !path.is_file() {
                     return Err(format!("{} is not a file.", path.display()));
                 }
-                self.start_pureref_import(ctx, path);
-                Ok(Step::Wait(Duration::from_secs(120), WaitingOn::PureRef))
+                if self.library.is_none() {
+                    return Err("Storage unavailable".to_owned());
+                }
+                self.start_pureref_import(ctx, path.clone());
+                Ok(Step::Wait(
+                    Duration::from_secs(120),
+                    WaitingOn::PureRef(path),
+                ))
             }
             (Some(name), None) => {
                 if name.trim().is_empty() {
@@ -627,11 +651,12 @@ impl SnappyRefApp {
             zoom,
             background,
         } = arguments(input)?;
-        if let Some(background) = background {
-            let background = CanvasBackground::from_str(&background)
-                .ok_or_else(|| format!("\"{background}\" is not one of none, grid, dots."))?;
-            self.canvas.set_background(background);
-        }
+        let background = background
+            .map(|background| {
+                CanvasBackground::from_str(&background)
+                    .ok_or_else(|| format!("\"{background}\" is not one of none, grid, dots."))
+            })
+            .transpose()?;
         let screen = ctx.viewport_rect();
         let visible = self.visible_canvas_screen_rect(screen);
         let mut viewport = self.canvas.viewport_state();
@@ -683,6 +708,9 @@ impl SnappyRefApp {
             (viewport.camera_pan_x, viewport.camera_pan_y) = (pan.x, pan.y);
         }
         self.canvas.apply_viewport_state(&viewport);
+        if let Some(background) = background {
+            self.canvas.set_background(background);
+        }
         Ok(json!({
             "view": self.view_json(ctx),
             "background": self.canvas.background().as_str(),
@@ -725,18 +753,22 @@ impl SnappyRefApp {
         let status = self.search.local_model_store_status();
         match action {
             SearchModelAction::Install => match status {
-                LocalModelStoreStatus::Missing => {
+                LocalModelStoreStatus::Missing | LocalModelStoreStatus::Failed(_) => {
                     return self.confirm(ctx, Confirm::SearchModelInstall);
-                }
-                // Retrying a download the user already agreed to.
-                LocalModelStoreStatus::Failed(_) => {
-                    self.search.start_semantic_search_install(&mut self.status);
                 }
                 LocalModelStoreStatus::Installed | LocalModelStoreStatus::Downloading { .. } => {}
             },
             SearchModelAction::Remove => match status {
                 LocalModelStoreStatus::Missing => {
                     return Err("The search model is not installed.".to_owned());
+                }
+                LocalModelStoreStatus::Downloading { .. }
+                    if self.settings.ai_control == AiControlAccess::Ask =>
+                {
+                    return Err(
+                        "The search model is downloading. The user can cancel it in Settings."
+                            .to_owned(),
+                    );
                 }
                 LocalModelStoreStatus::Downloading { .. } => {
                     self.search.cancel_semantic_search_install(&mut self.status);
@@ -757,14 +789,12 @@ impl SnappyRefApp {
             return Err(OTHER_DIALOG.to_owned());
         }
         match &confirm {
-            Confirm::LibraryRemove(assets) => {
+            Confirm::LibraryRemove(assets) if ask => {
                 self.pending_library_remove = Some(PendingLibraryRemove {
                     asset_ids: assets.clone(),
                 });
-                if !ask {
-                    self.confirm_pending_library_remove();
-                }
             }
+            Confirm::LibraryRemove(assets) => self.remove_library_assets(assets),
             Confirm::SearchModelRemove if ask => self.pending_semantic_search_remove = true,
             Confirm::SearchModelRemove => self
                 .search
@@ -776,6 +806,10 @@ impl SnappyRefApp {
             Confirm::SearchModelInstall => {
                 self.search.start_semantic_search_install(&mut self.status);
             }
+        }
+        if ask && !self.confirm_open(&confirm) {
+            self.dismiss_confirm(&confirm);
+            return Err("SnappyRef cannot ask the user yet. Try again in a moment.".to_owned());
         }
         if ask {
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
@@ -817,7 +851,10 @@ impl SnappyRefApp {
                 library.load_assets(assets)?.is_empty()
             }
             Confirm::SearchModelRemove => status == LocalModelStoreStatus::Missing,
-            Confirm::SearchModelInstall => status != LocalModelStoreStatus::Missing,
+            Confirm::SearchModelInstall => matches!(
+                status,
+                LocalModelStoreStatus::Installed | LocalModelStoreStatus::Downloading { .. }
+            ),
         };
         if !done {
             return Err(match self.settings.ai_control {
@@ -950,8 +987,11 @@ impl SnappyRefApp {
                     Err("The search model is still loading. Try again in a moment.".to_owned())
                 }
             },
-            WaitingOn::PureRef if timed_out => Err("The PureRef file took too long.".to_owned()),
-            WaitingOn::PureRef => return Some(waiting),
+            WaitingOn::PureRef(_) if timed_out => Err(
+                "The PureRef file took too long. SnappyRef finishes it in the background."
+                    .to_owned(),
+            ),
+            WaitingOn::PureRef(_) => return Some(waiting),
             WaitingOn::Confirm(confirm) => {
                 if !self.confirm_open(confirm) {
                     self.confirmed(confirm)
@@ -967,13 +1007,17 @@ impl SnappyRefApp {
         None
     }
 
-    /// A PureRef import or export finished.
-    pub(super) fn answer_pureref_control_call(&mut self, outcome: Result<String, String>) {
-        let Some(index) = self
-            .control
-            .waiting
-            .iter()
-            .position(|waiting| matches!(waiting.on, WaitingOn::PureRef))
+    /// The PureRef import or export of `path` finished. The user's own
+    /// imports and exports pass through here too and answer no call.
+    pub(super) fn answer_pureref_control_call(
+        &mut self,
+        path: &Path,
+        outcome: Result<String, String>,
+    ) {
+        let Some(index) =
+            self.control.waiting.iter().position(
+                |waiting| matches!(&waiting.on, WaitingOn::PureRef(file) if file == path),
+            )
         else {
             return;
         };

@@ -90,7 +90,7 @@ fn edit_board_call_is_one_undo_step() {
 }
 
 #[test]
-fn edit_board_checks_every_edit_before_applying_any() {
+fn refused_edit_board_call_applies_nothing() {
     let root = TempRoot::new("snappyref-control-check");
     let (mut app, ctx) = control_app(&root);
     let error = call(
@@ -108,6 +108,42 @@ fn edit_board_checks_every_edit_before_applying_any() {
         "{error}"
     );
     assert!(error.ends_with("Nothing was applied."), "{error}");
+    assert_eq!(item_count(&mut app, &ctx), 0);
+
+    let made = call(
+        &mut app,
+        &ctx,
+        "edit_board",
+        json!({"edits": [
+            {"action": "add", "type": "label", "text": "Heads", "x": 0, "y": 0, "ref": "title"},
+            {"action": "add", "type": "rectangle", "x": 0, "y": 80, "width": 200, "height": 100, "ref": "frame"},
+            {"action": "group", "ids": ["$title", "$frame"], "flow": "column"},
+        ]}),
+    )
+    .unwrap();
+    let before = call(&mut app, &ctx, "get_board", json!({})).unwrap();
+
+    // The check passes this call. The canvas refuses its last edit, after the others applied.
+    let error = call(
+        &mut app,
+        &ctx,
+        "edit_board",
+        json!({"edits": [
+            {"action": "set", "id": made["refs"]["title"], "text": "Hands"},
+            {"action": "delete", "ids": [made["refs"]["frame"]]},
+            {"action": "add", "type": "rectangle", "x": 400, "y": 0, "width": 10, "height": 10, "ref": "loose"},
+            {"action": "remove_from_group", "ids": ["$loose"]},
+        ]}),
+    )
+    .unwrap_err();
+    assert!(error.starts_with("edits[3] failed:"), "{error}");
+    assert!(error.ends_with("Nothing was applied."), "{error}");
+    assert_eq!(
+        call(&mut app, &ctx, "get_board", json!({})).unwrap(),
+        before
+    );
+    // The refused call left no Undo step either.
+    call(&mut app, &ctx, "undo", json!({})).unwrap();
     assert_eq!(item_count(&mut app, &ctx), 0);
 }
 
@@ -128,10 +164,6 @@ fn library_removal_waits_for_the_user_unless_access_is_full() {
     app.settings.ai_control = AiControlAccess::Ask;
     let asked = app.control_call(&ctx, "remove_from_library", remove.clone());
     assert!(matches!(asked, Ok(Step::Wait(..))));
-    assert_eq!(
-        app.pending_library_remove.take().unwrap().asset_ids,
-        [asset]
-    );
     assert_eq!(library.load_assets(&[asset]).unwrap().len(), 1);
 
     app.settings.ai_control = AiControlAccess::Full;

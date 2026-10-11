@@ -39,8 +39,17 @@ impl BoardEditing {
         Ok(changed)
     }
 
-    /// Gesture deletions record their own history, so only direct edits ask
-    /// for `deletions` here.
+    /// Direct edits the canvas holds and nothing accepted yet, as the edit
+    /// that would record them. Replaying it backward takes them back.
+    pub(crate) fn pending_direct_edits(
+        &mut self,
+        canvas: &mut crate::canvas::CanvasState,
+        library: Option<&crate::library::storage::Library>,
+        board_id: i64,
+    ) -> Option<HistoryAction> {
+        self.pending_changes_action(canvas, library, board_id, "AI edit", true)
+    }
+
     fn record_pending_changes(
         &mut self,
         canvas: &mut crate::canvas::CanvasState,
@@ -51,13 +60,29 @@ impl BoardEditing {
     ) -> Result<bool, String> {
         self.documents
             .set_viewport(board_id, canvas.viewport_state());
-        canvas.reflow_dirty_group_members();
-        let Some(library) = library else {
+        let Some(action) = self.pending_changes_action(canvas, library, board_id, label, deletions)
+        else {
             return Ok(false);
         };
+        self.history.record_applied(board_id, action);
+        self.queue_canvas_document(canvas, board_id)
+    }
+
+    /// Gesture deletions record their own history, so only direct edits ask
+    /// for `deletions` here.
+    fn pending_changes_action(
+        &mut self,
+        canvas: &mut crate::canvas::CanvasState,
+        library: Option<&crate::library::storage::Library>,
+        board_id: i64,
+        label: &str,
+        deletions: bool,
+    ) -> Option<HistoryAction> {
+        canvas.reflow_dirty_group_members();
+        let library = library?;
         let changes = canvas.pending_document_changes_preview();
         if !changes.has_changes() {
-            return Ok(false);
+            return None;
         }
 
         let current_document = self.accepted_board_document(library, board_id).ok();
@@ -141,8 +166,7 @@ impl BoardEditing {
                 .map(|document| document.groups.clone()),
             after: Some(after),
         });
-        self.history.record_applied(
-            board_id,
+        Some(
             HistoryAction::document(
                 label.to_owned(),
                 placement_changes,
@@ -150,8 +174,7 @@ impl BoardEditing {
                 stack_order,
             )
             .with_groups(groups),
-        );
-        self.queue_canvas_document(canvas, board_id)
+        )
     }
 }
 

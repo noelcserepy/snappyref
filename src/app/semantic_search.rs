@@ -62,7 +62,7 @@ impl SnappyRefApp {
     pub(super) fn should_show_semantic_search_first_launch_prompt(&self) -> bool {
         self.library.is_some()
             && !self.settings.semantic_search_first_launch_prompt_seen
-            && self.search.local_model_assets_missing()
+            && self.search.local_model_needs_install()
     }
 
     pub(super) fn mark_semantic_search_first_launch_prompt_seen(&mut self) {

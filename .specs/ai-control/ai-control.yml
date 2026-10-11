@@ -33,7 +33,8 @@ interface:
         off-by-default: A new Library must start at Off, with nothing listening.
         user-only: Only the user changes the access level, in Settings. No tool changes it.
         off-withdraws-endpoint: Choosing Off must remove the endpoint file and stop the listener at once.
-        ask-confirms-permanent: At Ask, removing Library images and installing or removing the search model must wait for the user's answer in the app's own confirmation dialog.
+        ask-confirms-permanent: At Ask, removing Library images and installing or removing the search model must wait for the user's answer in the app's own confirmation dialog. That holds for a retry after a failed download too.
+        ask-cannot-cancel-a-download: At Ask, a call must not cancel a search model download. The user cancels it in Settings.
         full-skips-confirmation: At Full, those calls must run without a dialog.
         dialog-names-the-asker: A dialog raised for a call must say an AI client asked for it.
         one-dialog: A call that needs a dialog while another dialog is open must fail instead of queueing.
@@ -60,13 +61,16 @@ interface:
       behavior:
         ui-thread: Every call must run on the UI thread between frames, through the operations the user's own input reaches.
         never-blocks-a-frame: A call that waits on import, search, a screenshot, an export, or the user must be polled across frames and must not block one.
-        ids-not-selection: Edits name their targets by id. No edit depends on or changes what the user has selected, except the `select` tool.
+        ids-not-selection: `edit_board` names its targets by id. It must neither read nor change what the user has selected. `select` sets the selection, and `add_images` selects what it imported, as the user's own import does.
+        waits-for-the-user: `edit_board` must be refused while the user is dragging, drawing, cropping, or typing in a label. It must not cut their edit short.
         one-call-one-undo: One `edit_board` call must be one Undo step, however many edits it carries.
-        checked-before-applied: Every edit in a call must be checked against the Board before the first one applies. A call that fails the check changes nothing.
+        all-or-nothing: A refused `edit_board` call must leave the Board, its Undo history, and the selection as they were. That holds whether the check before the first edit refuses it or the canvas refuses an edit partway through.
         results-report-final-geometry: `edit_board` must return every item and Group it touched as they ended up, after Group layout.
         refs-name-new-items: An edit may name the item or Group it creates, and later edits in the same call may refer to it by that name.
         errors-say-what-to-do: A refusal must name the edit and field at fault and what would be accepted.
         user-vocabulary: Tool names, argument names, and results use the words the app shows the user.
+        export-never-replaces: `export_board` must refuse a path where a file already exists.
+        answers-match-their-call: A PureRef import or export must answer the call that named its file, and no other.
 
       caller_obligations: {}
 
@@ -85,7 +89,8 @@ interface:
 
       behavior:
         loopback-only: The app must listen on 127.0.0.1 only, on a port the OS picks.
-        token-required: A connection must send the token from the endpoint file before any call. A wrong token is dropped.
+        token-required: A connection must send the token from the endpoint file before any call. A wrong token, an overlong one, or none within a few seconds is dropped.
+        one-call-per-connection: A connection carries one call. `--mcp` must never send a call twice. When the app does not answer, the client is told the call may have run.
         endpoint-file-private: The endpoint file must be readable by the user only where the platform supports it.
         catalogue-without-app: Listing tools must work while the app is closed.
         launches-when-on: With access on and no app answering, a tool call must start the app and wait for it.

@@ -1,5 +1,6 @@
-//! `edit_board`: edits addressed by id, checked as a whole before any of them
-//! applies, then accepted as one Undo step.
+//! `edit_board`: edits addressed by id, accepted as one Undo step or not at
+//! all. The check up front names what is wrong with an edit. The canvas
+//! decides whether an edit applies, and a refused one takes the batch back.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -245,7 +246,7 @@ impl Checked {
             }
             Target::Ref(name) => name
                 .strip_prefix('$')
-                .and_then(|name| self.ref_kinds.get(name))
+                .and_then(|name| self.ref_kinds.get(ref_key(name)))
                 .copied()
                 .ok_or_else(|| {
                     format!(
@@ -260,7 +261,7 @@ impl Checked {
         let Some(name) = &edit.created_ref else {
             return Ok(());
         };
-        let name = name.trim_start_matches('$');
+        let name = ref_key(name);
         if name.is_empty() {
             return Err("\"ref\" cannot be empty.".to_owned());
         }
@@ -277,6 +278,9 @@ impl Checked {
         canvas: &CanvasState,
         library: &Library,
     ) -> Result<(), String> {
+        if let Some((key, _)) = raw.iter().find(|(_, value)| value.is_null()) {
+            return Err(format!("\"{key}\" is null. Leave it out instead."));
+        }
         numbers(raw)?;
         if edit
             .text
@@ -426,6 +430,22 @@ fn numbers(raw: &Map<String, Value>) -> Result<(), String> {
     Ok(())
 }
 
+/// A ref is the same name with or without its `$`.
+fn ref_key(name: &str) -> &str {
+    name.trim_start_matches('$')
+}
+
+/// Grouping refuses with a code. A client needs a sentence.
+fn group_error(code: String) -> String {
+    match code.as_str() {
+        "group_missing" => "The group no longer exists.",
+        "item_missing" | "member_missing" => "An item this edit names no longer exists.",
+        "invalid_value" => "A group cannot take one of these values.",
+        _ => return code,
+    }
+    .to_owned()
+}
+
 fn one_image_side(edit: &Edit) -> Result<(), String> {
     if edit.width.is_some() && edit.height.is_some() {
         return Err("An image keeps its aspect ratio. Give width or height, not both.".to_owned());
@@ -453,7 +473,7 @@ impl Batch<'_> {
             Target::Id(id) => Ok(*id),
             Target::Ref(name) => self
                 .refs
-                .get(name.trim_start_matches('$'))
+                .get(ref_key(name))
                 .copied()
                 .ok_or_else(|| format!("{target} was not created.")),
         }
@@ -467,11 +487,18 @@ impl Batch<'_> {
             .cloned()
     }
 
+    /// A Group that loses members lays out the rest again, so it reports too.
+    fn leaving_groups(&mut self, ids: &[i64]) {
+        let groups = ids
+            .iter()
+            .filter_map(|id| self.canvas.group_for_member(*id));
+        self.touched.extend(groups);
+    }
+
     fn created(&mut self, edit: &Edit, id: i64) {
         self.touched.push(id);
         if let Some(name) = &edit.created_ref {
-            self.refs
-                .insert(name.trim_start_matches('$').to_owned(), id);
+            self.refs.insert(ref_key(name).to_owned(), id);
         }
     }
 
@@ -490,7 +517,9 @@ impl Batch<'_> {
                 let id = self.add(edit)?;
                 self.canvas.mark_stack_order_for_persistence();
                 if let Some(group) = group {
-                    self.canvas.add_members_to_group(group, &[id])?;
+                    self.canvas
+                        .add_members_to_group(group, &[id])
+                        .map_err(group_error)?;
                 }
                 self.created(edit, id);
             }
@@ -505,9 +534,11 @@ impl Batch<'_> {
                     .name
                     .clone()
                     .unwrap_or_else(|| format!("Group {}", self.canvas.groups().len() + 1));
+                self.leaving_groups(&ids);
                 let id = self
                     .canvas
-                    .create_named_group(self.library.allocate_document_id(), name, &ids)?
+                    .create_named_group(self.library.allocate_document_id(), name, &ids)
+                    .map_err(group_error)?
                     .ok_or("These items cannot form a group.")?;
                 self.set_group(id, edit)?;
                 self.created(edit, id);
@@ -516,18 +547,21 @@ impl Batch<'_> {
                 for id in ids {
                     self.touched
                         .extend(self.group(id).into_iter().flat_map(|group| group.members));
-                    self.canvas.dissolve_group(id)?;
+                    self.canvas.dissolve_group(id).map_err(group_error)?;
                     self.deleted.push(id);
                 }
             }
             Action::AddToGroup => {
                 let group = group.ok_or("add_to_group needs \"group\".")?;
-                self.canvas.add_members_to_group(group, &ids)?;
+                self.leaving_groups(&ids);
+                self.canvas
+                    .add_members_to_group(group, &ids)
+                    .map_err(group_error)?;
                 self.touched.push(group);
             }
             Action::RemoveFromGroup => {
+                self.leaving_groups(&ids);
                 for id in ids {
-                    self.touched.extend(self.canvas.group_for_member(id));
                     self.canvas
                         .remove_from_group(id)
                         .map_err(|_| format!("{id} is not in a group."))?;
@@ -740,7 +774,7 @@ impl Batch<'_> {
             group.container.size.y = height / group.container.scale;
         }
         if group != before {
-            self.canvas.edit_group(group)?;
+            self.canvas.edit_group(group).map_err(group_error)?;
         }
         if positions(edit) {
             let corner = describe::top_left(before.container);
@@ -765,17 +799,14 @@ impl Batch<'_> {
                     items.extend(group.members);
                     groups.push(id);
                 }
-                None => {
-                    // The Group the item leaves lays out its other members again.
-                    self.touched.extend(self.canvas.group_for_member(id));
-                    items.push(id);
-                }
+                None => items.push(id),
             }
         }
+        self.leaving_groups(&items);
         self.canvas.delete_items(&items);
         for &id in &groups {
             if self.group(id).is_some() {
-                self.canvas.dissolve_group(id)?;
+                self.canvas.dissolve_group(id).map_err(group_error)?;
             }
         }
         self.deleted.extend(items);
@@ -801,6 +832,12 @@ impl SnappyRefApp {
         if raw.is_empty() {
             return Err("\"edits\" is empty.".to_owned());
         }
+        if self.canvas.user_edit_in_progress() {
+            return Err(
+                "The user is in the middle of an edit on the board. Try again in a moment."
+                    .to_owned(),
+            );
+        }
         let library = self.library.as_ref().ok_or("Storage unavailable")?;
         let mut checked = Checked::default();
         let mut edits = Vec::with_capacity(raw.len());
@@ -818,29 +855,35 @@ impl SnappyRefApp {
         self.record_pending_document_changes_history("Edit board");
         let library = self.library.as_ref().ok_or("Storage unavailable")?;
         let (settings, image_loading_available) = (&self.settings, self.import_worker.is_some());
-        let (batch, failure) = self.canvas.preserving_selection(|canvas| {
-            let mut batch = Batch {
-                ctx,
-                canvas,
-                library,
-                settings,
-                image_loading_available,
-                asset_sizes: checked.asset_sizes,
-                refs: BTreeMap::new(),
-                touched: Vec::new(),
-                deleted: Vec::new(),
-                reload: Vec::new(),
-            };
-            let failure = edits
-                .iter()
-                .enumerate()
-                .find_map(|(index, edit)| Some((index, batch.apply(edit).err()?)));
-            (
-                (batch.refs, batch.touched, batch.deleted, batch.reload),
-                failure,
-            )
-        });
-        let (refs, touched, deleted, reload) = batch;
+        // arrange and order borrow the selection.
+        let selection = self.canvas.selection();
+        let mut batch = Batch {
+            ctx,
+            canvas: &mut self.canvas,
+            library,
+            settings,
+            image_loading_available,
+            asset_sizes: checked.asset_sizes,
+            refs: BTreeMap::new(),
+            touched: Vec::new(),
+            deleted: Vec::new(),
+            reload: Vec::new(),
+        };
+        let failure = edits
+            .iter()
+            .enumerate()
+            .find_map(|(index, edit)| Some((index, batch.apply(edit).err()?)));
+        let (refs, touched, deleted, reload) =
+            (batch.refs, batch.touched, batch.deleted, batch.reload);
+        if let Some((index, error)) = failure {
+            let discarded = self.board_lifecycle().discard_direct_edits(ctx);
+            self.canvas.restore_selection(selection);
+            discarded?;
+            return Err(format!(
+                "edits[{index}] failed: {error} Nothing was applied."
+            ));
+        }
+        self.canvas.restore_selection(selection);
 
         let viewport = self.import_viewport_world_rect(ctx.viewport_rect());
         let (owner, mut context) = self.board_edit_context(viewport);
@@ -880,14 +923,6 @@ impl SnappyRefApp {
         if !deleted.is_empty() {
             result.insert("deleted".into(), json!(deleted));
         }
-        let result = Value::Object(result);
-        match failure {
-            None => Ok(result),
-            Some((0, error)) => Err(format!("edits[0] failed: {error} Nothing was applied.")),
-            Some((index, error)) => Err(format!(
-                "edits[{index}] failed: {error} The {index} edits before it stay applied as one \
-                 undo step: {result}"
-            )),
-        }
+        Ok(Value::Object(result))
     }
 }

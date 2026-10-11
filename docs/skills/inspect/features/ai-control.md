@@ -12,7 +12,7 @@ Settings. It is Off until they change it.
   file and stops it.
 - `ai-control-tools` is the 19 tools in `src/control/tools.rs`. `get_board`
   returns the board as JSON. `edit_board` applies a batch of edits by id as one
-  undo step and returns what it touched.
+  undo step and returns what it touched. A refused batch applies nothing.
 - `ai-control-confirm` covers `remove_from_library` and `search_model`. At Ask
   the app shows its own confirmation dialog, prefixed with "An AI client asked
   for this.", and the call waits up to a minute. At Full they run at once.

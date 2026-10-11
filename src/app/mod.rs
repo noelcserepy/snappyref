@@ -680,34 +680,34 @@ impl SnappyRefApp {
     }
 
     fn confirm_pending_library_remove(&mut self) {
-        let Some(pending) = self.pending_library_remove.take() else {
-            return;
-        };
+        if let Some(pending) = self.pending_library_remove.take() {
+            self.remove_library_assets(&pending.asset_ids);
+        }
+    }
 
+    fn remove_library_assets(&mut self, asset_ids: &[i64]) {
         let Some(library) = &self.library else {
             self.status = "Storage unavailable".to_owned();
             return;
         };
 
-        if let Err(error) = library.archive_assets(&pending.asset_ids) {
+        if let Err(error) = library.archive_assets(asset_ids) {
             self.status = error;
             return;
         }
 
-        self.board_editing
-            .documents
-            .remove_assets(&pending.asset_ids);
-        self.canvas.remove_assets(&pending.asset_ids);
+        self.board_editing.documents.remove_assets(asset_ids);
+        self.canvas.remove_assets(asset_ids);
         {
             self.search.invalidate_library_search_cache();
         }
         self.refresh_board_summaries();
-        let noun = if pending.asset_ids.len() == 1 {
+        let noun = if asset_ids.len() == 1 {
             "asset"
         } else {
             "assets"
         };
-        self.status = format!("Removed {} library {noun}", pending.asset_ids.len());
+        self.status = format!("Removed {} library {noun}", asset_ids.len());
     }
 
     fn canvas_input_policy(&self, ctx: &egui::Context) -> crate::canvas::CanvasInputPolicy {

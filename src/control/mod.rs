@@ -7,12 +7,13 @@
 mod mcp;
 mod tools;
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::time::Duration;
 
 use eframe::egui;
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,9 @@ pub(crate) use tools::tool_names;
 /// outlives the app, so `--mcp` reads its presence as "access is on" and
 /// launches the app when nothing answers.
 const ENDPOINT_FILE: &str = "control.json";
+/// `--mcp` sends its token and its call as soon as it connects.
+const HANDSHAKE_WAIT: Duration = Duration::from_secs(5);
+const TOKEN_LINE_LIMIT: u64 = 256;
 
 #[derive(Serialize, Deserialize)]
 struct Endpoint {
@@ -130,7 +134,11 @@ impl ControlServer {
                     if accept_stopped.load(Ordering::Relaxed) {
                         return;
                     }
-                    let Ok(stream) = stream else { continue };
+                    let Ok(stream) = stream else {
+                        // Out of sockets, say. Do not spin on it.
+                        std::thread::sleep(Duration::from_millis(100));
+                        continue;
+                    };
                     let (token, sender, ctx) = (token.clone(), sender.clone(), ctx.clone());
                     let _ = std::thread::Builder::new()
                         .name("control-connection".to_owned())
@@ -167,8 +175,10 @@ impl Drop for ControlServer {
 fn write_endpoint(path: &Path, endpoint: &Endpoint) -> Result<(), String> {
     let failed = |error: std::io::Error| format!("Failed to write {}: {error}", path.display());
     let json = serde_json::to_vec(endpoint).map_err(|error| error.to_string())?;
-    // A stale file may have looser permissions than a new one gets.
-    let _ = std::fs::remove_file(path);
+    // A new file gets private permissions, and the rename swaps it in whole,
+    // so `--mcp` never reads the endpoint as missing while the app is up.
+    let fresh = path.with_extension("json.tmp");
+    let _ = std::fs::remove_file(&fresh);
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -177,8 +187,9 @@ fn write_endpoint(path: &Path, endpoint: &Endpoint) -> Result<(), String> {
         options.mode(0o600);
     }
     options
-        .open(path)
+        .open(&fresh)
         .and_then(|mut file| file.write_all(&json))
+        .and_then(|()| std::fs::rename(&fresh, path))
         .map_err(failed)
 }
 
@@ -196,50 +207,52 @@ fn read_endpoint(library_root: &Path) -> Option<Endpoint> {
     serde_json::from_slice(&bytes).ok()
 }
 
-/// The token line comes first. Each later line is one call, answered by one line.
+/// The token line comes first, then one call, answered by one line.
 fn serve_connection(
     stream: TcpStream,
     token: &str,
     requests: &mpsc::Sender<ControlRequest>,
     ctx: &egui::Context,
 ) {
+    // A stranger that connects and sends nothing, or never ends its line,
+    // must not hold a thread or grow a buffer.
+    if stream.set_read_timeout(Some(HANDSHAKE_WAIT)).is_err() {
+        return;
+    }
     let Ok(mut writer) = stream.try_clone() else {
         return;
     };
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    if reader.read_line(&mut line).is_err() || line.trim_end() != token {
+    let offered = (&mut reader).take(TOKEN_LINE_LIMIT).read_line(&mut line);
+    if offered.is_err() || line.trim_end() != token {
         return;
     }
     if writer.write_all(b"ok\n").is_err() {
         return;
     }
-    loop {
-        line.clear();
-        if !matches!(reader.read_line(&mut line), Ok(read) if read > 0) {
-            return;
-        }
-        let result = match serde_json::from_str::<Call>(&line) {
-            Ok(call) => {
-                let (sender, reply) = mpsc::channel();
-                let request = ControlRequest {
-                    tool: call.tool,
-                    arguments: call.arguments,
-                    responder: Responder(sender),
-                };
-                if requests.send(request).is_err() {
-                    return;
-                }
-                ctx.request_repaint();
-                match reply.recv() {
-                    Ok(reply) => reply.into_tool_result(),
-                    Err(_) => tool_error("SnappyRef dropped the request."),
-                }
-            }
-            Err(error) => tool_error(&format!("Malformed call: {error}")),
-        };
-        if writeln!(writer, "{result}").is_err() {
-            return;
-        }
+    line.clear();
+    if !matches!(reader.read_line(&mut line), Ok(read) if read > 0) {
+        return;
     }
+    let result = match serde_json::from_str::<Call>(&line) {
+        Ok(call) => {
+            let (sender, reply) = mpsc::channel();
+            let request = ControlRequest {
+                tool: call.tool,
+                arguments: call.arguments,
+                responder: Responder(sender),
+            };
+            if requests.send(request).is_err() {
+                return;
+            }
+            ctx.request_repaint();
+            match reply.recv() {
+                Ok(reply) => reply.into_tool_result(),
+                Err(_) => tool_error("SnappyRef dropped the request."),
+            }
+        }
+        Err(error) => tool_error(&format!("Malformed call: {error}")),
+    };
+    let _ = writeln!(writer, "{result}");
 }

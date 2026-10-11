@@ -45,20 +45,22 @@ impl SnappyRefApp {
 
     pub(super) fn handle_pureref_exchange_results(&mut self, ctx: &egui::Context) {
         while let Some(result) = self.pureref_exchange.try_recv() {
-            let outcome = match result {
-                PureRefExchangeResult::Imported(Ok(imported)) => {
-                    self.open_imported_pureref_board(ctx, imported)
-                }
-                PureRefExchangeResult::Imported(Err(error)) => {
-                    Err(format!("PureRef import failed: {error}"))
-                }
-                PureRefExchangeResult::Exported(Ok(exported)) => Ok(exported.status()),
-                PureRefExchangeResult::Exported(Err(error)) => {
-                    Err(format!("PureRef export failed: {error}"))
-                }
+            let (path, outcome) = match result {
+                PureRefExchangeResult::Imported(path, imported) => (
+                    path,
+                    imported
+                        .map_err(|error| format!("PureRef import failed: {error}"))
+                        .and_then(|imported| self.open_imported_pureref_board(ctx, imported)),
+                ),
+                PureRefExchangeResult::Exported(path, exported) => (
+                    path,
+                    exported
+                        .map(|exported| exported.status())
+                        .map_err(|error| format!("PureRef export failed: {error}")),
+                ),
             };
             self.status = outcome.clone().unwrap_or_else(|error| error);
-            self.answer_pureref_control_call(outcome);
+            self.answer_pureref_control_call(&path, outcome);
         }
     }
 

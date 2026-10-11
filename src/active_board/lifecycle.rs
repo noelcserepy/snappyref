@@ -69,6 +69,20 @@ impl BoardLifecycle<'_> {
         Ok(Some(format!("{verb} {}", applied.action.label())))
     }
 
+    /// Takes back direct edits nothing accepted, so a refused batch leaves
+    /// the Board as it was. Nothing was queued for them, so nothing is written.
+    pub(crate) fn discard_direct_edits(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        let pending =
+            self.editing
+                .pending_direct_edits(self.canvas, self.library, *self.active_board_id);
+        let Some(HistoryAction::Document(action)) = pending else {
+            return Ok(());
+        };
+        let replay = self.apply_history_to_active_canvas(&action, HistoryDirection::Backward);
+        self.canvas.take_document_changes();
+        self.load_history_placement_content(ctx, replay.placements_needing_content)
+    }
+
     pub(crate) fn apply_history_action(
         &mut self,
         ctx: &egui::Context,
