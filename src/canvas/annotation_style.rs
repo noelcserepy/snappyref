@@ -102,15 +102,26 @@ pub(super) fn handle_keys(ui: &egui::Ui, state: &mut CanvasState) {
         (digits, head, fill, input.time)
     });
 
-    // An armed draw mode is about the next annotation, so its style keys
-    // leave the selection alone.
-    if state.interaction.armed_annotation_kind.is_some() && (fill || !digits.is_empty()) {
-        state.clear_selection();
-    }
-    if !state.interaction.selected_placement_ids.is_empty() {
-        return;
-    }
     let mut change = None;
+    // An armed draw mode is about the next annotation, so its style keys
+    // drop the selection instead of restyling it. H swaps an armed arrow and
+    // line.
+    if let Some(armed) = state.interaction.armed_annotation_kind
+        && (head || fill || !digits.is_empty())
+    {
+        state.clear_selection();
+        let swapped = match armed {
+            CanvasAnnotationKind::Arrow => CanvasAnnotationKind::Line,
+            CanvasAnnotationKind::Line => CanvasAnnotationKind::Arrow,
+            other => other,
+        };
+        if head && swapped != armed {
+            state.interaction.armed_annotation_kind = Some(swapped);
+            change = Some(StyleChange::Arrowhead(
+                swapped == CanvasAnnotationKind::Arrow,
+            ));
+        }
+    }
     for (index, size) in digits {
         change = Some(if size {
             set_size(state, index)
@@ -310,15 +321,15 @@ fn key_hints(state: &CanvasState) -> Option<Vec<Hint>> {
             (COLOR_KEYS, "Color"),
             (SIZE_KEYS, "Size"),
         ];
-        if kind == CanvasAnnotationKind::Rectangle {
-            hints.push((FILL_KEYS, "Fill"));
-        }
+        hints.push(if kind == CanvasAnnotationKind::Rectangle {
+            (FILL_KEYS, "Fill")
+        } else {
+            (HEAD_KEYS, "Head")
+        });
         hints.push((&[Key::Named("Esc")], "Cancel"));
         return Some(hints);
     }
-    if !state.interaction.selected_placement_ids.is_empty()
-        || state.interaction.selected_annotation_ids.is_empty()
-    {
+    if state.interaction.selected_annotation_ids.is_empty() {
         return None;
     }
     if state.interaction.editing_text_annotation_id.is_some() {

@@ -359,9 +359,30 @@ fn filled_textbox_renders_its_allocated_size() {
                 s.use_dock(Control::Padding(padding))
             })
             .unwrap();
-        let textbox = canvas.annotation_by_id(1).unwrap();
+        // Painting fits a label to its text, except along a filled axis.
+        let rect = egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(2000.0, 2000.0));
+        let _ = crate::ui::test_frame::run_ui(
+            &egui::Context::default(),
+            egui::RawInput {
+                screen_rect: Some(rect),
+                ..Default::default()
+            },
+            |ui| {
+                crate::canvas::show(
+                    ui,
+                    rect,
+                    rect,
+                    &mut canvas,
+                    None,
+                    false,
+                    crate::canvas::CanvasInputPolicy::Full,
+                    false,
+                );
+            },
+        );
+        let textbox = canvas.annotation_for_id(1).unwrap();
         assert_eq!(
-            crate::canvas::interaction::textbox_world_rect(textbox).width(),
+            crate::canvas::interaction::textbox_world_rect(&textbox).width(),
             width
         );
     }

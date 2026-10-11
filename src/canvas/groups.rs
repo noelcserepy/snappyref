@@ -44,6 +44,16 @@ impl CanvasState {
             .find(|g| g.members.contains(&id))
             .map(|g| g.id)
     }
+    /// The axes a Group stretches this member along. Free flow and Absolute
+    /// leave a saved Fill dormant.
+    pub(super) fn group_member_fill(&self, id: i64) -> [bool; 2] {
+        self.groups()
+            .iter()
+            .filter(|group| group.flow != crate::data::GroupFlow::Free)
+            .find_map(|group| group.layout.members.get(&id))
+            .filter(|member| !member.absolute)
+            .map_or([false; 2], |member| member.fill)
+    }
     pub fn select_group(&mut self, id: GroupId) {
         let Some(group) = self.groups().iter().find(|g| g.id == id).cloned() else {
             return;

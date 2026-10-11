@@ -2,7 +2,8 @@
 
 Users draw labels, arrows, lines, and rectangles on a board with one key
 each. T places a label under the pointer. A, L, and S arm a draw mode that the
-next drag uses up. A label is a compact chip that sizes itself to its text. A
+next drag uses up. A label is a compact chip that sizes itself to its text, except along an axis
+a Group fills. A
 colored label is filled with its color and takes dark text. A rectangle is a
 bordered region with no fill, a soft tint, or a flat color. Lines and arrows
 have round caps, and an end that sits on a label stops at the label's edge.
@@ -15,7 +16,8 @@ endpoint of a line or arrow can be dragged on its own.
   The press that starts the drag uses the mode up, so a plain click draws
   nothing and disarms. The same key again, or Escape, also disarms. While a
   mode is armed the key row reads Drag, Color, Size, and Cancel, plus Fill
-  for a rectangle.
+  for a rectangle or Head for an arrow or line. H swaps an armed arrow and
+  line.
 - `annot-label` is placed by pressing T. It lands under the pointer, or at the
   canvas center when the pointer is elsewhere. Editing starts at once.
 - `annot-rectangle` is drawn by pressing S, then dragging. Only its edge takes
