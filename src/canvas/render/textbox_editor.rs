@@ -3,113 +3,109 @@ use std::sync::Arc;
 
 use eframe::egui;
 
-use super::annotations::annotation_color;
 use crate::canvas::interaction::{
-    annotation_screen_rect, hit_test_textbox_resize_handle, textbox_screen_rect, textbox_world_rect,
+    hit_test_textbox_resize_handle, textbox_screen_rect, textbox_world_rect,
 };
-use crate::canvas::{
-    CanvasState, MIN_CANVAS_ZOOM, MIN_TEXTBOX_WORLD_SIZE, TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-    TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN,
-    TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH, TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH, TextboxLayoutCacheKey,
-    TextboxPointerRegion,
-};
-use crate::data::{
-    CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasStrokeWidth,
-    CanvasTextSize,
-};
-use crate::ui::{card, theme};
+use crate::canvas::{CanvasState, MIN_CANVAS_ZOOM, TextboxLayoutCacheKey, TextboxPointerRegion};
+use crate::data::{CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasTextSize};
+use crate::ui::theme;
 
-pub(crate) fn textbox_padding() -> egui::Vec2 {
-    egui::vec2(crate::ui::theme::SPACE_2, crate::ui::theme::SPACE_2)
-}
+/// Label proportions in ems of its font size. Every length follows the font,
+/// so a label keeps its shape at every zoom. The radius matches
+/// `RADIUS_COMPACT` against `TYPE_CONTROL`.
+const LABEL_PAD_X_EM: f32 = 0.7;
+const LABEL_PAD_Y_EM: f32 = 0.34;
+pub(crate) const LABEL_RADIUS_EM: f32 = 0.46;
+/// An empty label keeps room for the caret.
+const LABEL_EMPTY_WIDTH_EM: f32 = 2.0;
 
+/// Label font size in world units against the 300-unit placement span.
 pub(crate) fn textbox_font_size(text_size: CanvasTextSize) -> f32 {
     let baseline = crate::placement::placement_target_reference_span();
     match text_size {
-        CanvasTextSize::S => baseline * (16.0 / 300.0),
-        CanvasTextSize::M => baseline * (20.0 / 300.0),
-        CanvasTextSize::L => baseline * (40.0 / 300.0),
-        CanvasTextSize::Xl => baseline * (64.0 / 300.0),
+        CanvasTextSize::S => baseline * (11.0 / 300.0),
+        CanvasTextSize::M => baseline * (16.0 / 300.0),
+        CanvasTextSize::L => baseline * (24.0 / 300.0),
+        CanvasTextSize::Xl => baseline * (36.0 / 300.0),
+        CanvasTextSize::Xxl => baseline * (56.0 / 300.0),
     }
 }
 
-/// World size of a textbox that shows `text` without wrapping at `zoom`.
+/// Where the text starts inside a label, in world units.
+pub(crate) fn label_text_offset(text_size: CanvasTextSize) -> egui::Vec2 {
+    egui::vec2(LABEL_PAD_X_EM, LABEL_PAD_Y_EM) * textbox_font_size(text_size)
+}
+
+/// A label's fill and the ink that reads on it. A colored label is filled
+/// with its color so it shows from across the board.
+pub(crate) fn label_colors(color: CanvasAnnotationColor) -> (egui::Color32, egui::Color32) {
+    if color == CanvasAnnotationColor::Default {
+        (theme::TOOLTIP, theme::TEXT)
+    } else {
+        (
+            super::annotations::annotation_color(color),
+            theme::BACKGROUND,
+        )
+    }
+}
+
+/// World size of a label that fits `text`. Labels never wrap; each line of
+/// text is one row.
 pub(crate) fn textbox_size_for_text(
     ctx: &egui::Context,
     text: &str,
     text_size: CanvasTextSize,
-    zoom: f32,
 ) -> egui::Vec2 {
-    let zoom = zoom.max(MIN_CANVAS_ZOOM);
+    let em = textbox_font_size(text_size);
     let galley = ctx.fonts_mut(|fonts| {
         fonts.layout_no_wrap(
-            text.to_owned(),
-            textbox_font_id(text_size, zoom),
+            if text.is_empty() { " " } else { text }.to_owned(),
+            egui::FontId::proportional(em),
             egui::Color32::WHITE,
         )
     });
-    // Padding is screen-space, so zooming out leaves less room for text.
-    // One em of width keeps each line on one row a little below `zoom`.
-    let slack = egui::vec2(textbox_font_size(text_size), 0.0);
-    ((galley.size() + textbox_padding() * 2.0) / zoom + slack).max(MIN_TEXTBOX_WORLD_SIZE)
+    let mut text_extent = galley.size();
+    if text.is_empty() {
+        text_extent.x = LABEL_EMPTY_WIDTH_EM * em;
+    }
+    text_extent + 2.0 * label_text_offset(text_size)
+}
+
+/// Keeps a label's stored rect equal to its text. The top-left stays put.
+pub(crate) fn fit_label_to_text(ctx: &egui::Context, state: &mut CanvasState, index: usize) {
+    let annotation = &state.document.annotations[index];
+    if annotation.kind != CanvasAnnotationKind::Textbox {
+        return;
+    }
+    let size = textbox_size_for_text(ctx, &annotation.text, annotation.text_size);
+    let world_rect = textbox_world_rect(annotation);
+    if (world_rect.size() - size).abs().max_elem() < 0.01 {
+        return;
+    }
+    let annotation_id = annotation.id;
+    let annotation = &mut state.document.annotations[index];
+    annotation.geometry = crate::data::CanvasAnnotationGeometry::from_kind(
+        annotation.kind,
+        world_rect.min,
+        world_rect.min + size,
+    );
+    state.mark_annotation_dirty(annotation_id);
 }
 
 pub(crate) fn textbox_font_id(text_size: CanvasTextSize, zoom: f32) -> egui::FontId {
     egui::FontId::proportional(textbox_font_size(text_size) * zoom.max(MIN_CANVAS_ZOOM))
 }
 
-pub(crate) fn textbox_content_rect(textbox_rect: egui::Rect) -> egui::Rect {
-    let padding = textbox_padding();
-    let min = egui::pos2(
-        (textbox_rect.min.x + padding.x).min(textbox_rect.max.x),
-        (textbox_rect.min.y + padding.y).min(textbox_rect.max.y),
-    );
-    let available_size = (textbox_rect.max - min).max(egui::Vec2::ZERO);
-    let desired_size = (textbox_rect.size() - padding * 2.0).max(egui::Vec2::ZERO);
-    egui::Rect::from_min_size(
-        min,
-        egui::vec2(
-            desired_size.x.min(available_size.x),
-            desired_size.y.min(available_size.y),
-        ),
-    )
-}
-
-fn textbox_row_height(ui: &egui::Ui, text_size: CanvasTextSize, zoom: f32) -> f32 {
-    let font_id = textbox_font_id(text_size, zoom);
-    ui.fonts_mut(|fonts| fonts.row_height(&font_id))
-}
-
-pub(crate) fn textbox_empty_hotspot_rect(
-    ui: &egui::Ui,
-    content_rect: egui::Rect,
-    text_size: CanvasTextSize,
-    zoom: f32,
-) -> egui::Rect {
-    let width = content_rect.width().clamp(
-        TEXTBOX_EMPTY_HOTSPOT_MIN_WIDTH,
-        TEXTBOX_EMPTY_HOTSPOT_MAX_WIDTH,
-    );
-    let size = egui::vec2(
-        width,
-        textbox_row_height(ui, text_size, zoom).min(content_rect.height()),
-    );
-    egui::Rect::from_min_size(content_rect.min, size.min(content_rect.size()))
-}
-
-pub(crate) fn textbox_text_interactive_rect_from_galley(
-    ui: &egui::Ui,
-    content_rect: egui::Rect,
+/// Screen rect of the text inside a label.
+fn label_text_screen_rect(
+    state: &CanvasState,
+    rect: egui::Rect,
+    annotation: &CanvasAnnotation,
     galley: &egui::Galley,
-    text_size: CanvasTextSize,
-    zoom: f32,
-    is_empty: bool,
 ) -> egui::Rect {
-    if is_empty {
-        return textbox_empty_hotspot_rect(ui, content_rect, text_size, zoom);
-    }
-
-    egui::Rect::from_min_size(content_rect.min, galley.size()).intersect(content_rect)
+    let chip = textbox_screen_rect(state, rect, annotation);
+    let min = chip.min + label_text_offset(annotation.text_size) * state.zoom;
+    egui::Rect::from_min_size(min, galley.size())
 }
 
 pub(crate) fn textbox_pointer_region(
@@ -119,43 +115,36 @@ pub(crate) fn textbox_pointer_region(
     annotation: &CanvasAnnotation,
     pointer_pos: egui::Pos2,
 ) -> Option<TextboxPointerRegion> {
-    debug_assert_eq!(annotation.kind, CanvasAnnotationKind::Textbox);
+    debug_assert!(annotation.kind.is_rect());
 
-    let editing = state.interaction.editing_text_annotation_id == Some(annotation.id);
-    let textbox_rect = textbox_screen_rect(state, rect, annotation);
-    if !textbox_rect.contains(pointer_pos) {
-        return hit_test_textbox_resize_handle(state, rect, annotation, pointer_pos)
-            .map(TextboxPointerRegion::Resize);
+    let screen_rect = textbox_screen_rect(state, rect, annotation);
+    if annotation.kind == CanvasAnnotationKind::Rectangle {
+        if let Some(handle) = hit_test_textbox_resize_handle(state, rect, annotation, pointer_pos) {
+            return Some(TextboxPointerRegion::Resize(handle));
+        }
+        return screen_rect
+            .contains(pointer_pos)
+            .then_some(TextboxPointerRegion::Body);
     }
 
-    if editing {
-        let content_rect = textbox_content_rect(textbox_rect);
+    // Labels size themselves to their text, so they have no resize edges.
+    if !screen_rect.contains(pointer_pos) {
+        return None;
+    }
+    if state.interaction.editing_text_annotation_id == Some(annotation.id) {
         let layout = state.cached_textbox_layout(
             ui,
             annotation.id,
             &annotation.text,
             annotation.text_size,
             annotation.color,
-            content_rect.width(),
+            f32::INFINITY,
             state.zoom,
         );
-        let text_rect = textbox_text_interactive_rect_from_galley(
-            ui,
-            content_rect,
-            &layout.galley,
-            annotation.text_size,
-            state.zoom,
-            annotation.text.is_empty(),
-        );
-        if text_rect.contains(pointer_pos) {
+        if label_text_screen_rect(state, rect, annotation, &layout.galley).contains(pointer_pos) {
             return Some(TextboxPointerRegion::Text);
         }
     }
-
-    if let Some(handle) = hit_test_textbox_resize_handle(state, rect, annotation, pointer_pos) {
-        return Some(TextboxPointerRegion::Resize(handle));
-    }
-
     Some(TextboxPointerRegion::Body)
 }
 
@@ -192,68 +181,13 @@ pub(crate) fn layout_textbox_galley(
             text.to_owned()
         },
         textbox_font_id(text_size, zoom),
-        annotation_color(color),
+        label_colors(color).1,
         wrap_width.max(24.0),
     );
     ui.fonts_mut(|fonts| fonts.layout_job(job))
 }
 
-pub(crate) fn textbox_required_world_height(galley_height_screen: f32, zoom: f32) -> f32 {
-    let padding = textbox_padding();
-    let screen_height = galley_height_screen + padding.y * 2.0;
-    (screen_height / zoom.max(MIN_CANVAS_ZOOM)).max(MIN_TEXTBOX_WORLD_SIZE.y)
-}
-
-const ANNOTATION_COLORS: [CanvasAnnotationColor; 5] = [
-    CanvasAnnotationColor::Default,
-    CanvasAnnotationColor::Coral,
-    CanvasAnnotationColor::Gold,
-    CanvasAnnotationColor::Mint,
-    CanvasAnnotationColor::Sky,
-];
-const TOOLBAR_SWATCH_BUTTON_WIDTH: f32 = 28.0;
-const TOOLBAR_BACKGROUND_BUTTON_WIDTH: f32 = 36.0;
-
-fn expand_textbox_to_height(state: &mut CanvasState, index: usize, required_height: f32) -> bool {
-    let annotation = &state.document.annotations[index];
-    if annotation.kind != CanvasAnnotationKind::Textbox {
-        return false;
-    }
-
-    // Active Fill height belongs to the Group, so growing it would fight every
-    // reflow. Free and Absolute leave saved Fill dormant.
-    let group_owns_height = state.groups().iter().any(|g| {
-        g.flow != crate::data::GroupFlow::Free
-            && g.layout
-                .members
-                .get(&annotation.id)
-                .is_some_and(|m| m.fill[1] && !m.absolute)
-    });
-    let world_rect = textbox_world_rect(annotation);
-    if group_owns_height || required_height <= world_rect.height() + 0.5 {
-        return false;
-    }
-
-    let annotation_id = annotation.id;
-    let new_rect = egui::Rect::from_min_size(
-        world_rect.min,
-        egui::vec2(world_rect.width(), required_height),
-    );
-    let annotation = &mut state.document.annotations[index];
-    annotation.geometry = crate::data::CanvasAnnotationGeometry::from_kind(
-        annotation.kind,
-        new_rect.min,
-        new_rect.max,
-    );
-    state.mark_annotation_dirty(annotation_id);
-    true
-}
 pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut CanvasState) {
-    let toolbar_entrance = crate::ui::motion::overlay_entrance(
-        ui.ctx(),
-        egui::Id::new("textbox_editor_toolbar_entrance"),
-        state.interaction.editing_text_annotation_id.is_some(),
-    );
     let Some(annotation_id) = state.interaction.editing_text_annotation_id else {
         return;
     };
@@ -267,325 +201,72 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
         state.interaction.focus_text_editor = false;
         return;
     };
-    let textbox_rect = annotation_screen_rect(state, rect, &state.document.annotations[index]);
-    let toolbar_rect = editing_textbox_toolbar_rect(state, rect);
-    let content_rect = textbox_content_rect(textbox_rect);
-    let text = state.document.annotations[index].text.clone();
-    let layout = state.cached_textbox_layout(
-        ui,
-        annotation_id,
-        &text,
-        state.document.annotations[index].text_size,
-        state.document.annotations[index].color,
-        content_rect.width(),
-        state.zoom,
-    );
-    let text_rect = textbox_text_interactive_rect_from_galley(
-        ui,
-        content_rect,
-        &layout.galley,
-        state.document.annotations[index].text_size,
-        state.zoom,
-        text.is_empty(),
-    );
+    let annotation = &state.document.annotations[index];
+    let chip = textbox_screen_rect(state, rect, annotation);
+    let text_pos = chip.min + label_text_offset(annotation.text_size) * state.zoom;
+    let text_size = annotation.text_size;
+    let text_color = annotation.color;
+    let zoom = state.zoom;
     let clip_rect = state
         .member_clip_screen_rect(rect, annotation_id)
-        .map_or(content_rect, |clip| clip.intersect(content_rect));
-    let toolbar_interacting = toolbar_rect
-        .map(|toolbar_rect| show_textbox_editor_toolbar(ui, toolbar_rect, state, toolbar_entrance))
-        .unwrap_or(false);
+        .map_or(rect, |clip| clip.intersect(rect));
 
     egui::Area::new(egui::Id::new(("textbox-editor", annotation_id)))
         .order(egui::Order::Foreground)
-        .fixed_pos(text_rect.min)
+        .fixed_pos(text_pos)
         .show(ui.ctx(), |ui| {
             ui.set_clip_rect(clip_rect);
-            let zoom = state.zoom;
-            let text_size = state.document.annotations[index].text_size;
-            let text_color = state.document.annotations[index].color;
-            let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, width: f32| {
-                let wrap_width = if content_rect.width() > 0.0 {
-                    content_rect.width()
-                } else {
-                    width
-                };
-                layout_textbox_galley(ui, text.as_str(), text_size, text_color, wrap_width, zoom)
+            // Enter commits a label; Shift+Enter starts a new line. The Enter
+            // that opened the editor does not also close it.
+            let opening = state.interaction.focus_text_editor;
+            let commit = !opening
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+            let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _width: f32| {
+                layout_textbox_galley(
+                    ui,
+                    text.as_str(),
+                    text_size,
+                    text_color,
+                    f32::INFINITY,
+                    zoom,
+                )
             };
-            let output = ui
-                .allocate_ui(text_rect.size(), |ui| {
-                    ui.set_min_size(text_rect.size());
-                    ui.visuals_mut().override_text_color = Some(annotation_color(text_color));
-                    egui::TextEdit::multiline(&mut state.document.annotations[index].text)
-                        .desired_width(content_rect.width())
-                        .font(textbox_font_id(text_size, state.zoom))
-                        .layouter(&mut layouter)
-                        .frame(egui::Frame::NONE)
-                        .show(ui)
-                })
-                .inner;
+            let output = egui::TextEdit::multiline(&mut state.document.annotations[index].text)
+                .desired_width(1.0)
+                .desired_rows(1)
+                .font(textbox_font_id(text_size, zoom))
+                .layouter(&mut layouter)
+                .return_key(Some(egui::KeyboardShortcut::new(
+                    egui::Modifiers::SHIFT,
+                    egui::Key::Enter,
+                )))
+                .frame(egui::Frame::NONE)
+                .margin(egui::Margin::ZERO)
+                .show(ui);
             let text = state.document.annotations[index].text.clone();
-            let entry = state.cache_textbox_layout(
+            state.cache_textbox_layout(
                 annotation_id,
                 &text,
                 text_size,
                 text_color,
-                content_rect.width(),
-                state.zoom,
+                f32::INFINITY,
+                zoom,
                 output.galley.clone(),
             );
-            let required_height = entry.required_world_height;
-            expand_textbox_to_height(state, index, required_height);
             if state.interaction.focus_text_editor {
                 output.response.request_focus();
                 state.interaction.focus_text_editor = false;
             }
             if output.response.changed() {
+                fit_label_to_text(ui.ctx(), state, index);
                 state.mark_annotation_dirty(annotation_id);
             }
-            if (output.response.has_focus()
-                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)))
-                || (output.response.lost_focus() && !toolbar_interacting)
+            if commit
+                || (output.response.has_focus()
+                    && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)))
+                || output.response.lost_focus()
             {
                 state.finish_textbox_edit();
             }
         });
-}
-
-/// A style toolbar is one segmented [`card::bed`] holding cells `widths` wide.
-fn toolbar_size(widths: &[f32]) -> egui::Vec2 {
-    let insets = widths.len() as f32 + 1.0;
-    egui::vec2(
-        widths.iter().sum::<f32>() + card::BED_INSET * insets,
-        theme::CONTROL_HEIGHT + card::BED_INSET * 2.0,
-    )
-}
-
-fn textbox_editor_toolbar_size() -> egui::Vec2 {
-    toolbar_size(&[
-        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-        TOOLBAR_SWATCH_BUTTON_WIDTH,
-        TOOLBAR_SWATCH_BUTTON_WIDTH,
-        TOOLBAR_SWATCH_BUTTON_WIDTH,
-        TOOLBAR_SWATCH_BUTTON_WIDTH,
-        TOOLBAR_SWATCH_BUTTON_WIDTH,
-        TOOLBAR_BACKGROUND_BUTTON_WIDTH,
-    ])
-}
-
-fn annotation_style_toolbar_size() -> egui::Vec2 {
-    toolbar_size(&[
-        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-        TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH,
-        TOOLBAR_SWATCH_BUTTON_WIDTH,
-        TOOLBAR_SWATCH_BUTTON_WIDTH,
-        TOOLBAR_SWATCH_BUTTON_WIDTH,
-        TOOLBAR_SWATCH_BUTTON_WIDTH,
-        TOOLBAR_SWATCH_BUTTON_WIDTH,
-    ])
-}
-
-pub(crate) fn editing_textbox_toolbar_rect(
-    state: &CanvasState,
-    rect: egui::Rect,
-) -> Option<egui::Rect> {
-    let annotation_id = state.interaction.editing_text_annotation_id?;
-    let annotation = state.annotation_by_id(annotation_id)?;
-    if annotation.kind != CanvasAnnotationKind::Textbox {
-        return None;
-    }
-
-    let textbox_rect = annotation_screen_rect(state, rect, annotation);
-    let size = textbox_editor_toolbar_size();
-    let min_x = rect.left() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
-    let max_x = (rect.right() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - size.x).max(min_x);
-    let preferred_x = textbox_rect.left();
-    let x = preferred_x.clamp(min_x, max_x);
-
-    let min_y = rect.top() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
-    let above_y = textbox_rect.top() - TEXTBOX_EDITOR_TOOLBAR_CLEARANCE - size.y;
-    let y = above_y.max(min_y);
-
-    Some(egui::Rect::from_min_size(egui::pos2(x, y), size))
-}
-
-fn show_textbox_editor_toolbar(
-    ui: &egui::Ui,
-    toolbar_rect: egui::Rect,
-    state: &mut CanvasState,
-    entrance: f32,
-) -> bool {
-    let selected = state.editing_textbox_size();
-    let selected_color = state.editing_textbox_color();
-    let background_enabled = state.editing_textbox_background_enabled().unwrap_or(false);
-    let mut next_size = None;
-    let mut next_color = None;
-    let mut toggle_background = false;
-    let pointer_interacting = ui.input(|input| {
-        input.pointer.latest_pos().is_some_and(|pointer_pos| {
-            toolbar_rect.contains(pointer_pos)
-                && (input.pointer.any_pressed()
-                    || input.pointer.any_down()
-                    || input.pointer.any_released())
-        })
-    });
-
-    let settle = crate::ui::motion::settle_offset(entrance);
-    egui::Area::new(egui::Id::new("textbox-editor-toolbar"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(toolbar_rect.min + egui::vec2(0.0, settle))
-        .show(ui.ctx(), |ui| {
-            ui.multiply_opacity(entrance);
-            card::bed(ui, |ui| {
-                for size in [
-                    CanvasTextSize::S,
-                    CanvasTextSize::M,
-                    CanvasTextSize::L,
-                    CanvasTextSize::Xl,
-                ] {
-                    let width = TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH;
-                    if text_cell(ui, size.label(), width, selected == Some(size)).clicked() {
-                        next_size = Some(size);
-                    }
-                }
-                for color in ANNOTATION_COLORS {
-                    if color_swatch(ui, color, selected_color == Some(color)).clicked() {
-                        next_color = Some(color);
-                    }
-                }
-                let width = TOOLBAR_BACKGROUND_BUTTON_WIDTH;
-                if text_cell(ui, "BG", width, background_enabled).clicked() {
-                    toggle_background = true;
-                }
-            });
-        });
-
-    let changed = next_size
-        .map(|text_size| state.apply_text_size_to_editing_textbox(text_size))
-        .unwrap_or(false)
-        || next_color
-            .map(|color| state.apply_color_to_editing_textbox(color))
-            .unwrap_or(false)
-        || (toggle_background && state.toggle_editing_textbox_background());
-    pointer_interacting || changed
-}
-
-pub(crate) fn annotation_style_toolbar_rect(
-    state: &CanvasState,
-    rect: egui::Rect,
-) -> Option<egui::Rect> {
-    let annotation = state.selected_annotation()?;
-    if !matches!(
-        annotation.kind,
-        CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow
-    ) {
-        return None;
-    }
-
-    let annotation_rect = annotation_screen_rect(state, rect, annotation);
-    let size = annotation_style_toolbar_size();
-    let min_x = rect.left() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
-    let max_x = (rect.right() - TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN - size.x).max(min_x);
-    let x = annotation_rect.left().clamp(min_x, max_x);
-    let min_y = rect.top() + TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN;
-    let y = (annotation_rect.top() - TEXTBOX_EDITOR_TOOLBAR_CLEARANCE - size.y).max(min_y);
-    Some(egui::Rect::from_min_size(egui::pos2(x, y), size))
-}
-
-pub(crate) fn show_annotation_style_toolbar(
-    ui: &egui::Ui,
-    rect: egui::Rect,
-    state: &mut CanvasState,
-) {
-    let toolbar_rect = annotation_style_toolbar_rect(state, rect);
-    let entrance = crate::ui::motion::overlay_entrance(
-        ui.ctx(),
-        egui::Id::new("annotation_style_toolbar_entrance"),
-        toolbar_rect.is_some(),
-    );
-    let Some(toolbar_rect) = toolbar_rect else {
-        return;
-    };
-    let selected_width = state.selected_stroke_width();
-    let selected_color = state.selected_annotation_color();
-    let mut next_width = None;
-    let mut next_color = None;
-
-    let settle = crate::ui::motion::settle_offset(entrance);
-    egui::Area::new(egui::Id::new("annotation-style-toolbar"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(toolbar_rect.min + egui::vec2(0.0, settle))
-        .show(ui.ctx(), |ui| {
-            ui.multiply_opacity(entrance);
-            card::bed(ui, |ui| {
-                for width in [
-                    CanvasStrokeWidth::S,
-                    CanvasStrokeWidth::M,
-                    CanvasStrokeWidth::L,
-                ] {
-                    let cell_width = TEXTBOX_EDITOR_TOOLBAR_BUTTON_WIDTH;
-                    if text_cell(ui, width.label(), cell_width, selected_width == Some(width))
-                        .clicked()
-                    {
-                        next_width = Some(width);
-                    }
-                }
-                for color in ANNOTATION_COLORS {
-                    if color_swatch(ui, color, selected_color == Some(color)).clicked() {
-                        next_color = Some(color);
-                    }
-                }
-            });
-        });
-
-    if let Some(width) = next_width {
-        state.apply_stroke_width_to_selected_annotation(width);
-    }
-    if let Some(color) = next_color {
-        state.apply_color_to_selected_annotation(color);
-    }
-}
-
-/// A toolbar choice named by its label.
-fn text_cell(ui: &mut egui::Ui, label: &str, width: f32, selected: bool) -> egui::Response {
-    let response = card::cell(
-        ui,
-        label,
-        egui::vec2(width, theme::CONTROL_HEIGHT),
-        selected,
-        true,
-        theme::SURFACE_PRESSED,
-    );
-    ui.painter().text(
-        response.rect.center(),
-        egui::Align2::CENTER_CENTER,
-        label,
-        egui::FontId::proportional(theme::TYPE_CONTROL),
-        card::ink(selected, true, false),
-    );
-    response
-}
-
-/// A color choice: a dot in the color, ringed while it is the current one.
-/// The ring stands in for the gold fill so the Gold swatch stays readable.
-fn color_swatch(ui: &mut egui::Ui, color: CanvasAnnotationColor, selected: bool) -> egui::Response {
-    let response = card::cell(
-        ui,
-        color.as_str(),
-        egui::vec2(TOOLBAR_SWATCH_BUTTON_WIDTH, theme::CONTROL_HEIGHT),
-        false,
-        true,
-        theme::SURFACE_PRESSED,
-    );
-    let center = response.rect.center();
-    if selected {
-        ui.painter()
-            .circle_stroke(center, 10.0, egui::Stroke::new(1.5_f32, theme::TEXT));
-    }
-    ui.painter()
-        .circle_filled(center, 7.0, annotation_color(color));
-    response
 }

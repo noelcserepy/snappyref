@@ -12,7 +12,6 @@ pub(super) enum Icon {
     Dots,
     Rotation,
     Gap,
-    Textbox,
     OnTop,
     General,
     Keys,
@@ -81,11 +80,6 @@ pub(super) fn paint(p: &egui::Painter, center: Pos2, icon: Icon, color: Color32)
             line(&[(2.0, 8.0), (14.0, 8.0)]);
             line(&[(5.0, 5.0), (2.0, 8.0), (5.0, 11.0)]);
             line(&[(11.0, 5.0), (14.0, 8.0), (11.0, 11.0)]);
-        }
-        Icon::Textbox => {
-            frame(1.5, 2.5, 13.0, 11.0, 2.0);
-            line(&[(5.0, 5.5), (11.0, 5.5)]);
-            line(&[(8.0, 5.5), (8.0, 11.0)]);
         }
         Icon::OnTop => {
             frame(1.5, 5.5, 8.5, 8.5, 1.5);

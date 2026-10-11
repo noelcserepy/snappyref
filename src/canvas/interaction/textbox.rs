@@ -5,7 +5,7 @@ use super::super::{
     ActiveGesture, CanvasState, MIN_TEXTBOX_WORLD_SIZE, TEXTBOX_RESIZE_HIT_RADIUS,
     TextboxPointerRegion, TextboxResizeHandle, TextboxTransformState,
 };
-use crate::data::{CanvasAnnotation, CanvasAnnotationKind};
+use crate::data::CanvasAnnotation;
 
 fn begin_textbox_pending_move(
     state: &mut CanvasState,
@@ -28,7 +28,7 @@ fn begin_textbox_pending_move(
         .filter(|annotation_id| {
             state
                 .annotation_by_id(*annotation_id)
-                .is_some_and(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)
+                .is_some_and(|annotation| annotation.kind.is_rect())
         })
         .collect::<Vec<_>>();
     let start_rects_world = state.selected_textbox_start_rects();

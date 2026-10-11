@@ -4,6 +4,9 @@ use egui_kittest::kittest::NodeT;
 #[path = "release_content.rs"]
 mod release_content;
 
+#[path = "inspect_annotations.rs"]
+mod inspect_annotations;
+
 const CMD: egui::Modifiers = egui::Modifiers {
     command: true,
     ..egui::Modifiers::NONE
@@ -982,7 +985,6 @@ fn member_delete_undo_restores_reflowed_textbox() {
         CanvasTextSize::M,
         CanvasStrokeWidth::M,
         crate::data::CanvasAnnotationColor::Sky,
-        true,
     );
     app.canvas.add_annotation(note.clone());
     let group = app.canvas.groups()[0].id;
@@ -1031,7 +1033,6 @@ fn dragging_a_member_moves_every_selected_group() {
         CanvasTextSize::M,
         CanvasStrokeWidth::M,
         crate::data::CanvasAnnotationColor::Sky,
-        true,
     );
     app.canvas.add_annotation(note.clone());
     app.canvas.select_content(&[], &[note.id]);
@@ -1045,6 +1046,8 @@ fn dragging_a_member_moves_every_selected_group() {
             .map(|g| g.container.center)
             .collect::<Vec<_>>()
     };
+    // The first frame fits the label to its text.
+    h.step();
     let before = containers(&h);
     assert_eq!(before.len(), 3);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
@@ -1077,7 +1080,7 @@ fn dragging_a_member_moves_every_selected_group() {
     assert_eq!(h.state().canvas.selected_group_ids().len(), 3);
 
     // A drag from the textbox moves only textboxes itself; image Groups still follow.
-    let from = inspect_world_to_screen(egui::pos2(10.0, 228.0) + egui::vec2(90.0, 60.0), screen);
+    let from = inspect_world_to_screen(egui::pos2(-190.0, 210.0) + egui::vec2(90.0, 60.0), screen);
     drag(
         &mut h,
         from,
@@ -1107,7 +1110,6 @@ fn dragging_a_loose_textbox_leaves_the_selected_group() {
         CanvasTextSize::M,
         CanvasStrokeWidth::M,
         crate::data::CanvasAnnotationColor::Sky,
-        true,
     );
     app.canvas.add_annotation(note.clone());
     let group = app.canvas.groups()[0].id;
@@ -1115,7 +1117,7 @@ fn dragging_a_loose_textbox_leaves_the_selected_group() {
     h.step();
     let before = h.state().canvas.groups()[0].container.center;
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
-    let from = inspect_world_to_screen(egui::pos2(10.0, 228.0), screen);
+    let from = inspect_world_to_screen(egui::pos2(-190.0, 210.0), screen);
     drag(
         &mut h,
         from,

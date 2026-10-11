@@ -52,11 +52,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
         "color",
         "TEXT NOT NULL DEFAULT 'default'",
     ),
-    (
-        "canvas_annotations",
-        "background_enabled",
-        "INTEGER NOT NULL DEFAULT 0",
-    ),
+    ("canvas_annotations", "fill", "TEXT NOT NULL DEFAULT 'tint'"),
     (
         "canvas_annotations",
         "board_id",
@@ -101,11 +97,6 @@ const OLD_SESSION_COLUMNS: &[(&str, &str, &str)] = &[
         "user_session",
         "rotation_snap_degrees",
         "REAL NOT NULL DEFAULT 15.0",
-    ),
-    (
-        "user_session",
-        "default_textbox_background",
-        "INTEGER NOT NULL DEFAULT 0",
     ),
     ("user_session", "sidebar_open", "INTEGER NOT NULL DEFAULT 0"),
     (
@@ -256,14 +247,13 @@ fn legacy_user_session_from_row(row: &rusqlite::Row<'_>) -> Result<UserSession, 
                 .ok()
                 .map(|value| value.max(0.0))
                 .unwrap_or(crate::data::DEFAULT_ROTATION_SNAP_DEGREES),
-            default_textbox_background: row.get::<_, i64>(6).unwrap_or(0) != 0,
             pointer_mode: crate::data::PointerMode::default(),
             always_on_top: false,
             last_update_check_at: None,
         },
-        sidebar_open: row.get::<_, i64>(7).unwrap_or(0) != 0,
+        sidebar_open: row.get::<_, i64>(6).unwrap_or(0) != 0,
         sidebar_tab: row
-            .get::<_, String>(8)
+            .get::<_, String>(7)
             .unwrap_or_else(|_| "settings".to_owned()),
         ..UserSession::default()
     })
@@ -279,7 +269,6 @@ fn backfill_user_session_payload(connection: &Connection) -> Result<(), String> 
                 semantic_search_enabled,
                 canvas_image_max_side,
                 rotation_snap_degrees,
-                default_textbox_background,
                 sidebar_open,
                 sidebar_tab,
                 session_payload
@@ -289,7 +278,7 @@ fn backfill_user_session_payload(connection: &Connection) -> Result<(), String> 
         .map_err(|error| format!("failed to prepare user-session payload backfill: {error}"))?;
 
     let payload = statement.query_row([], |row| {
-        let existing = row.get::<_, Option<String>>(9).ok().flatten();
+        let existing = row.get::<_, Option<String>>(8).ok().flatten();
         if existing
             .as_deref()
             .map(str::trim)
@@ -572,8 +561,8 @@ impl Library {
                     text_size TEXT NOT NULL DEFAULT 'm',
                     stroke_width TEXT NOT NULL DEFAULT 'm',
                     color TEXT NOT NULL DEFAULT 'default',
-                    background_enabled INTEGER NOT NULL DEFAULT 0,
-                    archived  INTEGER NOT NULL DEFAULT 0
+                    archived  INTEGER NOT NULL DEFAULT 0,
+                    fill TEXT NOT NULL DEFAULT 'tint'
                 );
 
                 CREATE TABLE IF NOT EXISTS canvas_stack_items (

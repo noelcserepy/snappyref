@@ -430,8 +430,7 @@ fn inspect_sidebar_pages_writes_artifact() {
     scenario.capture_screen("screen-002-general", &mut harness);
     scenario.assertion(
         "General shows pointer, canvas, and window settings",
-        harness.query_by_label("Always on top").is_some()
-            && harness.query_by_label("Fill new textboxes").is_some(),
+        harness.query_by_label("Always on top").is_some(),
     );
     scenario.assertion(
         "General ends with the Semantic Search download and the available update",

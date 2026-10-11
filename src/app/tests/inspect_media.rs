@@ -69,7 +69,6 @@ fn inspect_image_format_gallery_writes_artifact() {
                         CanvasStrokeWidth::M,
                         crate::data::CanvasAnnotationColor::Default,
                         false,
-                        false,
                     ));
             }
             app.canvas.select_content(&[], &[]);

@@ -7,15 +7,13 @@ use super::geometry::{
     pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
 };
 use super::interaction::{normalized_textbox_rect, placement_screen_rect, textbox_world_rect};
-use super::render::{
-    layout_textbox_galley, textbox_layout_cache_key, textbox_required_world_height,
-};
+use super::render::{layout_textbox_galley, textbox_layout_cache_key};
 use super::{
     CanvasCropRequest, CanvasDocumentChanges, CanvasState, CropState, TextboxLayoutCacheEntry,
 };
 use crate::data::{
-    CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasStackItem,
-    CanvasStrokeWidth, CanvasTextSize, Placement, PlacementLifecycle,
+    CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasRectangleFill,
+    CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, Placement, PlacementLifecycle,
 };
 use crate::placement::arrangement::PlacementArrangementInput;
 
@@ -423,134 +421,92 @@ impl CanvasState {
         }
     }
 
-    pub fn editing_textbox_size(&self) -> Option<CanvasTextSize> {
-        let annotation_id = self.interaction.editing_text_annotation_id?;
-        self.annotation_by_id(annotation_id)
-            .filter(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)
-            .map(|annotation| annotation.text_size)
-    }
-
-    pub fn editing_textbox_color(&self) -> Option<CanvasAnnotationColor> {
-        let annotation_id = self.interaction.editing_text_annotation_id?;
-        self.annotation_by_id(annotation_id)
-            .filter(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)
-            .map(|annotation| annotation.color)
-    }
-
-    pub fn editing_textbox_background_enabled(&self) -> Option<bool> {
-        let annotation_id = self.interaction.editing_text_annotation_id?;
-        self.annotation_by_id(annotation_id)
-            .filter(|annotation| annotation.kind == CanvasAnnotationKind::Textbox)
-            .map(|annotation| annotation.background_enabled)
-    }
-
-    pub fn selected_stroke_width(&self) -> Option<CanvasStrokeWidth> {
-        let annotation = self.selected_annotation()?;
-        matches!(
-            annotation.kind,
-            CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow
-        )
-        .then_some(annotation.stroke_width)
-    }
-
-    pub fn selected_annotation_color(&self) -> Option<CanvasAnnotationColor> {
-        self.selected_annotation()
-            .map(|annotation| annotation.color)
-    }
-
-    pub fn apply_text_size_to_editing_textbox(&mut self, text_size: CanvasTextSize) -> bool {
-        let Some(annotation_id) = self.interaction.editing_text_annotation_id else {
-            return false;
-        };
-        let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
-            return false;
-        };
-        if annotation.kind != CanvasAnnotationKind::Textbox || annotation.text_size == text_size {
-            return false;
+    /// Applies `edit` to every selected annotation and marks the ones it
+    /// changed. Returns whether any changed.
+    fn edit_selected_annotations(&mut self, edit: impl Fn(&mut CanvasAnnotation) -> bool) -> bool {
+        let mut changed = false;
+        for annotation_id in self.interaction.selected_annotation_ids.clone() {
+            let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
+                continue;
+            };
+            if edit(annotation) {
+                self.invalidate_textbox_layout_cache(annotation_id);
+                self.mark_annotation_dirty(annotation_id);
+                changed = true;
+            }
         }
-
-        annotation.text_size = text_size;
-        self.invalidate_textbox_layout_cache(annotation_id);
-        self.mark_annotation_dirty(annotation_id);
-        self.interaction.focus_text_editor = true;
-        true
+        changed
     }
 
-    pub fn apply_color_to_editing_textbox(&mut self, color: CanvasAnnotationColor) -> bool {
-        let Some(annotation_id) = self.interaction.editing_text_annotation_id else {
-            return false;
-        };
-        let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
-            return false;
-        };
-        if annotation.kind != CanvasAnnotationKind::Textbox || annotation.color == color {
-            return false;
-        }
-
-        annotation.color = color;
-        self.invalidate_textbox_layout_cache(annotation_id);
-        self.mark_annotation_dirty(annotation_id);
-        self.interaction.focus_text_editor = true;
-        true
+    pub fn apply_color_to_selected_annotations(&mut self, color: CanvasAnnotationColor) -> bool {
+        self.edit_selected_annotations(|annotation| {
+            std::mem::replace(&mut annotation.color, color) != color
+        })
     }
 
-    pub fn toggle_editing_textbox_background(&mut self) -> bool {
-        let Some(annotation_id) = self.interaction.editing_text_annotation_id else {
-            return false;
-        };
-        let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
-            return false;
-        };
-        if annotation.kind != CanvasAnnotationKind::Textbox {
-            return false;
-        }
-
-        annotation.background_enabled = !annotation.background_enabled;
-        self.mark_annotation_dirty(annotation_id);
-        self.interaction.focus_text_editor = true;
-        true
-    }
-
-    pub fn apply_stroke_width_to_selected_annotation(
+    /// Sets each selected annotation's size on its own scale: a label's type
+    /// size, or the weight of a stroke or of a rectangle's border.
+    pub fn set_selected_annotation_sizes(
         &mut self,
+        text_size: CanvasTextSize,
         stroke_width: CanvasStrokeWidth,
     ) -> bool {
-        let Some(annotation_id) = self.single_selected_annotation_id() else {
-            return false;
-        };
-        let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
-            return false;
-        };
-        if !matches!(
-            annotation.kind,
-            CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow
-        ) || annotation.stroke_width == stroke_width
-        {
-            return false;
-        }
-
-        annotation.stroke_width = stroke_width;
-        self.mark_annotation_dirty(annotation_id);
-        true
+        self.edit_selected_annotations(|annotation| match annotation.kind {
+            CanvasAnnotationKind::Textbox => {
+                std::mem::replace(&mut annotation.text_size, text_size) != text_size
+            }
+            CanvasAnnotationKind::Line
+            | CanvasAnnotationKind::Arrow
+            | CanvasAnnotationKind::Rectangle => {
+                std::mem::replace(&mut annotation.stroke_width, stroke_width) != stroke_width
+            }
+        })
     }
 
-    pub fn apply_color_to_selected_annotation(&mut self, color: CanvasAnnotationColor) -> bool {
-        let Some(annotation_id) = self.single_selected_annotation_id() else {
-            return false;
-        };
-        let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
-            return false;
-        };
-        if annotation.color == color {
-            return false;
-        }
+    /// Steps every selected rectangle to the fill after the first one's.
+    /// Returns the new fill, or none when no rectangle is selected.
+    pub fn cycle_selected_rectangle_fills(&mut self) -> Option<CanvasRectangleFill> {
+        let fill = self
+            .selected_annotations()
+            .into_iter()
+            .find(|annotation| annotation.kind == CanvasAnnotationKind::Rectangle)?
+            .fill
+            .next();
+        self.edit_selected_annotations(|annotation| {
+            annotation.kind == CanvasAnnotationKind::Rectangle
+                && std::mem::replace(&mut annotation.fill, fill) != fill
+        });
+        Some(fill)
+    }
 
-        annotation.color = color;
-        if annotation.kind == CanvasAnnotationKind::Textbox {
-            self.invalidate_textbox_layout_cache(annotation_id);
-        }
-        self.mark_annotation_dirty(annotation_id);
-        true
+    /// A line is an arrow with its head off. Heads go on when any selected
+    /// stroke lacks one, and off otherwise. Returns the new state, or none
+    /// when no stroke is selected.
+    pub fn toggle_selected_arrowheads(&mut self) -> Option<bool> {
+        let mut strokes = self
+            .selected_annotations()
+            .into_iter()
+            .filter(|annotation| {
+                matches!(
+                    annotation.kind,
+                    CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow
+                )
+            });
+        let first = strokes.next()?;
+        let on = first.kind == CanvasAnnotationKind::Line
+            || strokes.any(|annotation| annotation.kind == CanvasAnnotationKind::Line);
+        let kind = if on {
+            CanvasAnnotationKind::Arrow
+        } else {
+            CanvasAnnotationKind::Line
+        };
+        self.edit_selected_annotations(|annotation| {
+            matches!(
+                annotation.kind,
+                CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow
+            ) && std::mem::replace(&mut annotation.kind, kind) != kind
+        });
+        Some(on)
     }
 
     pub fn arrange_selected_horizontal(&mut self, gap: f32) -> usize {
@@ -1028,9 +984,15 @@ impl CanvasState {
         let Some(annotation) = self.annotation_by_id_mut(annotation_id) else {
             return false;
         };
-        if annotation.kind != CanvasAnnotationKind::Textbox {
+        if !annotation.kind.is_rect() {
             return false;
         }
+        // A label's size belongs to its text; only a rectangle has a minimum.
+        let normalized = if annotation.kind == CanvasAnnotationKind::Textbox {
+            world_rect
+        } else {
+            normalized
+        };
 
         let changed = annotation.start().x != normalized.min.x
             || annotation.start().y != normalized.min.y
@@ -1081,7 +1043,7 @@ impl CanvasState {
             .filter_map(|annotation_id| {
                 self.annotation_by_id(*annotation_id)
                     .and_then(|annotation| {
-                        (annotation.kind == CanvasAnnotationKind::Textbox).then_some((
+                        annotation.kind.is_rect().then_some((
                             *annotation_id,
                             crate::data::RectGeometry::from_bounds(
                                 textbox_world_rect(annotation),
@@ -1108,11 +1070,7 @@ impl CanvasState {
         galley: Arc<egui::Galley>,
     ) -> TextboxLayoutCacheEntry {
         let key = textbox_layout_cache_key(text, text_size, color, wrap_width, zoom);
-        let entry = TextboxLayoutCacheEntry {
-            key,
-            required_world_height: textbox_required_world_height(galley.size().y, zoom),
-            galley,
-        };
+        let entry = TextboxLayoutCacheEntry { key, galley };
         self.render
             .textbox_layout_cache
             .insert(annotation_id, entry.clone());

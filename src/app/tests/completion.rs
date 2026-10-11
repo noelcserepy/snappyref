@@ -73,7 +73,6 @@ fn batch_completion_persists_empty_textbox_cleanup_without_an_extra_history_entr
             CanvasTextSize::M,
             CanvasStrokeWidth::M,
             crate::data::CanvasAnnotationColor::Sky,
-            true,
         )
         .unwrap();
     let mut app = test_app(Some(library.clone()));

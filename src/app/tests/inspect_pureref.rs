@@ -382,7 +382,6 @@ fn inspect_pureref_export_writes_artifact() {
         CanvasTextSize::L,
         CanvasStrokeWidth::M,
         crate::data::CanvasAnnotationColor::Default,
-        false,
     );
     let line = test_canvas_annotation(library.allocate_document_id(), egui::pos2(200.0, -300.0));
 

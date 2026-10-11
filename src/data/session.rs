@@ -93,8 +93,6 @@ pub struct WorkspaceSettings {
     #[serde(default = "default_rotation_snap_degrees")]
     pub rotation_snap_degrees: f32,
     #[serde(default)]
-    pub default_textbox_background: bool,
-    #[serde(default)]
     pub pointer_mode: PointerMode,
     #[serde(default)]
     pub always_on_top: bool,
@@ -129,7 +127,6 @@ impl Default for WorkspaceSettings {
             canvas_image_max_side: DEFAULT_CANVAS_IMAGE_MAX_SIDE,
             semantic_search_first_launch_prompt_seen: false,
             rotation_snap_degrees: DEFAULT_ROTATION_SNAP_DEGREES,
-            default_textbox_background: false,
             pointer_mode: PointerMode::default(),
             always_on_top: false,
             last_update_check_at: None,

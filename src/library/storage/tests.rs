@@ -113,7 +113,6 @@ fn update_preservation_smoke() {
     session.settings.placement_target_area = 54_321.0;
     session.settings.canvas_image_max_side = 4096;
     session.settings.rotation_snap_degrees = 30.0;
-    session.settings.default_textbox_background = true;
     session.settings.always_on_top = true;
     session.sidebar_open = true;
     session.sidebar_tab = "boards".to_owned();
@@ -147,7 +146,6 @@ fn update_preservation_smoke() {
     assert_eq!(reloaded_session.settings.placement_target_area, 54_321.0);
     assert_eq!(reloaded_session.settings.canvas_image_max_side, 4096);
     assert_eq!(reloaded_session.settings.rotation_snap_degrees, 30.0);
-    assert!(reloaded_session.settings.default_textbox_background);
     assert!(reloaded_session.settings.always_on_top);
     assert!(reloaded_session.sidebar_open);
     assert_eq!(reloaded_session.sidebar_tab, "boards");
@@ -181,7 +179,6 @@ fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
     session.settings.placement_target_area = 45_000.0;
     session.settings.canvas_image_max_side = 4096;
     session.settings.rotation_snap_degrees = 45.0;
-    session.settings.default_textbox_background = true;
     session.sidebar_open = true;
     session.sidebar_tab = "boards".to_owned();
     library.save_user_session(&session).unwrap();
@@ -230,7 +227,6 @@ fn user_session_payload_takes_precedence_over_legacy_preference_columns() {
     assert_eq!(reloaded.settings.placement_target_area, 45_000.0);
     assert_eq!(reloaded.settings.canvas_image_max_side, 4096);
     assert_eq!(reloaded.settings.rotation_snap_degrees, 45.0);
-    assert!(reloaded.settings.default_textbox_background);
     assert!(reloaded.sidebar_open);
     assert_eq!(reloaded.sidebar_tab, "boards");
 }
@@ -312,7 +308,6 @@ fn existing_legacy_user_session_columns_backfill_payload() {
     assert_eq!(session.settings.placement_target_area, 45_000.0);
     assert_eq!(session.settings.canvas_image_max_side, 4096);
     assert_eq!(session.settings.rotation_snap_degrees, 45.0);
-    assert!(session.settings.default_textbox_background);
     assert!(session.sidebar_open);
     assert_eq!(session.sidebar_tab, "boards");
     drop(library);

@@ -117,7 +117,6 @@ fn assert_copy_keeps_stack_order(
                         fixture.text_size,
                         fixture.stroke_width,
                         fixture.color,
-                        fixture.background_enabled,
                     )
                     .unwrap();
                 app.canvas.add_annotation(annotation.clone());

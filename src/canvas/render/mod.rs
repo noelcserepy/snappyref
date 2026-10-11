@@ -8,6 +8,7 @@ mod textbox_editor;
 #[cfg(test)]
 pub(super) use annotations::annotation_should_paint;
 pub(super) use annotations::paint_annotation_draft;
+pub(super) use annotations::{annotation_color, stroke_width_value};
 pub(super) use background::paint_background;
 #[cfg(test)]
 pub(super) use background::{
@@ -21,13 +22,7 @@ pub(super) use overlays::{
     paint_provisional_placement_previews, paint_selected_placement_borders, paint_selection_bounds,
 };
 pub(super) use textbox_editor::{
-    annotation_style_toolbar_rect, editing_textbox_toolbar_rect, layout_textbox_galley,
-    show_annotation_style_toolbar, show_textbox_editor, textbox_layout_cache_key,
-    textbox_pointer_region, textbox_required_world_height,
-};
-#[cfg(test)]
-pub(super) use textbox_editor::{
-    textbox_content_rect, textbox_empty_hotspot_rect, textbox_text_interactive_rect_from_galley,
+    layout_textbox_galley, show_textbox_editor, textbox_layout_cache_key, textbox_pointer_region,
 };
 pub(crate) use textbox_editor::{textbox_font_size, textbox_size_for_text};
 

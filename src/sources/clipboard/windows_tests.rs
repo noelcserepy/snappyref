@@ -159,7 +159,6 @@ fn native_windows_clipboard_image_metadata_files_and_pureref_bytes() {
         CanvasStrokeWidth::M,
         CanvasAnnotationColor::Default,
         false,
-        false,
     ));
     canvas.select_content(&[placement_id], &[20]);
     let mixed_payload = build_selection_copy_payload(&canvas, Some(&library))

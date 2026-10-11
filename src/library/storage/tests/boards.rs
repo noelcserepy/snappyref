@@ -357,7 +357,6 @@ fn created_annotations_round_trip_through_canvas_stack_order() {
             CanvasTextSize::default(),
             crate::data::CanvasStrokeWidth::default(),
             crate::data::CanvasAnnotationColor::default(),
-            false,
         )
         .unwrap();
 
@@ -429,7 +428,6 @@ fn saved_canvas_stack_order_round_trips_for_active_board() {
             CanvasTextSize::default(),
             crate::data::CanvasStrokeWidth::default(),
             crate::data::CanvasAnnotationColor::default(),
-            false,
         )
         .unwrap();
 
@@ -488,7 +486,6 @@ fn active_board_persists_and_scopes_items_annotations_and_viewport() {
             CanvasTextSize::default(),
             crate::data::CanvasStrokeWidth::default(),
             crate::data::CanvasAnnotationColor::default(),
-            false,
         )
         .unwrap();
 
@@ -529,7 +526,6 @@ fn active_board_persists_and_scopes_items_annotations_and_viewport() {
             CanvasTextSize::default(),
             crate::data::CanvasStrokeWidth::default(),
             crate::data::CanvasAnnotationColor::default(),
-            true,
         )
         .unwrap();
     let mut session = library.load_user_session().unwrap();
@@ -643,7 +639,6 @@ fn delete_board_archives_board_preserves_assets_and_archives_board_content() {
             CanvasTextSize::default(),
             crate::data::CanvasStrokeWidth::default(),
             crate::data::CanvasAnnotationColor::default(),
-            false,
         )
         .unwrap();
 
@@ -878,7 +873,6 @@ fn workspace_settings_remain_global_across_active_boards() {
     session.settings.semantic_search_first_launch_prompt_seen = true;
     session.settings.canvas_image_max_side = 4096;
     session.settings.rotation_snap_degrees = 45.0;
-    session.settings.default_textbox_background = true;
     session.viewport.camera_pan_x = 90.0;
     session.viewport.canvas_background = CanvasBackground::Grid;
     library.save_user_session(&session).unwrap();
@@ -892,7 +886,6 @@ fn workspace_settings_remain_global_across_active_boards() {
     assert!(reopened.settings.semantic_search_first_launch_prompt_seen);
     assert_eq!(reopened.settings.canvas_image_max_side, 4096);
     assert_eq!(reopened.settings.rotation_snap_degrees, 45.0);
-    assert!(reopened.settings.default_textbox_background);
     assert_eq!(reopened.viewport.camera_pan_x, 0.0);
     assert_eq!(reopened.viewport.canvas_background, CanvasBackground::None);
 
@@ -1044,7 +1037,6 @@ fn canvas_annotations_round_trip_and_archive() {
             CanvasTextSize::default(),
             crate::data::CanvasStrokeWidth::default(),
             crate::data::CanvasAnnotationColor::default(),
-            false,
         )
         .unwrap();
 

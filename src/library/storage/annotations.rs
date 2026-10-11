@@ -4,6 +4,7 @@ use super::connection::Library;
 use crate::data::CanvasAnnotation;
 use crate::data::CanvasAnnotationColor;
 use crate::data::CanvasAnnotationKind;
+use crate::data::CanvasRectangleFill;
 #[cfg(test)]
 use crate::data::CanvasStackItem;
 use crate::data::CanvasStrokeWidth;
@@ -23,7 +24,6 @@ impl Library {
         text_size: CanvasTextSize,
         stroke_width: CanvasStrokeWidth,
         color: CanvasAnnotationColor,
-        background_enabled: bool,
     ) -> CanvasAnnotation {
         CanvasAnnotation::new(
             self.allocate_document_id(),
@@ -34,7 +34,6 @@ impl Library {
             text_size,
             stroke_width,
             color,
-            background_enabled,
             false,
         )
     }
@@ -56,7 +55,6 @@ impl Library {
         text_size: CanvasTextSize,
         stroke_width: CanvasStrokeWidth,
         color: CanvasAnnotationColor,
-        background_enabled: bool,
     ) -> Result<CanvasAnnotation, String> {
         let annotation = self.new_canvas_annotation(
             kind,
@@ -66,7 +64,6 @@ impl Library {
             text_size,
             stroke_width,
             color,
-            background_enabled,
         );
         let mut stack = self.load_canvas_stack_order()?;
         stack.push(CanvasStackItem::Annotation(annotation.id));
@@ -92,17 +89,12 @@ pub(super) fn upsert_board_annotation(
     archived: bool,
 ) -> Result<(), String> {
     let archived = if archived { 1_i64 } else { 0_i64 };
-    let background_enabled = if annotation.background_enabled {
-        1_i64
-    } else {
-        0_i64
-    };
     let changed = transaction
         .execute(
             "UPDATE canvas_annotations
              SET kind = ?1, start_x = ?2, start_y = ?3, end_x = ?4, end_y = ?5,
                  text = ?6, text_size = ?7, stroke_width = ?8, color = ?9,
-                 background_enabled = ?10, archived = ?11
+                 archived = ?10, fill = ?11
              WHERE id = ?12 AND board_id = ?13",
             params![
                 annotation.kind.as_str(),
@@ -114,8 +106,8 @@ pub(super) fn upsert_board_annotation(
                 annotation.text_size.as_str(),
                 annotation.stroke_width.as_str(),
                 annotation.color.as_str(),
-                background_enabled,
                 archived,
+                annotation.fill.as_str(),
                 annotation.id,
                 board_id,
             ],
@@ -131,7 +123,7 @@ pub(super) fn upsert_board_annotation(
             .execute(
                 "INSERT INTO canvas_annotations (
                     id, board_id, kind, start_x, start_y, end_x, end_y, text,
-                    text_size, stroke_width, color, background_enabled, archived
+                    text_size, stroke_width, color, archived, fill
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     annotation.id,
@@ -145,8 +137,8 @@ pub(super) fn upsert_board_annotation(
                     annotation.text_size.as_str(),
                     annotation.stroke_width.as_str(),
                     annotation.color.as_str(),
-                    background_enabled,
                     archived,
+                    annotation.fill.as_str(),
                 ],
             )
             .map_err(|error| {
@@ -176,7 +168,7 @@ pub(super) fn load_canvas_annotations_for_board_id(
                     text_size,
                     stroke_width,
                     color,
-                    background_enabled
+                    fill
                  FROM canvas_annotations
                  WHERE archived = 0
                    AND board_id = ?1
@@ -197,7 +189,18 @@ pub(super) fn load_canvas_annotations_for_board_id(
                     )),
                 )
             })?;
-            Ok(CanvasAnnotation::new(
+            let fill =
+                CanvasRectangleFill::from_str(&row.get::<_, String>(10)?).ok_or_else(|| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        10,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "unknown canvas rectangle fill",
+                        )),
+                    )
+                })?;
+            let mut annotation = CanvasAnnotation::new(
                 row.get(0)?,
                 kind,
                 egui::pos2(row.get(2)?, row.get(3)?),
@@ -233,9 +236,10 @@ pub(super) fn load_canvas_annotations_for_board_id(
                         )),
                     )
                 })?,
-                row.get::<_, i64>(10).unwrap_or(0) != 0,
                 false,
-            ))
+            );
+            annotation.fill = fill;
+            Ok(annotation)
         })
         .map_err(|error| format!("failed to read canvas-annotations query: {error}"))?;
 

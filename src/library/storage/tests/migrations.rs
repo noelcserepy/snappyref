@@ -292,7 +292,6 @@ fn library_written_by_v0_2_0_opens_with_boards_content_and_session() {
                 CanvasTextSize::L,
                 CanvasStrokeWidth::M,
                 CanvasAnnotationColor::Coral,
-                true,
                 false,
             ),
             CanvasAnnotation::new(
@@ -304,7 +303,6 @@ fn library_written_by_v0_2_0_opens_with_boards_content_and_session() {
                 CanvasTextSize::M,
                 CanvasStrokeWidth::L,
                 CanvasAnnotationColor::Sky,
-                false,
                 false,
             ),
         ]
@@ -333,7 +331,6 @@ fn library_written_by_v0_2_0_opens_with_boards_content_and_session() {
             CanvasTextSize::M,
             CanvasStrokeWidth::S,
             CanvasAnnotationColor::Gold,
-            false,
             false,
         )]
     );
@@ -376,7 +373,6 @@ fn library_written_by_v0_2_0_opens_with_boards_content_and_session() {
                 canvas_image_max_side: 4096,
                 semantic_search_first_launch_prompt_seen: true,
                 rotation_snap_degrees: 30.0,
-                default_textbox_background: true,
                 pointer_mode: PointerMode::Trackpad,
                 always_on_top: true,
                 last_update_check_at: Some(1_779_000_000_000),

@@ -5,23 +5,17 @@ use super::geometry::{
 use super::interaction::{
     begin_marquee_selection, handle_textbox_primary_press, hit_test_canvas_item,
     hit_test_placement_resize_handle, hit_test_textbox_resize_handle, moved_textbox_rect,
-    open_context_menu_at_pointer, pending_annotation_from_draft, placement_screen_rect,
-    resized_placement_transform, resized_textbox_rect, textbox_screen_rect,
-    update_marquee_selection,
+    open_context_menu_at_pointer, placement_screen_rect, resized_placement_transform,
+    resized_textbox_rect, textbox_screen_rect, update_marquee_selection,
 };
 use super::render::{
-    annotation_should_paint, background_lod_layers, background_screen_step,
-    editing_textbox_toolbar_rect, layout_textbox_galley, optimized_image_pass_eligible_for_state,
-    settled_background_lod_level, textbox_content_rect, textbox_empty_hotspot_rect,
-    textbox_pointer_region, textbox_required_world_height,
-    textbox_text_interactive_rect_from_galley,
+    annotation_should_paint, background_lod_layers, background_screen_step, layout_textbox_galley,
+    optimized_image_pass_eligible_for_state, settled_background_lod_level,
 };
 use super::{
-    ANNOTATION_CULL_MARGIN_SCREEN, AnnotationDraftState, CanvasCropRequest, CanvasInputPolicy,
-    CanvasState, CanvasTexture, FOCUS_SELECTION_PADDING_SCREEN, MIN_CANVAS_ZOOM, PixelCropRect,
-    PlacementArrangementInput, PlacementImage, PlacementResizeHandle,
-    TEXTBOX_EDITOR_TOOLBAR_CLEARANCE, TEXTBOX_EDITOR_TOOLBAR_VIEWPORT_MARGIN, TextboxPointerRegion,
-    TextboxResizeHandle,
+    ANNOTATION_CULL_MARGIN_SCREEN, CanvasCropRequest, CanvasInputPolicy, CanvasState,
+    CanvasTexture, FOCUS_SELECTION_PADDING_SCREEN, PixelCropRect, PlacementArrangementInput,
+    PlacementImage, PlacementResizeHandle, TextboxResizeHandle,
 };
 use crate::data::{
     Asset, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
@@ -797,7 +791,6 @@ fn context_click_uses_frontmost_mixed_canvas_stack_item() {
         default_stroke_width(),
         default_annotation_color(),
         false,
-        false,
     ));
     state.set_canvas_stack_order(vec![
         CanvasStackItem::Annotation(20),
@@ -827,7 +820,6 @@ fn selected_canvas_items_bring_to_front_and_send_to_back() {
         default_text_size(),
         default_stroke_width(),
         default_annotation_color(),
-        false,
         false,
     ));
     state.set_canvas_stack_order(vec![
@@ -876,7 +868,6 @@ fn mixed_selected_canvas_items_move_as_ordered_block() {
             default_text_size(),
             default_stroke_width(),
             default_annotation_color(),
-            false,
             false,
         ));
     }
@@ -1109,7 +1100,6 @@ fn grouping_selection_keeps_lines_and_arrows_loose() {
             default_text_size(),
             default_stroke_width(),
             default_annotation_color(),
-            false,
             false,
         ));
     }

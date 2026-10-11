@@ -8,7 +8,7 @@ use super::{
     CropState, DragState, MarqueeState, PendingAnnotation, PendingCropPreview, PlacementImage,
     PlacementTransformState, SharedRgba, TextboxLayoutCacheEntry, TextboxTransformState,
 };
-use crate::data::{CanvasAnnotation, CanvasImageLod, CanvasStackItem};
+use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasImageLod, CanvasStackItem};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct MouseWheelZoomAnimation {
@@ -62,6 +62,12 @@ pub(crate) struct CanvasInteractionState {
     pub(super) last_group_destination: Option<i64>,
     pub(super) editing_text_annotation_id: Option<i64>,
     pub(super) focus_text_editor: bool,
+    /// The style last picked by key. New annotations start in it, so a run
+    /// of callouts keeps one look without a key each.
+    pub(crate) next_annotation_style: super::annotation_style::AnnotationStyle,
+    pub(super) style_hud: Option<super::annotation_style::StyleHud>,
+    /// The draw mode a key armed. The next press on the canvas uses it up.
+    pub(super) armed_annotation_kind: Option<CanvasAnnotationKind>,
     pub(crate) gesture: Option<ActiveGesture>,
     pub(super) crop_pending_placement_ids: Vec<i64>,
     pub(super) pending_crop: Option<CanvasCropRequest>,

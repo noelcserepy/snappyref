@@ -8,7 +8,7 @@ mod session;
 
 pub use annotation::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationGeometry, CanvasAnnotationKind,
-    CanvasBackground, CanvasStrokeWidth, CanvasTextSize,
+    CanvasBackground, CanvasRectangleFill, CanvasStrokeWidth, CanvasTextSize,
 };
 pub use asset::Asset;
 pub(crate) use geometry::rotated_display_size;

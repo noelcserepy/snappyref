@@ -126,21 +126,6 @@ fn general(
         );
         changed |= number(ui, Number::PLACEMENT_GAP, &mut settings.placement_gap);
     });
-    let fill = settings.default_textbox_background;
-    if card::switch(
-        ui,
-        "Fill new textboxes",
-        INNER_WIDTH,
-        fill,
-        true,
-        None,
-        |p, c, ink| icons::paint(p, c, Icon::Textbox, ink),
-    )
-    .clicked()
-    {
-        settings.default_textbox_background = !fill;
-        changed = true;
-    }
 
     card::section(ui, "Window");
     let on_top = settings.always_on_top;

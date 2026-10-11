@@ -571,8 +571,16 @@ struct StoredAnnotation {
     text_size: String,
     stroke_width: String,
     color: String,
-    background_enabled: bool,
+    /// History written before rectangles had a fill carries none.
+    #[serde(default = "default_stored_fill")]
+    fill: String,
     archived: bool,
+}
+
+fn default_stored_fill() -> String {
+    crate::data::CanvasRectangleFill::default()
+        .as_str()
+        .to_owned()
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -926,7 +934,7 @@ impl From<&CanvasAnnotation> for StoredAnnotation {
             text_size: annotation.text_size.as_str().to_owned(),
             stroke_width: annotation.stroke_width.as_str().to_owned(),
             color: annotation.color.as_str().to_owned(),
-            background_enabled: annotation.background_enabled,
+            fill: annotation.fill.as_str().to_owned(),
             archived: annotation.archived,
         }
     }
@@ -934,7 +942,9 @@ impl From<&CanvasAnnotation> for StoredAnnotation {
 
 impl StoredAnnotation {
     fn into_annotation(self) -> Result<CanvasAnnotation, String> {
-        Ok(CanvasAnnotation::new(
+        let fill = crate::data::CanvasRectangleFill::from_str(&self.fill)
+            .ok_or_else(|| format!("unknown stored rectangle fill: {}", self.fill))?;
+        let mut annotation = CanvasAnnotation::new(
             self.id,
             crate::data::CanvasAnnotationKind::from_str(&self.kind)
                 .ok_or_else(|| format!("unknown stored annotation kind: {}", self.kind))?,
@@ -947,9 +957,10 @@ impl StoredAnnotation {
                 .ok_or_else(|| format!("unknown stored stroke width: {}", self.stroke_width))?,
             crate::data::CanvasAnnotationColor::from_str(&self.color)
                 .ok_or_else(|| format!("unknown stored annotation color: {}", self.color))?,
-            self.background_enabled,
             self.archived,
-        ))
+        );
+        annotation.fill = fill;
+        Ok(annotation)
     }
 }
 
@@ -1054,6 +1065,21 @@ mod tests {
     }
 
     #[test]
+    fn annotation_stored_before_rectangle_fill_loads_with_the_default_fill() {
+        let stored: super::StoredAnnotation = serde_json::from_str(
+            r#"{"id":1,"kind":"textbox","start_x":0.0,"start_y":0.0,"end_x":10.0,"end_y":10.0,
+                "text":"","text_size":"m","stroke_width":"m","color":"default",
+                "background_enabled":true,"archived":false}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            stored.into_annotation().unwrap().fill,
+            crate::data::CanvasRectangleFill::default()
+        );
+    }
+
+    #[test]
     fn completion_adopts_untouched_members_into_the_arrival_edit() {
         use crate::data::{Placement, PlacementContent, PlacementLifecycle, PlacementState};
         let placement = |id, x| Placement {
@@ -1123,7 +1149,6 @@ mod tests {
             CanvasTextSize::M,
             CanvasStrokeWidth::M,
             CanvasAnnotationColor::Sky,
-            true,
             false,
         );
         let change = HistoryChange {

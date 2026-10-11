@@ -7,7 +7,7 @@ use crate::canvas::interaction::{
 use crate::canvas::{
     ActiveGesture, CanvasState, IMAGE_CULL_MARGIN_SCREEN, PLACEMENT_ROTATE_HANDLE_RADIUS_SCREEN,
 };
-use crate::data::{CanvasAnnotationKind, CanvasStackItem, PlacementLifecycle};
+use crate::data::{CanvasStackItem, PlacementLifecycle};
 
 const SELECTION_BORDER_WIDTH: f32 = 1.0;
 const IMAGE_SELECTION_BORDER_COLOR: egui::Color32 = crate::ui::theme::TEXT;
@@ -229,9 +229,7 @@ pub(crate) fn paint_selection_bounds(
         return;
     }
 
-    if state.interaction.selected_placement_ids.is_empty()
-        && let Some(annotation) = state.selected_annotation()
-        && annotation.kind == CanvasAnnotationKind::Textbox
+    if state.interaction.selected_placement_ids.is_empty() && state.selected_annotation().is_some()
     {
         return;
     }

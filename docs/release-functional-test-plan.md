@@ -122,14 +122,14 @@ There is no flip command. Mirrored images only come from EXIF (IMP-10).
 
 | ID | Do | Expect | Covered |
 | --- | --- | --- | --- |
-| ANN-1 | Hold A and drag; hold L and drag; A or L with a click and no drag | Arrow with head at the end point, line without head, no stray segment from the click | `inspect::annotation-editing` |
+| ANN-1 | Press A, then drag; press L, then drag; A or L with a click and no drag | Arrow with head at the end point, line without head, no stray segment from the click | `inspect::annotation-editing` |
 | ANN-2 | Select an arrow, drag its body, then each endpoint | Body moves the whole arrow; an endpoint moves alone, the other stays | |
-| ANN-3 | Change an arrow's S/M/L width and color | Only the selected arrow changes | |
-| ANN-4 | T+click, then T+drag, type multiline and non-ASCII text | Both create a textbox, text wraps inside it | |
+| ANN-3 | Select an arrow, press 1 to 5 and Shift+1 to 5, press H twice | Only the selected arrow changes, the HUD shows each new value, the head goes off then on | |
+| ANN-4 | Press T over the canvas, type multiline and non-ASCII text | A label appears under the pointer and takes the text, without the letter t | |
 | ANN-5 | Click away, double-click to edit again, then select and press Enter, then Escape | Text kept, editing resumes both ways, Escape ends editing | |
-| ANN-6 | Textbox S/M/L/XL, color swatches, BG; resize and move the box | Toolbar changes the textbox, text rewraps, moving does not edit text | |
-| ANN-7 | Settings > Textbox background toggle, create a new textbox | New textbox follows the default, old ones keep theirs | |
-| ANN-8 | While editing text, type Q, W, E, G, P, C, R, A, L, T, Delete and `Mod+Z` | Text edits only, no board command fires | |
+| ANN-6 | Select a label, press 1 to 5 and Shift+1 to 5; move it | Keys change the label, the chip resizes to its text, moving does not edit text | |
+| ANN-7 | While editing text, type Q, W, E, G, P, C, R, A, L, S, T, F, H, Delete and `Mod+Z` | Text edits only, no board command fires | |
+| ANN-8 | Press S, then drag; select the rectangle, press Shift+1 to 5 and F three times | Border weight follows the size key; fill goes solid, none, then back to tint | `inspect::annotation-style-keys` |
 
 ## Grouping and Group card
 

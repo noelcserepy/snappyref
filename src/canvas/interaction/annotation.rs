@@ -5,7 +5,8 @@ use super::super::{
     AnnotationEndpoint, CanvasState, PendingAnnotation,
 };
 use super::{normalized_textbox_rect, textbox_screen_rect, textbox_world_rect};
-use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasTextSize, SegmentGeometry};
+use crate::canvas::render::stroke_width_value;
+use crate::data::{CanvasAnnotation, CanvasAnnotationKind, CanvasRectangleFill, SegmentGeometry};
 
 pub(crate) fn begin_annotation_drag(
     state: &mut CanvasState,
@@ -62,7 +63,7 @@ pub(crate) fn annotation_endpoint_at_pointer(
     annotation: &CanvasAnnotation,
     pointer: egui::Pos2,
 ) -> Option<AnnotationEndpoint> {
-    if annotation.kind == CanvasAnnotationKind::Textbox {
+    if annotation.kind.is_rect() {
         return None;
     }
     let (start, end) = annotation_screen_points(state, rect, annotation);
@@ -96,20 +97,57 @@ pub(crate) fn hit_test_annotation(
         .map(|annotation| annotation.id)
 }
 
+/// Gap between a label's edge and a line or arrow that leaves or reaches it.
+const LABEL_CONNECT_GAP: f32 = 3.0;
+
+/// Where a line or arrow shows and takes the pointer. An end that sits on a
+/// label stops at the label's edge, so the label reads as its source and
+/// keeps its own clicks.
 pub(crate) fn annotation_screen_points(
     state: &CanvasState,
     rect: egui::Rect,
     annotation: &CanvasAnnotation,
 ) -> (egui::Pos2, egui::Pos2) {
-    (
-        state.world_to_screen(egui::pos2(annotation.start().x, annotation.start().y), rect),
-        state.world_to_screen(egui::pos2(annotation.end().x, annotation.end().y), rect),
-    )
+    let mut start = state.world_to_screen(annotation.start(), rect);
+    let mut end = state.world_to_screen(annotation.end(), rect);
+    for label in state
+        .document
+        .annotations
+        .iter()
+        .filter(|item| item.kind == CanvasAnnotationKind::Textbox)
+    {
+        let chip = textbox_screen_rect(state, rect, label).expand(LABEL_CONNECT_GAP);
+        if chip.contains(start) && !chip.contains(end) {
+            start = exit_point(start, end, chip);
+        } else if chip.contains(end) && !chip.contains(start) {
+            end = exit_point(end, start, chip);
+        }
+    }
+    (start, end)
+}
+
+/// Where the segment from `inside` toward `outside` leaves `bounds`.
+fn exit_point(inside: egui::Pos2, outside: egui::Pos2, bounds: egui::Rect) -> egui::Pos2 {
+    let direction = outside - inside;
+    let mut t = 1.0_f32;
+    for (d, from, min, max) in [
+        (direction.x, inside.x, bounds.min.x, bounds.max.x),
+        (direction.y, inside.y, bounds.min.y, bounds.max.y),
+    ] {
+        if d > 0.0 {
+            t = t.min((max - from) / d);
+        } else if d < 0.0 {
+            t = t.min((min - from) / d);
+        }
+    }
+    inside + direction * t.clamp(0.0, 1.0)
 }
 
 pub(crate) fn annotation_world_rect(annotation: &CanvasAnnotation) -> egui::Rect {
     match annotation.kind {
-        CanvasAnnotationKind::Textbox => textbox_world_rect(annotation),
+        CanvasAnnotationKind::Textbox | CanvasAnnotationKind::Rectangle => {
+            textbox_world_rect(annotation)
+        }
         CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow => egui::Rect::from_two_pos(
             egui::pos2(annotation.start().x, annotation.start().y),
             egui::pos2(annotation.end().x, annotation.end().y),
@@ -123,7 +161,9 @@ pub(crate) fn annotation_screen_rect(
     annotation: &CanvasAnnotation,
 ) -> egui::Rect {
     match annotation.kind {
-        CanvasAnnotationKind::Textbox => textbox_screen_rect(state, rect, annotation),
+        CanvasAnnotationKind::Textbox | CanvasAnnotationKind::Rectangle => {
+            textbox_screen_rect(state, rect, annotation)
+        }
         CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow => {
             let (start, end) = annotation_screen_points(state, rect, annotation);
             egui::Rect::from_two_pos(start, end).expand(ANNOTATION_HIT_RADIUS)
@@ -141,9 +181,29 @@ pub(crate) fn annotation_hit_test(
         CanvasAnnotationKind::Textbox => {
             annotation_screen_rect(state, rect, annotation).contains(pointer_pos)
         }
+        // A rectangle sits over the image it calls out, so only its edge takes
+        // the press until it is selected. The image underneath stays reachable.
+        // A solid one hides that image and takes the press anywhere.
+        CanvasAnnotationKind::Rectangle => {
+            let screen_rect = annotation_screen_rect(state, rect, annotation);
+            // The edge is drawn inward, so a heavy one takes the press across
+            // its whole weight.
+            let edge = stroke_width_value(annotation.stroke_width) * state.zoom;
+            let near_edge = screen_rect
+                .expand(ANNOTATION_HIT_RADIUS)
+                .contains(pointer_pos)
+                && !screen_rect
+                    .shrink(ANNOTATION_HIT_RADIUS.max(edge))
+                    .contains(pointer_pos);
+            near_edge
+                || ((annotation.fill == CanvasRectangleFill::Solid
+                    || state.is_annotation_selected(annotation.id))
+                    && screen_rect.contains(pointer_pos))
+        }
         CanvasAnnotationKind::Line | CanvasAnnotationKind::Arrow => {
             let (start, end) = annotation_screen_points(state, rect, annotation);
-            distance_to_segment(pointer_pos, start, end) <= ANNOTATION_HIT_RADIUS
+            let half_width = stroke_width_value(annotation.stroke_width) * state.zoom * 0.5;
+            distance_to_segment(pointer_pos, start, end) <= ANNOTATION_HIT_RADIUS.max(half_width)
         }
     }
 }
@@ -171,20 +231,24 @@ pub(crate) fn pending_annotation_from_draft(
                 draft_state.kind,
                 draft_state.start_world(),
                 draft_state.current_world(),
-                String::new(),
-                CanvasTextSize::default(),
             ))
         }
+        // A label sizes itself to its text, so only the press point matters.
         CanvasAnnotationKind::Textbox => {
-            let rect =
-                normalized_textbox_rect(draft_state.start_world(), draft_state.current_world());
+            let start = draft_state.start_world();
             Some(PendingAnnotation::new(
                 CanvasAnnotationKind::Textbox,
-                rect.min,
-                rect.max,
-                String::new(),
-                CanvasTextSize::default(),
+                start,
+                start + egui::vec2(1.0, 1.0),
             ))
+        }
+        CanvasAnnotationKind::Rectangle => {
+            let rect =
+                egui::Rect::from_two_pos(draft_state.start_world(), draft_state.current_world());
+            (rect.width() > 4.0 && rect.height() > 4.0).then(|| {
+                let rect = normalized_textbox_rect(rect.min, rect.max);
+                PendingAnnotation::new(CanvasAnnotationKind::Rectangle, rect.min, rect.max)
+            })
         }
     }
 }
