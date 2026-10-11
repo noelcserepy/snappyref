@@ -993,7 +993,7 @@ impl SnappyRefApp {
     /// What `add_images` answers, or None while an image still loads. The
     /// images load onto the Board the call reserved them on, even after the
     /// user opens another.
-    pub(super) fn added_images(
+    fn added_images(
         &self,
         board: i64,
         ids: &[i64],

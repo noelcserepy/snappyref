@@ -172,38 +172,6 @@ fn library_removal_waits_for_the_user_unless_access_is_full() {
     assert!(library.load_assets(&[asset]).unwrap().is_empty());
 }
 
-#[test]
-fn add_images_answers_from_its_board_after_the_user_opens_another() {
-    let ctx = egui::Context::default();
-    let root = TempRoot::new("snappyref-control-import-board-switch");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let first = library.list_boards().unwrap().remove(0);
-    let second = library.fixture_board("Second").unwrap();
-    let mut app = test_app(Some(library.clone()));
-    app.board_editing.persistence = crate::app::DocumentPersistence::queued(library.clone());
-    let reservation = app
-        .reserve_import(
-            Some((1, 1)),
-            egui::Pos2::ZERO,
-            crate::data::ContentResolutionSource::Unknown {
-                description: "AI import".to_owned(),
-            },
-        )
-        .unwrap();
-    let ids = [reservation.placement_id];
-    app.switch_to_board(second.id);
-    assert!(app.added_images(first.id, &ids, false).is_none());
-
-    let mut loaded = persisted_loaded_item(&library, reservation.placement_id, first.id);
-    loaded.queue_id = Some(reservation.queue_id);
-    loaded.origin = crate::image_preparation::ImportOrigin::Path;
-    app.install_test_prepared_image(&ctx, loaded);
-
-    let added = app.added_images(first.id, &ids, false).unwrap().unwrap();
-    assert_eq!(added["items"][0]["id"], reservation.placement_id);
-    assert_eq!(added["items"][0].get("status"), None);
-}
-
 type AiCall = std::thread::JoinHandle<Option<Value>>;
 
 /// Sends one tool call the way `--mcp` does, from its own thread.
@@ -228,6 +196,51 @@ fn finish_ai_call(harness: &mut Harness<'_, SnappyRefApp>, call: AiCall) -> Resu
         return Err(text.to_owned());
     }
     serde_json::from_str(text).map_err(|error| error.to_string())
+}
+
+#[test]
+fn add_images_answers_from_its_board_after_the_user_opens_another() {
+    let root = TempRoot::new("snappyref-control-import-board-switch");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let source = library
+        .store_rgba_image("ai-import", &solid_rgba([40, 120, 200, 255], 8, 8), 8, 8)
+        .unwrap();
+    let first = library.list_boards().unwrap().remove(0);
+    let second = library.fixture_board("Second").unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.board_lifecycle().restore().unwrap();
+    app.board_editing.persistence = crate::app::DocumentPersistence::queued(library.clone());
+    app.settings.ai_control = AiControlAccess::Full;
+    let library_root = root.to_path_buf();
+    let mut harness = app_full_harness_with_startup(1.0 / 4.0, move |ctx| {
+        app.import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
+            library,
+            ctx.clone(),
+            None,
+        ));
+        app.start_control(ctx, library_root);
+        app
+    });
+
+    let call = start_ai_call(&root, "add_images", json!({"sources": [source]}));
+    // The frame that takes the call reserves the image, before its worker
+    // can have decoded it.
+    while harness.state().canvas.all_placement_ids().is_empty() {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    harness.state_mut().switch_to_board(second.id);
+
+    let added = finish_ai_call(&mut harness, call).unwrap();
+    assert_eq!(added["items"][0]["type"], "image");
+    assert_eq!(added["items"][0].get("status"), None);
+    assert_eq!(
+        added["note"],
+        format!(
+            "The open board changed. These images are on board {}.",
+            first.id
+        )
+    );
 }
 
 #[test]
