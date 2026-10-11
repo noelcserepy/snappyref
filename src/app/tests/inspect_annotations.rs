@@ -569,12 +569,7 @@ fn inspect_annotation_style_keys_writes_artifact() {
     // The arrow starts on a label, so its start handle shows at the label's edge.
     let point = along(&harness, arrow, 0.6);
     settle_at(&mut harness, Some(point), empty);
-    let handle = crate::canvas::annotation_screen_points(
-        &harness.state().canvas,
-        screen,
-        &annotation(&harness, arrow),
-    )
-    .0;
+    let handle = painted_handle(&harness, along(&harness, arrow, 0.));
     let drop = handle + egui::vec2(-60., 90.);
     drag(&mut harness, handle, drop, egui::Modifiers::NONE);
     let start = inspect_world_to_screen(annotation(&harness, arrow).start(), screen);
@@ -589,6 +584,30 @@ fn inspect_annotation_style_keys_writes_artifact() {
 
     let report = scenario.finish();
     assert!(report.passed, "{}", report.artifact_dir.display());
+}
+
+/// The endpoint handle the last frame painted nearest a point.
+fn painted_handle(harness: &Harness<'_, SnappyRefApp>, near: egui::Pos2) -> egui::Pos2 {
+    fn handles(shape: &egui::Shape, found: &mut Vec<egui::Pos2>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| handles(shape, found)),
+            egui::Shape::Circle(circle)
+                if circle.radius == crate::ui::theme::SPACE_1
+                    && circle.fill == crate::ui::theme::SURFACE =>
+            {
+                found.push(circle.center);
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    for clipped in &harness.output().shapes {
+        handles(&clipped.shape, &mut found);
+    }
+    found
+        .into_iter()
+        .min_by(|a, b| a.distance(near).total_cmp(&b.distance(near)))
+        .expect("a selected stroke paints its endpoint handles")
 }
 
 /// Lets the HUD finish its entrance without reaching its fade.

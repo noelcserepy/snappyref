@@ -19,8 +19,6 @@ use crate::data::{
 };
 use crate::placement::arrangement::PlacementArrangementInput;
 use eframe::egui;
-#[cfg(test)]
-pub(crate) use interaction::annotation_screen_points;
 pub(crate) use interaction::focus_framing;
 use interaction::{
     handle_input, handle_viewport_navigation_input, step_mouse_wheel_zoom_animation,
