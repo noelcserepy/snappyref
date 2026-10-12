@@ -1,6 +1,5 @@
 //! Deterministic grouping edits. Geometry supplies size observations; callers own pixels,
-//! persistence and history. Membership follows `.specs/grouping/grouping.yml`;
-//! size observations and conversions follow Spatial Layout.
+//! persistence and history. Size observations and conversions follow Spatial Layout.
 use crate::data::{GapMode, GroupFlow};
 use std::collections::{BTreeMap, BTreeSet};
 
