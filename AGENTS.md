@@ -33,9 +33,10 @@ docs/skills/inspect/scripts/run-scenario.sh --list
 docs/skills/inspect/scripts/run-scenario.sh <scenario>
 ```
 
-The [pre-push hook](.githooks/pre-push) runs fmt and clippy. CI runs those,
-`cargo test` (every non-ignored inspect scenario and the helper subprocess tests) and the
-`scripts/test_*.py` suite. Hook setup is in the [README](README.md#development-checks).
+The [pre-push hook](.githooks/pre-push) runs fmt and clippy. CI is switched off, so before you push, run
+`cargo test --locked` (every non-ignored inspect scenario and the helper subprocess tests) and the
+`scripts/test_*.py` suite with `python3 -m unittest discover -s scripts -p 'test_*.py'`. Hook setup is in the
+[README](README.md#development-checks).
 
 When the user wants to test a build by hand, stop the previous instance and run
 `SNAPPYREF_DATA_ROOT="$HOME/dev/snappyref-dev-data" cargo run --locked --release --bin snappyref`

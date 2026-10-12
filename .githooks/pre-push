@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Local lint before CI sees the push: formatting and clippy. CI runs these
-# plus the full test suite. Bypass with `git push --no-verify` if you mean it.
+# Local lint before the push: formatting and clippy. CI is switched off, so run
+# `cargo test --locked` yourself. Bypass with `git push --no-verify` if you mean it.
 #
 # Setup: README.md#development-checks
 

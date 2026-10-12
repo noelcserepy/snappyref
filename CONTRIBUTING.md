@@ -23,8 +23,8 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 ```
 
-The pre-push hook runs the first two. CI runs all three plus the
-`scripts/test_*.py` suite on macOS for every pull request. For UI behavior, run the matching inspect
+The pre-push hook runs the first two. CI is switched off, so run the third and
+`python3 -m unittest discover -s scripts -p 'test_*.py'` before you push. For UI behavior, run the matching inspect
 scenario with `docs/skills/inspect/scripts/run-scenario.sh <scenario>` and
 keep the artifact path for the PR.
 
