@@ -116,11 +116,8 @@ assertion says only that it answered or was refused, so read the replies in
 `events.ndjson`. A drive that dies adds one failed assertion, `the drive
 finishes`, with the error.
 
-The app opens behind the frontmost window and does not take focus. A fully
-covered window is not drawn, so `screenshot` calls are skipped. Add `--front`
-when a screenshot is the evidence. The script then starts the app itself, so
-that run does not drive the launch from `--mcp`. The app takes focus for the
-length of the run, about 6 seconds for `mcp-all-tools.json`.
+The app opens behind the frontmost window and never takes focus. `screenshot`
+answers from there, and each image lands in `frames/`.
 
 No tool sends a click, a key, or a drag. This route records what the tools
 answer. Gestures, shortcuts, menus, and dialogs still need a scenario.

@@ -1716,6 +1716,16 @@ pub enum ActionRequested {
     Paste,
 }
 
+impl ActionRequested {
+    /// Does this need a painted frame, even from a window that is hidden?
+    ///
+    /// A screenshot of a hidden window is still a screenshot of something, and painting is
+    /// the only way to produce it.
+    pub fn wants_paint(&self) -> bool {
+        matches!(self, Self::Screenshot(_))
+    }
+}
+
 pub fn process_viewport_commands(
     egui_ctx: &egui::Context,
     info: &mut ViewportInfo,

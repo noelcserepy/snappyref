@@ -70,4 +70,6 @@ windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_UI_Shell"] }
 
 [patch.crates-io]
+eframe = { path = "vendor/eframe" }
+egui-wgpu = { path = "vendor/egui-wgpu" }
 egui-winit = { path = "vendor/egui-winit" }
