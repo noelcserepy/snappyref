@@ -84,9 +84,12 @@ def from_replies(value, replies):
     ref = isinstance(value, str) and re.fullmatch(r'\$(\d+)\.(.+)', value)
     if not ref:
         return value
-    found = replies[int(ref[1])]
-    for key in ref[2].split('.'):
-        found = found[int(key)] if isinstance(found, list) else found[key]
+    try:
+        found = replies[int(ref[1])]
+        for key in ref[2].split('.'):
+            found = found[int(key)] if isinstance(found, list) else found[key]
+    except (LookupError, TypeError, ValueError):
+        raise LookupError(f'{value} is not in the reply to call {ref[1]}') from None
     return found
 
 
@@ -140,7 +143,7 @@ def main():
     env.pop('SNAPPYREF_LIBRARY_ROOT', None)
     endpoint = data_root / 'library/control.json'
     session, front, app_pid = None, None, None
-    assertions, frames, replies, skipped = [], [], {}, 0
+    tools, assertions, frames, replies, skipped = [], [], [], {}, 0
     try:
         grant_full_access(str(args.exe), env, data_root / 'library')
         if args.front:
@@ -185,6 +188,14 @@ def main():
                 events.write(json.dumps({'type': 'action', 'payload': payload}) + '\n')
                 events.write(json.dumps(assertion) + '\n')
                 print(f"{'pass' if assertion['passed'] else 'FAIL'}: {assertion['name']} {payload['seconds']}s")
+    except Exception as error:
+        # A drive that dies still writes its report, so `latest.txt` never
+        # names an older pass.
+        died = {'type': 'assertion', 'passed': False, 'name': f'the drive finishes: {error}'}
+        assertions.append(died)
+        with open(artifact / 'events.ndjson', 'a') as events:
+            events.write(json.dumps(died) + '\n')
+        print(f"FAIL: {died['name']}")
     finally:
         if session:
             app_pid = session.app_pid()

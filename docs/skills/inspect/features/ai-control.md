@@ -21,8 +21,8 @@ Settings. It is Off until they change it.
 - `ai-control-confirm` covers `remove_from_library` and `search_model`. At Ask
   the app shows its own confirmation dialog, prefixed with "An AI client asked
   for this.", and the call waits up to a minute. At Full they run at once.
-  `search_model` asks only when it would start a download or remove an
-  installed model.
+  `search_model` asks only when it would start a download or remove a model
+  that is installed or failed to install.
 - `ai-control-mcp-config` is the Copy MCP config button, shown at Ask and Full.
   It copies the client config for this install, with `SNAPPYREF_DATA_ROOT` and
   `SNAPPYREF_LIBRARY_ROOT` when they are set.
