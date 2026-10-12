@@ -159,7 +159,7 @@ impl UpdateState {
 
     /// Promote to Ready directly. Used at startup when a verified staged
     /// bundle is already on disk and the manifest still points at that
-    /// version, per the download-staging spec.
+    /// version.
     ///
     /// Refuses to clobber an in-flight `Downloading` whose version is the
     /// same or newer than what is being marked: the install worker owns

@@ -145,7 +145,7 @@ the [use-windows](docs/skills/use-windows/SKILL.md) skill.
 ## Code map
 
 [AGENTS.md](AGENTS.md) has the process model, the module map, and the repo
-rules. Product contracts live under [.specs/](.specs/).
+rules.
 
 ## License
 

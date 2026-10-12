@@ -62,8 +62,7 @@ their imported images and the downloaded model.
   the local endpoint. [App control](src/app/control/mod.rs) runs each tool call
   on the UI thread.
 
-The [.specs tree](.specs/) records product contracts. Shared visual rules live
-in [theme](src/ui/theme.rs) and [motion](src/ui/motion.rs).
+Shared visual rules live in [theme](src/ui/theme.rs) and [motion](src/ui/motion.rs).
 
 ## Project language
 
@@ -73,9 +72,10 @@ There is no standalone glossary. The codebase is the domain language:
 - add short local comments only where naming cannot carry the rationale
 - keep legacy persistence or compatibility vocabulary inside adapter modules
 
-Product contracts go in the owning spec, implementation choices in the owning
-module, test, inspect scenario, or skill. When a boundary or decision is
-unclear, inspect the repo first, and otherwise ask one question at a time.
+There is no separate spec. The code is the product contract. The owning
+module's types and module comment state it, and its tests and inspect
+scenarios prove it. When a boundary or decision is unclear, inspect the repo
+first, and otherwise ask one question at a time.
 
 ## Repo principles
 
