@@ -35,7 +35,7 @@ Agents verify SnappyRef through these in-process scenarios, not by launching
 the GUI. A scenario builds the full app inside a `cargo test`, drives it with
 `egui_kittest`, and writes the artifact. There is no server to start or keep
 alive. The first run compiles the test binary, which takes a few minutes. Later
-runs take seconds. The one scripted exception is `mcp-drive.py`, under
+runs take seconds. The one exception in this skill is `mcp-drive.py`, under
 "Driving the real app through MCP" below.
 
 [features/README.md](features/README.md) maps each user-facing feature to its
@@ -52,8 +52,8 @@ docs/skills/inspect/scripts/doctor.sh
 
 It exits 1 when `CARGO_TARGET_DIR` points outside this checkout. In that case a
 different worktree's binary would answer for this one, so unset it. It also
-lists test binaries and apps from this checkout that are still running, and
-prints the latest artifact and its status.
+lists test binaries and debug-build apps from this checkout that are still
+running, and prints the latest artifact and its status.
 
 List available scenarios:
 
@@ -97,8 +97,8 @@ when verifying that integration.
 
 ## Driving the real app through MCP
 
-`mcp-drive.py` starts the shipping binary the way an AI client does and replays
-a list of AI control tool calls through `snappyref --mcp`:
+`mcp-drive.py` starts the debug build of the app the way an AI client does and
+replays a list of AI control tool calls through `snappyref --mcp`:
 
 ```sh
 cargo build --locked --bin snappyref
@@ -111,17 +111,19 @@ same artifact shape as a scenario under
 `target/snappyref-inspect/mcp-drive/run-<nanos>/`, so `summarize-artifact.py`
 and `latest-artifact.sh mcp-drive` read it. Each call is `[tool, arguments]`,
 or `[tool, arguments, "refused"]` for a call the app must refuse. An argument
-of `"$3.board.id"` takes that value from the reply to call 3. An assertion
-says only that the call answered or was refused, so read the replies in
-`events.ndjson`.
+of `"$3.board.id"` takes that value from the reply to call 3. A call's
+assertion says only that it answered or was refused, so read the replies in
+`events.ndjson`. A drive that dies adds one failed assertion, `the drive
+finishes`, with the error.
 
 The app opens behind the frontmost window and does not take focus. A fully
 covered window is not drawn, so `screenshot` calls are skipped. Add `--front`
-when a screenshot is the evidence. The app then takes focus for the length of
-the run, about 6 seconds for `mcp-all-tools.json`.
+when a screenshot is the evidence. The script then starts the app itself, so
+that run does not drive the launch from `--mcp`. The app takes focus for the
+length of the run, about 6 seconds for `mcp-all-tools.json`.
 
-No tool sends a click, a key, or a drag. This route proves what the tools read
-and write. Gestures, shortcuts, menus, and dialogs still need a scenario.
+No tool sends a click, a key, or a drag. This route records what the tools
+answer. Gestures, shortcuts, menus, and dialogs still need a scenario.
 
 ## Isolation and cleanup
 
@@ -137,9 +139,9 @@ another.
 it at the end. It points the update check at a dead local address, so the run
 stays off the network. It stops the app it started by PID, on a failed run too.
 If it is killed first, `doctor.sh` lists the app left running from this
-checkout.
+checkout, and the temp directory stays.
 
-Apart from that exception, nothing outlives a run except the artifact. If a run hangs, stop the
+Apart from those two exceptions, nothing outlives a run except the artifact. If a run hangs, stop the
 `run-scenario.sh` or cargo process you started, using its PID. Never kill by
 process name, because the user may have a dev build of `snappyref` open.
 

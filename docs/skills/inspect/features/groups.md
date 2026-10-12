@@ -34,7 +34,8 @@ member shows a member card for that one item.
   selection.
 - An AI client groups, ungroups, and moves items between groups through
   `edit_board`, and sets a group's name, flow, gap, padding, and size. It
-  cannot set align, spread, hug, or clip. See [AI control](./ai-control.md).
+  cannot set align, spread, or clip, and it cannot turn hug on. Setting a
+  width or height fixes that axis. See [AI control](./ai-control.md).
 
 ## Driving it with inspect
 
@@ -55,8 +56,8 @@ Preconditions:
   library: "create is one undoable durable edit".
 - **Dock controls.** Run `run-scenario.sh group-dock`, `group-dock-narrow`,
   and `member-dock`. These start from a seeded "Faces" group. They drive the
-  numeric fields, "Align bottom" and "Align top" on the align pad, spread
-  "Between", Free dimming, and Wrap refusing width hug. On the member card
+  numeric fields, "Align bottom" on the align pad, spread "Between", Free
+  dimming "Align top", and Wrap refusing width hug. On the member card
   they click "Fill height", "Absolute", and "Detach", after opening the member
   with ⌘-click. "H hug contents" is clicked back on the group card.
   `group-dock-narrow` clicks "Ungroup".

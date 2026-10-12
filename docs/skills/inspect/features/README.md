@@ -24,11 +24,12 @@ with inspect scenarios. Read this index, then follow the matching feature file.
 - When no scenario drives the entry point you changed, write one. "Writing A
   New Scenario" in [../SKILL.md](../SKILL.md) covers how. Do not launch the GUI
   by hand.
-- `docs/skills/inspect/scripts/mcp-drive.py <calls.json>` is the one route that
-  runs the shipping binary in a real window. It replays AI control tool calls
+- `docs/skills/inspect/scripts/mcp-drive.py <calls.json>` is the one inspect route
+  that runs the built app in a real window. It replays AI control tool calls
   through `snappyref --mcp` on a throwaway data root and stops the app it
-  started. It proves what the tools read and write, with real image
-  preparation. It proves nothing about gestures, shortcuts, menus, or dialogs,
+  started. It records what each tool answers, with real image preparation. Its
+  assertions say only that a call answered or was refused. It proves nothing
+  about gestures, shortcuts, menus, or dialogs,
   because no tool sends input. [AI control](./ai-control.md) lists what it
   covers.
 - Native OS paths need a real platform check, and in-process scenarios cannot

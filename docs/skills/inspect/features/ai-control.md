@@ -49,19 +49,22 @@ Preconditions:
   groups three of them through refs, `set_view`, `undo`, `redo`, and
   `remove_from_library`. The removal waits on the dialog, and the scenario
   clicks Remove. The sidebar is reopened in code, then clicking Off is driven.
-  The last assertion checks that the endpoint file is gone. Frames are
+  The last assertion checks that the endpoint file is gone and that a call
+  fails. Frames are
   `screen-000-access-off`, `screen-001-access-ask`,
   `screen-002-ai-edited-board`, `screen-003-user-confirms`, and
   `screen-004-access-off-again`.
 - **Every tool against the real app.** Build with
   `cargo build --locked --bin snappyref`, then run
-  `scripts/mcp-drive.py scripts/mcp-all-tools.json`. Full access is seeded by
+  `docs/skills/inspect/scripts/mcp-drive.py docs/skills/inspect/scripts/mcp-all-tools.json`.
+  Full access is seeded by
   editing the session row after a first launch. Driven are the launch from
   `--mcp`, the stdio handshake, the token, and a call to each of the 19 tools
   at Full, with real image preparation and a real `.pur` export and import.
-  Each assertion says only that a call answered or was refused. Read the
+  A call's assertion says only that it answered or was refused. Read the
   replies in `events.ndjson` for what changed. `screenshot` calls are skipped
-  unless you add `--front`. The artifact is
+  unless you add `--front`, and that run starts the app itself instead of
+  through `--mcp`. The artifact is
   `target/snappyref-inspect/mcp-drive/run-<nanos>/`, with the exported
   `board.pur` beside the report.
 
@@ -73,14 +76,16 @@ Preconditions:
   that captures one. It takes focus for about 6 seconds.
 - No scenario launches the app from `--mcp` or speaks stdio. `control::mcp`
   unit tests cover the handshake, the tool list, and the token check, and
-  `mcp-drive.py` covers the launch.
-- Eleven tools get their only call with real arguments from `mcp-drive.py`,
-  and only at Full: `list_boards`, `get_settings`, `create_board`,
-  `rename_board`, `open_board`, `delete_board`, `select`, `screenshot`,
-  `export_board`, `search_library`, and `search_model`. The last two are only
-  refused there, because the search model is not installed.
-  `every_advertised_tool_has_a_handler` in `src/app/tests/control.rs` calls
-  all 19 with empty arguments and checks only that a handler exists.
+  `mcp-drive.py` without `--front` covers the launch.
+- Eleven tools reach their handler from two places only: `list_boards`,
+  `get_settings`, `create_board`, `rename_board`, `open_board`,
+  `delete_board`, `select`, `screenshot`, `export_board`, `search_library`,
+  and `search_model`.
+  `mcp-drive.py` calls them at Full and checks that each answers. The last two
+  are only refused there, because the search model is not installed, and
+  `screenshot` needs `--front`. `every_advertised_tool_has_a_handler` in
+  `src/app/tests/control.rs` calls all 19 with empty arguments and checks only
+  that a handler exists.
 - Never driven anywhere: `search_library` with the model installed,
   `search_model` starting an install, `search_model` waiting on its dialog at
   Ask, the Copy MCP config click, two apps on one library root, the app dying

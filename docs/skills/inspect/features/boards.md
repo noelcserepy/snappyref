@@ -62,7 +62,8 @@ Preconditions:
   a zoom, and ⌘B, then saves and flushes in code. A second app instance then
   reopens the same library in code.
 - **Board tools in the real app.** Run
-  `scripts/mcp-drive.py scripts/mcp-all-tools.json`. It creates, renames,
+  `docs/skills/inspect/scripts/mcp-drive.py docs/skills/inspect/scripts/mcp-all-tools.json`
+  after a debug build. It creates, renames,
   opens, and deletes a board through the tools, and lists the boards before
   and after. It drives no sidebar row, shortcut, or dialog.
 

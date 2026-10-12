@@ -47,7 +47,8 @@ Preconditions:
   bytes and transforms, then drop the file back in and compare geometry.
   Frames are `board` and `reimported`.
 - **Export and import in the real app.** Run
-  `scripts/mcp-drive.py scripts/mcp-all-tools.json`. `export_board` writes
+  `docs/skills/inspect/scripts/mcp-drive.py docs/skills/inspect/scripts/mcp-all-tools.json`
+  after a debug build. `export_board` writes
   `board.pur` into the artifact dir and `create_board` opens it as a new
   board. The next `get_board` reply lists what came back. No drop, shortcut,
   or save panel is driven.
@@ -67,7 +68,7 @@ Preconditions:
   sizes each textbox to its text at the zoom the board opens at, so a round
   trip keeps the centre and text size but not the box size.
 - Image opacity is ignored on import. PureRef groups are flattened, and each
-  child keeps its composed position, scale, and rotation.
+  image child keeps its composed position, scale, and rotation.
 - Import and export run on a background thread. Step the harness until the
   status starts with "Imported" or "Exported" before asserting.
 - Drops of `.pur` files work without an import worker, but the imported images

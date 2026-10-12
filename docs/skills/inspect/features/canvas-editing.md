@@ -25,7 +25,8 @@ library.
   "Send to back", "Search using image", and "Remove from library…".
 - `edit-persist` keeps the edit when a library write fails and retries it.
 - `library-dedupe` is P, "Dedupe library". It merges exact duplicate assets
-  and reports "Removed N duplicate(s)" or that it found none.
+  and reports "Removed 1 duplicate", "Removed N duplicates", or that it
+  found none.
 
 ## How to get to it (user POV)
 
@@ -34,7 +35,7 @@ library.
 - Right-click an image or empty canvas for the context menu.
 - An AI client edits by id through `edit_board`, `select`, `undo`, `redo`, and
   `remove_from_library`. `edit_board` can move, resize, rotate, restack,
-  arrange, and delete. It cannot crop or duplicate. See
+  arrange, and delete. It has no crop or duplicate action. See
   [AI control](./ai-control.md).
 
 ## Driving it with inspect
@@ -86,8 +87,11 @@ Preconditions:
 - C and R are hold keys. Hold them with `key_down` before the pointer press.
   A, L, and S arm a draw mode on a tap, and T places a label on a tap. See
   [Annotations](./annotations.md).
-- P "Dedupe library" has no scenario. `copied_group_survives_dedupe_and_reopen`
-  in `src/app/tests/groups.rs` runs a dedupe without an artifact.
+- P "Dedupe library" has no scenario, and no test presses P.
+  `copied_group_survives_dedupe_and_reopen` in `src/app/tests/groups.rs`
+  reaches the dedupe a board switch runs, not the shortcut.
+  `exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates` in
+  `src/library/storage/tests/assets.rs` checks the merge itself.
 - A drag needs held steps. The app waits 90 ms and a small distance before a
   move starts.
 - Q, W, E, the arrow keys, and ⇧⌘L need 2 or more images selected.

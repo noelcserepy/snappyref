@@ -58,10 +58,12 @@ Preconditions:
 - **Decoded formats.** Run `run-scenario.sh image-format-gallery`. It is
   ignored by default and needs `SNAPPYREF_MEDIA_FIXTURES`. It covers decoding
   and fitting 20 fixture files across 13 file types, not intake.
-- **Real preparation.** Run `scripts/mcp-drive.py scripts/mcp-all-tools.json`.
-  Its `add_images` call imports two JPEGs by path in the real app, through the
-  real `--imageprep` subprocess. It proves the tool's intake and not drop or
-  paste.
+- **Real preparation.** Run
+  `docs/skills/inspect/scripts/mcp-drive.py docs/skills/inspect/scripts/mcp-all-tools.json`
+  after a debug build. Its `add_images` call imports two JPEGs by path in the
+  real app. A path import goes to the `--imageprep` subprocess first and falls
+  back to decoding in the app without a message, so a pass does not prove the
+  helper ran. It drives the tool's intake and not drop or paste.
 
 ## Gotchas
 
