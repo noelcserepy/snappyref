@@ -136,8 +136,8 @@ git config core.hooksPath .githooks
 ```
 
 The [pre-push hook](.githooks/pre-push) runs `cargo fmt --check` and clippy
-with warnings denied. CI runs those, `cargo test --locked` and the
-`scripts/test_*.py` suite on macOS for every pull request. `cargo test` covers
+with warnings denied. CI is switched off, so run `cargo test --locked` and
+`python3 -m unittest discover -s scripts -p 'test_*.py'` before you push. `cargo test` covers
 every non-ignored inspect scenario; list them with
 `docs/skills/inspect/scripts/run-scenario.sh --list`. Run Windows checks with
 the [use-windows](docs/skills/use-windows/SKILL.md) skill.
