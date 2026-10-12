@@ -911,7 +911,8 @@ impl SnappyRefApp {
                         return None;
                     }
                     None if timed_out => Err(
-                        "SnappyRef could not capture its window. It may be hidden or minimized."
+                        "SnappyRef could not capture its window. It draws only while part of it shows \
+                         on screen, so it may be minimized or fully covered by other windows."
                             .to_owned(),
                     ),
                     None => return Some(waiting),
