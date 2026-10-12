@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""Drives the real app through `snappyref --mcp` on a throwaway data root.
+
+Replays a JSON list of [tool, arguments] calls. A third element, "refused",
+marks a call the app must refuse. `$REPO` and `$OUT` in the calls file expand to
+this checkout and the artifact directory. An argument of `"$3.board.id"` takes
+that value from the reply to call 3, so ids come from the app. The artifact has
+the shape a scenario
+writes: report.json with one assertion per call, events.ndjson with each call's
+arguments and reply, and frames/ with every returned image.
+
+`--mcp` starts the app itself, behind the frontmost window. A fully covered
+window is not drawn, so `screenshot` calls are skipped. `--front` starts the app
+in front instead and runs them. It takes focus for the length of the run.
+"""
+import argparse
+import base64
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parents[4]
+
+
+def wait_for(what, check, seconds=60):
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        value = check()
+        if value:
+            return value
+        time.sleep(0.2)
+    raise RuntimeError(f'timed out waiting for {what}')
+
+
+def session_row(db_path):
+    if not db_path.is_file():
+        return None
+    # A read-only open fails while the app holds the WAL, so open it plainly.
+    db = sqlite3.connect(db_path, timeout=1)
+    try:
+        row = db.execute('select session_payload from user_session where id = 1').fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        db.close()
+    return row and row[0]
+
+
+def grant_full_access(exe, env, library):
+    """Access lives in the session row, which only a first launch creates."""
+    db_path = library / 'library.db'
+    first = subprocess.Popen([exe, '--no-startup-focus'], env=env, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        wait_for('the first launch to write its session', lambda: session_row(db_path))
+    finally:
+        first.terminate()
+        first.wait(timeout=20)
+    payload = json.loads(session_row(db_path))
+    settings = payload['workspace_settings']
+    settings['ai_control'] = 'full'
+    # The first-launch prompt would cover the board in every screenshot.
+    settings['semantic_search_first_launch_prompt_seen'] = True
+    db = sqlite3.connect(db_path)
+    with db:
+        db.execute('update user_session set session_payload = ? where id = 1', (json.dumps(payload),))
+    db.close()
+
+
+def from_replies(value, replies):
+    """Swaps each "$N.path" string for that value in the reply to call N."""
+    if isinstance(value, dict):
+        return {key: from_replies(item, replies) for key, item in value.items()}
+    if isinstance(value, list):
+        return [from_replies(item, replies) for item in value]
+    ref = isinstance(value, str) and re.fullmatch(r'\$(\d+)\.(.+)', value)
+    if not ref:
+        return value
+    try:
+        found = replies[int(ref[1])]
+        for key in ref[2].split('.'):
+            found = found[int(key)] if isinstance(found, list) else found[key]
+    except (LookupError, TypeError, ValueError):
+        raise LookupError(f'{value} is not in the reply to call {ref[1]}') from None
+    return found
+
+
+class McpSession:
+    def __init__(self, exe, env):
+        self.proc = subprocess.Popen([exe, '--mcp'], env=env, text=True,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.next_id = 0
+
+    def request(self, method, params=None):
+        self.next_id += 1
+        message = {'jsonrpc': '2.0', 'id': self.next_id, 'method': method}
+        if params is not None:
+            message['params'] = params
+        self.proc.stdin.write(json.dumps(message) + '\n')
+        self.proc.stdin.flush()
+        line = self.proc.stdout.readline()
+        if not line:
+            raise RuntimeError(f'`--mcp` closed stdout during {method}')
+        return json.loads(line)['result']
+
+    def app_pid(self):
+        """The GUI that `--mcp` started is its only child."""
+        found = subprocess.run(['pgrep', '-P', str(self.proc.pid)], capture_output=True, text=True)
+        pids = found.stdout.split()
+        return int(pids[0]) if pids else None
+
+    def close(self):
+        self.proc.stdin.close()
+        self.proc.wait(timeout=20)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('calls', type=Path, help='JSON list of [tool, arguments] or [tool, arguments, "refused"]')
+    parser.add_argument('--front', action='store_true',
+                        help='start the app in front so `screenshot` works; takes focus')
+    parser.add_argument('--exe', type=Path, default=ROOT / 'target/debug/snappyref')
+    args = parser.parse_args()
+    if not args.exe.is_file():
+        parser.error(f'{args.exe} is missing. Run `cargo build --locked --bin snappyref` first.')
+
+    scenario_dir = ROOT / 'target/snappyref-inspect/mcp-drive'
+    artifact = scenario_dir / f'run-{time.time_ns()}'
+    (artifact / 'frames').mkdir(parents=True)
+    calls = json.loads(args.calls.read_text().replace('$REPO', str(ROOT)).replace('$OUT', str(artifact)))
+    data_root = Path(tempfile.mkdtemp(prefix='snappyref-mcp-'))
+    # The update check would otherwise reach the public dist repo.
+    env = dict(os.environ, SNAPPYREF_DATA_ROOT=str(data_root),
+               SNAPPYREF_UPDATE_MANIFEST_URL='http://127.0.0.1:9/mcp-drive-no-updates')
+    env.pop('SNAPPYREF_LIBRARY_ROOT', None)
+    endpoint = data_root / 'library/control.json'
+    session, front, app_pid = None, None, None
+    tools, assertions, frames, replies, skipped = [], [], [], {}, 0
+    try:
+        grant_full_access(str(args.exe), env, data_root / 'library')
+        if args.front:
+            front = subprocess.Popen([args.exe], env=env, stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            wait_for('the app to publish its endpoint', endpoint.is_file)
+        else:
+            # An endpoint nothing answers on makes `--mcp` start the app itself.
+            endpoint.write_text(json.dumps({'port': 1, 'token': 'stale'}))
+        session = McpSession(str(args.exe), env)
+        session.request('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
+                                       'clientInfo': {'name': 'mcp-drive', 'version': '0'}})
+        tools = [tool['name'] for tool in session.request('tools/list')['tools']]
+        with open(artifact / 'events.ndjson', 'w') as events:
+            events.write(json.dumps({'type': 'observation.fact',
+                                     'payload': {'name': 'tools', 'value': tools}}) + '\n')
+            for index, (tool, arguments, *expect) in enumerate(calls, start=1):
+                if tool == 'screenshot' and not args.front:
+                    skipped += 1
+                    print(f'{index:02} {tool} skipped, needs --front')
+                    continue
+                arguments = from_replies(arguments, replies)
+                started = time.time()
+                reply = session.request('tools/call', {'name': tool, 'arguments': arguments})
+                payload = {'name': f'{index:02} {tool}', 'arguments': arguments,
+                           'seconds': round(time.time() - started, 3), 'refused': reply['isError']}
+                for part in reply['content']:
+                    if part['type'] == 'image':
+                        payload['frame'] = str(artifact / 'frames' / f'{index:02}-{tool}.png')
+                        Path(payload['frame']).write_bytes(base64.b64decode(part['data']))
+                        frames.append(payload['frame'])
+                    else:
+                        try:
+                            payload['reply'] = json.loads(part['text'])
+                        except ValueError:
+                            payload['reply'] = part['text']
+                replies[index] = payload.get('reply')
+                must_refuse = expect == ['refused']
+                assertion = {'type': 'assertion', 'passed': payload['refused'] == must_refuse,
+                             'name': f"{payload['name']} {'is refused' if must_refuse else 'answers'}"}
+                assertions.append(assertion)
+                events.write(json.dumps({'type': 'action', 'payload': payload}) + '\n')
+                events.write(json.dumps(assertion) + '\n')
+                print(f"{'pass' if assertion['passed'] else 'FAIL'}: {assertion['name']} {payload['seconds']}s")
+    except Exception as error:
+        # A drive that dies still writes its report, so `latest.txt` never
+        # names an older pass.
+        died = {'type': 'assertion', 'passed': False, 'name': f'the drive finishes: {error}'}
+        assertions.append(died)
+        with open(artifact / 'events.ndjson', 'a') as events:
+            events.write(json.dumps(died) + '\n')
+        print(f"FAIL: {died['name']}")
+    finally:
+        if session:
+            app_pid = session.app_pid()
+            session.close()
+        if front:
+            front.terminate()
+            front.wait(timeout=20)
+        elif app_pid:
+            os.kill(app_pid, signal.SIGTERM)
+            wait_for('the app to exit', lambda: subprocess.run(['kill', '-0', str(app_pid)],
+                                                               capture_output=True).returncode != 0, 20)
+        shutil.rmtree(data_root, ignore_errors=True)
+    failed = [assertion['name'] for assertion in assertions if not assertion['passed']]
+    status = 'fail' if failed else 'pass'
+    (artifact / 'report.json').write_text(json.dumps({
+        'scenario': 'mcp-drive', 'status': status, 'artifact_dir': str(artifact),
+        'first_failure': failed[0] if failed else None, 'assertions': assertions, 'frames': frames,
+    }, indent=2))
+    (scenario_dir / 'latest.txt').write_text(str(artifact))
+    print(f'tools={len(tools)}\ncalls={len(assertions)}\nskipped={skipped}\nfailed={len(failed)}\n'
+          f'status={status}\nartifact={artifact}')
+    return 1 if failed else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

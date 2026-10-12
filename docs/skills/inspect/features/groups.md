@@ -1,9 +1,9 @@
 # Groups
 
-Users gather images and textboxes into named groups that lay out their members
-as a row, a column, a wrap, or freely. Selecting a group opens a dock card on
-the right of the canvas for layout and frame settings. Opening a member shows a
-member card for that one item.
+Users gather images, labels, and rectangles into named groups that lay out
+their members as a row, a column, a wrap, or freely. Selecting a group opens a
+dock card on the right of the canvas for layout and frame settings. Opening a
+member shows a member card for that one item.
 
 ## Sub-features
 
@@ -14,14 +14,14 @@ member card for that one item.
 - `group-picker` uses a bare G or "Add to group…". The user filters, picks with
   ↑↓ and Enter, or chooses `Create new "{query}"`.
 - `group-move-resize` covers dragging the body or the name strip, dragging an
-  edge or corner, and ⌘⌥+drag to scale.
+  edge or corner, and ⌘⌥+drag / Ctrl+Alt+drag to scale.
 - `group-dock` covers the "Group name" field, the flow buttons ("Row",
   "Column", "Wrap", "Free"), the align pad, "Gap" and "Row gap", spread
   ("Off", "Between", "Evenly", "Around"), size with hug, "Padding", and
   "Clip".
-- `group-member` uses a double-click or ⌘-click on a member. Its card has
-  "Detach", "Fill width", "Fill height", and "Absolute". Arrow keys or a drag
-  reorder the member, and dragging it out detaches it.
+- `group-member` uses a double-click or ⌘-click / Ctrl+click on a member. Its
+  card has "Detach", "Fill width", "Fill height", and "Absolute". Arrow keys
+  or a drag reorder the member, and dragging it out detaches it.
 - `group-history` records group edits as one "Edit board" entry each.
 
 ## How to get to it (user POV)
@@ -32,6 +32,10 @@ member card for that one item.
   card.
 - Escape steps back from the member card to the group card, then clears the
   selection.
+- An AI client groups, ungroups, and moves items between groups through
+  `edit_board`, and sets a group's name, flow, gap, padding, and size. It
+  cannot set align, spread, or clip, and it cannot turn hug on. Setting a
+  width or height fixes that axis. See [AI control](./ai-control.md).
 
 ## Driving it with inspect
 
@@ -52,16 +56,17 @@ Preconditions:
   library: "create is one undoable durable edit".
 - **Dock controls.** Run `run-scenario.sh group-dock`, `group-dock-narrow`,
   and `member-dock`. These start from a seeded "Faces" group. They drive the
-  numeric fields, the align pads, spread "Between", Free dimming, and Wrap
-  refusing width hug. On the member card they click "Fill height", "Absolute",
-  "H hug contents", and "Detach", after opening the member with ⌘-click.
+  numeric fields, "Align bottom" on the align pad, spread "Between", Free
+  dimming "Align top", and Wrap refusing width hug. On the member card
+  they click "Fill height", "Absolute", and "Detach", after opening the member
+  with ⌘-click. "H hug contents" is clicked back on the group card.
   `group-dock-narrow` clicks "Ungroup".
 - **Context menu rows.** Run `run-scenario.sh context-menu`. It opens the menu
   on a group selection but clicks no group row.
 
 ## Gotchas
 
-- Arrows and lines cannot join groups. Only images and textboxes can.
+- Arrows and lines cannot join groups. Images, labels, and rectangles can.
 - The dock card sits on the right, even though one assertion says "bottom
   dock".
 - Typing in the picker swallows G, Q, W, E, and ⌘G.
@@ -69,7 +74,7 @@ Preconditions:
   "Fill width", or spread "Off", "Evenly", or "Around".
 - No scenario drives ⇧⌘G, or reorders a member with the arrow keys.
   `group-operations` reorders by drag.
-- No scenario clicks the context-menu "Group", "Ungroup", or "Add to group…"
-  rows through to a result.
+- No scenario clicks the context-menu "Group" or "Ungroup" rows.
+  `group-operations` clicks "Add to group…" and then cancels the picker.
 - Dock-only scenarios seed the group directly, so they say nothing about
   `group-create`.

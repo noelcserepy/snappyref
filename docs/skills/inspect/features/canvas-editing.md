@@ -24,12 +24,19 @@ library.
   "Duplicate", "Delete", "Group", "Ungroup", "Add to group…", "Bring to front",
   "Send to back", "Search using image", and "Remove from library…".
 - `edit-persist` keeps the edit when a library write fails and retries it.
+- `library-dedupe` is P, "Dedupe library". It merges exact duplicate assets
+  and reports "Removed 1 duplicate", "Removed N duplicates", or that it
+  found none.
 
 ## How to get to it (user POV)
 
 - Click or drag images on the canvas. Drag on empty canvas for a marquee.
-- Use the shortcuts above. Settings → Keys lists them.
+- Use the shortcuts above. Settings → Keys lists them, except Redo and ⌘A.
 - Right-click an image or empty canvas for the context menu.
+- An AI client edits by id through `edit_board`, `select`, `undo`, `redo`, and
+  `remove_from_library`. `edit_board` can move, resize, rotate, restack,
+  arrange, and delete. It has no crop or duplicate action. See
+  [AI control](./ai-control.md).
 
 ## Driving it with inspect
 
@@ -39,14 +46,16 @@ Preconditions:
 
 - **Most edits in one run.** Run `run-scenario.sh canvas-edit-operations`. It
   drives a click, a drag, ⌘D, ⌘Z, ⌘A, W, ⌘, and ⌘., an R+drag, a ⌘⌥ drag, a
-  T+click textbox, and Delete. Its last assertion reads the library after a
-  flush: "flush persists the edited Board: one rotated orange, no blue, one
-  textbox". Frames run from `screen-000-seeded` to `screen-007-deleted`.
+  T press that places a label, and Delete. Its last assertion reads the
+  library after a flush: "flush persists the edited Board: one rotated orange,
+  no blue, one textbox". Frames run from `screen-000-seeded` to
+  `screen-007-deleted`.
 - **Multi-selection transforms and layouts.** Run
   `run-scenario.sh multi-transform-layout-contracts`. It covers multi-drag,
   multi-scale, rotation snapping with the Alt bypass, a scale released outside
   the canvas, W and E at gaps 0 and 24, the four arrow settles, ⌘L, and ⇧⌘L.
-  The real checks are plain asserts that run before the summary assertions.
+  The selection, the 15° snap setting, and each gap are set in code. The real
+  checks are plain asserts that run before the summary assertions.
 - **Delete, Undo, Redo.** Run `run-scenario.sh delete-undo-redo-placement`.
   "explicit flush makes final Redo durable" proves the stored state.
 - **Crop.** Run `run-scenario.sh crop-undo-redo-placement`. A real C+drag
@@ -75,8 +84,14 @@ Preconditions:
 - Copy, Paste, Duplicate, Delete, Group, and front/back have no scenario that
   runs them from the context menu. Only "Remove from library…" is clicked.
 - Copy fires only on `Event::Copy`. A kittest ⌘C key press does not copy.
-- C, R, A, L, and T are hold keys. Hold them with `key_down` before the
-  pointer press.
+- C and R are hold keys. Hold them with `key_down` before the pointer press.
+  A, L, and S arm a draw mode on a tap, and T places a label on a tap. See
+  [Annotations](./annotations.md).
+- P "Dedupe library" has no scenario, and no test presses P.
+  `copied_group_survives_dedupe_and_reopen` in `src/app/tests/groups.rs`
+  reaches the dedupe a board switch runs, not the shortcut.
+  `exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates` in
+  `src/library/storage/tests/assets.rs` checks the merge itself.
 - A drag needs held steps. The app waits 90 ms and a small distance before a
   move starts.
 - Q, W, E, the arrow keys, and ⇧⌘L need 2 or more images selected.

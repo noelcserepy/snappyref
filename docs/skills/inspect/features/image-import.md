@@ -28,6 +28,8 @@ whole accepted batch.
 - Drag an image or link from a browser onto the canvas. This works on macOS and
   Windows only.
 - Paste a PureRef selection. This works on Windows only.
+- An AI client calls `add_images` with file paths or URLs. See
+  [AI control](./ai-control.md).
 
 ## Driving it with inspect
 
@@ -39,8 +41,9 @@ Preconditions:
   It drives a file hover, a drop, and ⌘Z. Late prep results are injected. The
   assertions to check are "hover creates two provisional Placements", "drop
   accepts one two-Placement Loading batch", "one Undo removes the whole
-  accepted batch while work remains pending", and "the undone batch stays
-  absent from durable Board state". The frames run from
+  accepted batch while work remains pending", "late results drain without
+  restoring the undone batch", and "the undone batch stays absent from durable
+  Board state". The frames run from
   `screen-000-before-drop` to `screen-004-late-results-discarded`.
 - **Pasted URL, mixed batch, inactive board.** Run `run-scenario.sh slow-url-inactive-mixed-batch`.
   It serves a slow PNG from a local HTTP server, pastes its URL, then drops a
@@ -52,21 +55,30 @@ Preconditions:
 - **Loading appearance.** Run `run-scenario.sh sample-image-import` to see the
   before, loading, and loaded frames. Everything in it is seeded. It shows how
   placeholders look and drives no import path.
-- **Decoded formats.** Run `image-format-gallery`. It is ignored by default and
-  needs `SNAPPYREF_MEDIA_FIXTURES`. It covers decoding and fitting 20 formats,
-  not intake.
+- **Decoded formats.** Run `run-scenario.sh image-format-gallery`. It is
+  ignored by default and needs `SNAPPYREF_MEDIA_FIXTURES`. It covers decoding
+  and fitting 20 fixture files across 13 file types, not intake.
+- **Real preparation.** Run
+  `docs/skills/inspect/scripts/mcp-drive.py docs/skills/inspect/scripts/mcp-all-tools.json`
+  after a debug build. Its `add_images` call imports two JPEGs by path in the
+  real app. A path import goes to the `--imageprep` subprocess first and falls
+  back to decoding in the app without a message, so a pass does not prove the
+  helper ran. It drives the tool's intake and not drop or paste.
 
 ## Gotchas
 
 - Clipboard image paste, clipboard file paths, the context-menu "Paste" row,
   browser drag, and PureRef have no scenario. A kittest key press of V reads
   the real system clipboard, so it is not hermetic. Drive paste with
-  `harness.event(Event::Paste(..))`.
+  `harness.event(Event::Paste(..))`. Only board-selection JSON and an http(s)
+  URL are taken from the event text. File paths, PureRef data, and raster
+  images always come from the real clipboard.
 - Drop and paste do nothing unless the test app has an import worker.
 - The app applies at most 4 import results per frame. Step the harness until
   `pending_len()` reaches 0 before asserting loaded state.
 - Status text such as "Queued import: …" and "Undid Import images" expires.
   Read it soon after the action.
-- Undo of an import shows "Undid Import images" even for a single file.
+- Undo of a single-file import shows "Undid Import image". A batch shows
+  "Undid Import images".
 - Dropped `.pur` files open as a new board instead of placements. See
   [PureRef exchange](./pureref-exchange.md).

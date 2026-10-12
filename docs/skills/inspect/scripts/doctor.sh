@@ -20,9 +20,10 @@ if [[ "$resolved_target" != "$resolved_root"/* ]]; then
   status=1
 fi
 
-running="$(pgrep -fl "$target_dir/debug/deps/snappyref-" || true)"
+# Test binaries, and the app `mcp-drive.py` starts.
+running="$(pgrep -fl "$target_dir/debug/(deps/snappyref-|snappyref( |$))" || true)"
 if [[ -n "$running" ]]; then
-  echo "busy: a test binary from this checkout is running. Wait for it, or stop it only if you started it:"
+  echo "busy: a test binary or app from this checkout is running. Wait for it, or stop it only if you started it:"
   echo "$running"
 fi
 

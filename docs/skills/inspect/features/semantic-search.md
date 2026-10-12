@@ -16,8 +16,9 @@ be placed with Enter or dragged onto the canvas.
   Search", "Install", and "Not now", then a progress bar with "Cancel", then
   "Install failed" with "Retry". The card works by mouse only.
 - `search-palette` opens with ⌘F / Ctrl+F. It has a "Search images" input, a
-  "Recent" list, results, and "No results". Arrow keys select, ↵ places, and
-  ⌘↵ places all.
+  "Recent" list, results, and "No results". Arrow keys select. ↵ picks up the
+  selected results and ⌘↵ picks up all of them, as a provisional batch at the
+  pointer. A click commits the batch and Esc cancels it.
 - `search-image` uses ⌘F with one image selected, or the "Search using image"
   menu row. It shows a `similar to #{id}` pill.
 - `search-drag-place` drags results onto the canvas as provisional placements.
@@ -29,6 +30,8 @@ be placed with Enter or dragged onto the canvas.
 - Press ⌘F / Ctrl+F, or right-click an image and choose "Search using image".
 - Open the sidebar, go to "Settings" → "General", and find the "SEMANTIC
   SEARCH" row.
+- An AI client calls `search_library` and `search_model`. See
+  [AI control](./ai-control.md).
 
 ## Driving it with inspect
 
@@ -48,14 +51,15 @@ Preconditions:
   error. Enter and "Not now" are driven on the install card. "result previews
   decoded before capture" proves the thumbnails were visible.
 - **Image search to canvas.** Run `run-scenario.sh blue-image-search-drag`. It
-  drives a click and a ⌘-click to select 3 results, then a drag and drop. The
-  image search itself is opened in code, not with ⌘F or the menu.
+  drives a click and two ⌘-clicks to select 3 results, then a drag and drop.
+  The image search itself is opened in code, not with ⌘F or the menu.
 - **Result drag basics.** Run `run-scenario.sh search-drag-to-canvas`, which
   `check-harness.sh` also runs. It renders only the overlay. Its one frame is
   a drawn rectangle and not a screenshot.
 - **Settings row.** Run `run-scenario.sh semantic-search-sidebar-status`. It
   shows whatever model status this machine has on disk, and no assertion checks
-  the status text.
+  the status text. `sidebar-pages` seeds a download in progress and is the
+  only scenario that asserts the row text, "Downloading 42%".
 
 ## Gotchas
 
@@ -67,6 +71,8 @@ Preconditions:
   `src/app/tests/semantic_search.rs` cover some of these, without artifacts.
 - Search ranking, indexing, and the real download need the real model. Never
   run `semantic-search-real-install` unless the user asks.
+- `mcp-drive.py` runs on a root with no model, so `search_library` and
+  `search_model` are only seen being refused.
 - Result count does not prove the thumbnails are visible. Only
   `search-composer` waits for preview decoding.
 - Enter enables from the first-launch dialog. Enter does nothing on the install
