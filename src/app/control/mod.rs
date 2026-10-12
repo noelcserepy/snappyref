@@ -268,13 +268,51 @@ impl SnappyRefApp {
             }
         }
         for waiting in std::mem::take(&mut self.control.waiting) {
-            if let Some(waiting) = self.poll_waiting(ctx, waiting) {
+            if let Some(waiting) = self.poll_waiting(waiting) {
                 self.control.waiting.push(waiting);
             }
+        }
+        let capturing = self
+            .control
+            .waiting
+            .iter()
+            .any(|waiting| matches!(waiting.on, WaitingOn::Screenshot(_)));
+        if capturing && let Some(render_state) = &self.wgpu_render_state {
+            // wgpu finishes a capture readback on a submit or a poll, and a
+            // hidden window submits no more frames.
+            let _ = render_state.device.poll(eframe::wgpu::PollType::Poll);
         }
         if !self.control.waiting.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
+    }
+
+    /// Answers screenshot calls from the raw input. eframe hands that over on
+    /// every frame, while `ctx.input` only changes on a pass and a hidden
+    /// window runs none.
+    pub(super) fn answer_screenshots(&mut self, raw_input: &mut egui::RawInput) {
+        raw_input.events.retain(|event| {
+            let egui::Event::Screenshot {
+                user_data, image, ..
+            } = event
+            else {
+                return true;
+            };
+            let request = user_data
+                .data
+                .as_ref()
+                .and_then(|data| data.downcast_ref::<u64>());
+            let Some(index) = self.control.waiting.iter().position(
+                |waiting| matches!(waiting.on, WaitingOn::Screenshot(waited) if Some(&waited) == request),
+            ) else {
+                return true;
+            };
+            let waiting = self.control.waiting.swap_remove(index);
+            let image = image.clone();
+            // Encoding a window-sized PNG takes longer than a frame.
+            std::thread::spawn(move || waiting.responder.send(screenshot_reply(&image)));
+            false
+        });
     }
 
     pub(super) fn control_call(
@@ -882,41 +920,15 @@ impl SnappyRefApp {
     }
 
     /// Answers the call and returns None, or hands it back to keep waiting.
-    fn poll_waiting(&mut self, ctx: &egui::Context, mut waiting: Waiting) -> Option<Waiting> {
+    fn poll_waiting(&mut self, mut waiting: Waiting) -> Option<Waiting> {
         let timed_out = Instant::now() >= waiting.deadline;
         let result = match &mut waiting.on {
-            WaitingOn::Screenshot(request) => {
-                let request = *request;
-                let image = ctx.input(|input| {
-                    input.events.iter().find_map(|event| match event {
-                        egui::Event::Screenshot {
-                            user_data, image, ..
-                        } if user_data
-                            .data
-                            .as_ref()
-                            .and_then(|data| data.downcast_ref::<u64>())
-                            == Some(&request) =>
-                        {
-                            Some(image.clone())
-                        }
-                        _ => None,
-                    })
-                });
-                match image {
-                    Some(image) => {
-                        // Encoding a window-sized PNG takes longer than a frame.
-                        std::thread::spawn(move || {
-                            waiting.responder.send(screenshot_reply(&image))
-                        });
-                        return None;
-                    }
-                    None if timed_out => Err(
-                        "SnappyRef could not capture its window. It draws only while part of it shows \
-                         on screen, so it may be minimized or fully covered by other windows."
-                            .to_owned(),
-                    ),
-                    None => return Some(waiting),
+            // `answer_screenshots` sends the image. This arm only gives up.
+            WaitingOn::Screenshot(_) => {
+                if !timed_out {
+                    return Some(waiting);
                 }
+                Err("SnappyRef could not capture its window.".to_owned())
             }
             WaitingOn::Images { board, ids } => match self.added_images(*board, ids, timed_out) {
                 Some(result) => result,

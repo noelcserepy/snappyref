@@ -61,6 +61,7 @@ interface:
       behavior:
         ui-thread: Every call must run on the UI thread between frames, through the operations the user's own input reaches.
         never-blocks-a-frame: A call that waits on import, search, a screenshot, an export, or the user must be polled across frames and must not block one.
+        screenshot-needs-no-visible-window: `screenshot` must answer while the window is minimized or covered by other windows. It must not show, raise, or focus the window to do so.
         ids-not-selection: `edit_board` names its targets by id. It must neither read nor change what the user has selected. `select` sets the selection, and `add_images` selects what it imported, as the user's own import does.
         waits-for-the-user: `edit_board` must be refused while the user is dragging, drawing, cropping, or typing in a label. It must not cut their edit short.
         one-call-one-undo: One `edit_board` call must be one Undo step, however many edits it carries.

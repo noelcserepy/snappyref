@@ -1220,6 +1220,10 @@ impl SnappyRefApp {
 }
 
 impl eframe::App for SnappyRefApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.answer_screenshots(raw_input);
+    }
+
     /// Drains work that arrives from helpers and services. eframe also calls
     /// this while the window is hidden, so imports, search, and update checks
     /// keep moving without an egui pass.
