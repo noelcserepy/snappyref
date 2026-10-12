@@ -62,30 +62,29 @@ Preconditions:
   `--mcp`, the stdio handshake, the token, and a call to each of the 19 tools
   at Full, with real image preparation and a real `.pur` export and import.
   A call's assertion says only that it answered or was refused. Read the
-  replies in `events.ndjson` for what changed. `screenshot` calls are skipped
-  unless you add `--front`, and that run starts the app itself instead of
-  through `--mcp`. The artifact is
+  replies in `events.ndjson` for what changed. Both `screenshot` calls answer
+  with the window covered. The artifact is
   `target/snappyref-inspect/mcp-drive/run-<nanos>/`, with the exported
   `board.pur` beside the report.
 
 ## Gotchas
 
-- `screenshot` works only while part of the window shows on screen. The app
-  does not draw a minimized or fully covered window, and a window `--mcp`
-  started opens behind the others. `mcp-drive.py --front` is the only route
-  that captures one. It takes focus for about 6 seconds.
+- `screenshot` from a minimized window has no route. No tool minimizes the
+  window, and `mcp-drive.py` only covers it. The two cases fail differently.
+  A covered window still runs frames and only lacks a surface to draw to. A
+  minimized one runs no frame, so the capture needs the hidden paint in
+  `vendor/eframe` and the device poll in `drive_control`.
 - No scenario launches the app from `--mcp` or speaks stdio. `control::mcp`
   unit tests cover the handshake, the tool list, and the token check, and
-  `mcp-drive.py` without `--front` covers the launch.
+  `mcp-drive.py` covers the launch.
 - Eleven tools reach their handler from two places only: `list_boards`,
   `get_settings`, `create_board`, `rename_board`, `open_board`,
   `delete_board`, `select`, `screenshot`, `export_board`, `search_library`,
   and `search_model`.
   `mcp-drive.py` calls them at Full and checks that each answers. The last two
-  are only refused there, because the search model is not installed, and
-  `screenshot` needs `--front`. `every_advertised_tool_has_a_handler` in
-  `src/app/tests/control.rs` calls all 19 with empty arguments and checks only
-  that a handler exists.
+  are only refused there, because the search model is not installed.
+  `every_advertised_tool_has_a_handler` in `src/app/tests/control.rs` calls
+  all 19 with empty arguments and checks only that a handler exists.
 - Never driven anywhere: `search_library` with the model installed,
   `search_model` starting an install, `search_model` waiting on its dialog at
   Ask, the Copy MCP config click, two apps on one library root, the app dying

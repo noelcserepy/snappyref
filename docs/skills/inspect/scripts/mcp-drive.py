@@ -9,9 +9,8 @@ the shape a scenario
 writes: report.json with one assertion per call, events.ndjson with each call's
 arguments and reply, and frames/ with every returned image.
 
-`--mcp` starts the app itself, behind the frontmost window. A fully covered
-window is not drawn, so `screenshot` calls are skipped. `--front` starts the app
-in front instead and runs them. It takes focus for the length of the run.
+`--mcp` starts the app itself, behind the frontmost window, and it never takes
+focus. `screenshot` answers from there too.
 """
 import argparse
 import base64
@@ -125,8 +124,6 @@ class McpSession:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('calls', type=Path, help='JSON list of [tool, arguments] or [tool, arguments, "refused"]')
-    parser.add_argument('--front', action='store_true',
-                        help='start the app in front so `screenshot` works; takes focus')
     parser.add_argument('--exe', type=Path, default=ROOT / 'target/debug/snappyref')
     args = parser.parse_args()
     if not args.exe.is_file():
@@ -142,17 +139,12 @@ def main():
                SNAPPYREF_UPDATE_MANIFEST_URL='http://127.0.0.1:9/mcp-drive-no-updates')
     env.pop('SNAPPYREF_LIBRARY_ROOT', None)
     endpoint = data_root / 'library/control.json'
-    session, front, app_pid = None, None, None
-    tools, assertions, frames, replies, skipped = [], [], [], {}, 0
+    session, app_pid = None, None
+    tools, assertions, frames, replies = [], [], [], {}
     try:
         grant_full_access(str(args.exe), env, data_root / 'library')
-        if args.front:
-            front = subprocess.Popen([args.exe], env=env, stdin=subprocess.DEVNULL,
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            wait_for('the app to publish its endpoint', endpoint.is_file)
-        else:
-            # An endpoint nothing answers on makes `--mcp` start the app itself.
-            endpoint.write_text(json.dumps({'port': 1, 'token': 'stale'}))
+        # An endpoint nothing answers on makes `--mcp` start the app itself.
+        endpoint.write_text(json.dumps({'port': 1, 'token': 'stale'}))
         session = McpSession(str(args.exe), env)
         session.request('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
                                        'clientInfo': {'name': 'mcp-drive', 'version': '0'}})
@@ -161,10 +153,6 @@ def main():
             events.write(json.dumps({'type': 'observation.fact',
                                      'payload': {'name': 'tools', 'value': tools}}) + '\n')
             for index, (tool, arguments, *expect) in enumerate(calls, start=1):
-                if tool == 'screenshot' and not args.front:
-                    skipped += 1
-                    print(f'{index:02} {tool} skipped, needs --front')
-                    continue
                 arguments = from_replies(arguments, replies)
                 started = time.time()
                 reply = session.request('tools/call', {'name': tool, 'arguments': arguments})
@@ -200,10 +188,7 @@ def main():
         if session:
             app_pid = session.app_pid()
             session.close()
-        if front:
-            front.terminate()
-            front.wait(timeout=20)
-        elif app_pid:
+        if app_pid:
             os.kill(app_pid, signal.SIGTERM)
             wait_for('the app to exit', lambda: subprocess.run(['kill', '-0', str(app_pid)],
                                                                capture_output=True).returncode != 0, 20)
@@ -215,7 +200,7 @@ def main():
         'first_failure': failed[0] if failed else None, 'assertions': assertions, 'frames': frames,
     }, indent=2))
     (scenario_dir / 'latest.txt').write_text(str(artifact))
-    print(f'tools={len(tools)}\ncalls={len(assertions)}\nskipped={skipped}\nfailed={len(failed)}\n'
+    print(f'tools={len(tools)}\ncalls={len(assertions)}\nfailed={len(failed)}\n'
           f'status={status}\nartifact={artifact}')
     return 1 if failed else 0
 
