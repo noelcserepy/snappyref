@@ -74,11 +74,13 @@ Preconditions:
 - No scenario launches the app from `--mcp` or speaks stdio. `control::mcp`
   unit tests cover the handshake, the tool list, and the token check, and
   `mcp-drive.py` covers the launch.
-- Eleven tools are called by `mcp-drive.py` alone, and only at Full:
-  `list_boards`, `get_settings`, `create_board`, `rename_board`, `open_board`,
-  `delete_board`, `select`, `screenshot`, `export_board`, `search_library`,
-  and `search_model`. The last two are only refused there, because the search
-  model is not installed.
+- Eleven tools get their only call with real arguments from `mcp-drive.py`,
+  and only at Full: `list_boards`, `get_settings`, `create_board`,
+  `rename_board`, `open_board`, `delete_board`, `select`, `screenshot`,
+  `export_board`, `search_library`, and `search_model`. The last two are only
+  refused there, because the search model is not installed.
+  `every_advertised_tool_has_a_handler` in `src/app/tests/control.rs` calls
+  all 19 with empty arguments and checks only that a handler exists.
 - Never driven anywhere: `search_library` with the model installed,
   `search_model` starting an install, `search_model` waiting on its dialog at
   Ask, the Copy MCP config click, two apps on one library root, the app dying
@@ -93,9 +95,9 @@ Preconditions:
   reaches the library through a write queue the reply does not wait for.
   Neither route proves a tool edit reached the disk. For that, read the
   library back after a flush in a scenario.
-- `mcp-all-tools.json` uses literal ids. On a fresh root the first board is 1,
-  and each new board, item, or group takes the next number from one shared
-  sequence. Asset ids follow import completion order, so they can swap between
-  runs.
+- `mcp-all-tools.json` takes its ids from earlier replies, as in
+  `"$6.items.0.id"`. Do the same in a new calls file. Boards, items, and
+  groups share one id sequence, and asset ids follow import completion order,
+  so a literal id can name something else on the next run.
 - A waiting call only advances while the harness steps. Send the call from a
   thread and step until it answers.

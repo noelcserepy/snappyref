@@ -110,7 +110,8 @@ that only the real window and the real helper subprocesses show. It writes the
 same artifact shape as a scenario under
 `target/snappyref-inspect/mcp-drive/run-<nanos>/`, so `summarize-artifact.py`
 and `latest-artifact.sh mcp-drive` read it. Each call is `[tool, arguments]`,
-or `[tool, arguments, "refused"]` for a call the app must refuse. An assertion
+or `[tool, arguments, "refused"]` for a call the app must refuse. An argument
+of `"$3.board.id"` takes that value from the reply to call 3. An assertion
 says only that the call answered or was refused, so read the replies in
 `events.ndjson`.
 

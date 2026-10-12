@@ -3,7 +3,9 @@
 
 Replays a JSON list of [tool, arguments] calls. A third element, "refused",
 marks a call the app must refuse. `$REPO` and `$OUT` in the calls file expand to
-this checkout and the artifact directory. The artifact has the shape a scenario
+this checkout and the artifact directory. An argument of `"$3.board.id"` takes
+that value from the reply to call 3, so ids come from the app. The artifact has
+the shape a scenario
 writes: report.json with one assertion per call, events.ndjson with each call's
 arguments and reply, and frames/ with every returned image.
 
@@ -16,6 +18,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import sqlite3
@@ -72,6 +75,21 @@ def grant_full_access(exe, env, library):
     db.close()
 
 
+def from_replies(value, replies):
+    """Swaps each "$N.path" string for that value in the reply to call N."""
+    if isinstance(value, dict):
+        return {key: from_replies(item, replies) for key, item in value.items()}
+    if isinstance(value, list):
+        return [from_replies(item, replies) for item in value]
+    ref = isinstance(value, str) and re.fullmatch(r'\$(\d+)\.(.+)', value)
+    if not ref:
+        return value
+    found = replies[int(ref[1])]
+    for key in ref[2].split('.'):
+        found = found[int(key)] if isinstance(found, list) else found[key]
+    return found
+
+
 class McpSession:
     def __init__(self, exe, env):
         self.proc = subprocess.Popen([exe, '--mcp'], env=env, text=True,
@@ -122,7 +140,7 @@ def main():
     env.pop('SNAPPYREF_LIBRARY_ROOT', None)
     endpoint = data_root / 'library/control.json'
     session, front, app_pid = None, None, None
-    assertions, frames, skipped = [], [], 0
+    assertions, frames, replies, skipped = [], [], {}, 0
     try:
         grant_full_access(str(args.exe), env, data_root / 'library')
         if args.front:
@@ -144,6 +162,7 @@ def main():
                     skipped += 1
                     print(f'{index:02} {tool} skipped, needs --front')
                     continue
+                arguments = from_replies(arguments, replies)
                 started = time.time()
                 reply = session.request('tools/call', {'name': tool, 'arguments': arguments})
                 payload = {'name': f'{index:02} {tool}', 'arguments': arguments,
@@ -158,6 +177,7 @@ def main():
                             payload['reply'] = json.loads(part['text'])
                         except ValueError:
                             payload['reply'] = part['text']
+                replies[index] = payload.get('reply')
                 must_refuse = expect == ['refused']
                 assertion = {'type': 'assertion', 'passed': payload['refused'] == must_refuse,
                              'name': f"{payload['name']} {'is refused' if must_refuse else 'answers'}"}
