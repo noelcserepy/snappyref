@@ -1128,6 +1128,47 @@ fn board_delete_confirmation_keeps_sidebar_open_and_removes_inactive_board() {
 }
 
 #[test]
+fn repeated_board_delete_is_an_error_that_changes_nothing() {
+    let ctx = egui::Context::default();
+    let root = TempRoot::new("snappyref-repeated-delete-board");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let first = library.list_boards().unwrap()[0].clone();
+    let second = library.fixture_board("Second").unwrap();
+    let third = library.fixture_board("Third").unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.active_board_id = first.id;
+    app.refresh_board_summaries();
+    let board_ids = |app: &SnappyRefApp| {
+        app.board_summaries()
+            .iter()
+            .map(|summary| summary.board.id)
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        app.board_lifecycle().delete(&ctx, third.id),
+        Ok("Deleted Third".to_owned())
+    );
+    assert_eq!(
+        app.board_lifecycle().delete(&ctx, third.id),
+        Err("Board unavailable".to_owned())
+    );
+
+    assert_eq!(app.active_board_id, first.id);
+    assert_eq!(board_ids(&app), vec![first.id, second.id]);
+    // The refused request recorded nothing: one Undo brings the Board back
+    // and there is no second step.
+    assert!(
+        app.board_lifecycle()
+            .undo_document_history(&ctx)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(board_ids(&app), vec![first.id, second.id, third.id]);
+    assert_eq!(app.board_lifecycle().undo_document_history(&ctx), Ok(None));
+}
+
+#[test]
 fn board_delete_undo_restores_document_view_history_and_active_fallback() {
     let ctx = egui::Context::default();
     let root = TempRoot::new("snappyref-delete-board-history");

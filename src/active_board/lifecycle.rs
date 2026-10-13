@@ -535,6 +535,8 @@ impl BoardLifecycle<'_> {
         Ok(Some("Renamed board".to_owned()))
     }
 
+    /// A Board that is not in the catalog, including one already deleted, is an
+    /// error and changes nothing. So is the last Board.
     pub(crate) fn delete(&mut self, ctx: &egui::Context, board_id: i64) -> Result<String, String> {
         let library = self.library.ok_or("Storage unavailable")?;
         let board_ids = self
