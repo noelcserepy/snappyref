@@ -33,10 +33,14 @@ docs/skills/inspect/scripts/run-scenario.sh --list
 docs/skills/inspect/scripts/run-scenario.sh <scenario>
 ```
 
-The [pre-push hook](.githooks/pre-push) runs fmt and clippy. CI is switched off, so before you push, run
+The [pre-push hook](.githooks/pre-push) runs fmt and clippy. Before you push, run
 `cargo test --locked` (every non-ignored inspect scenario and the helper subprocess tests) and the
 `scripts/test_*.py` suite with `python3 -m unittest discover -s scripts -p 'test_*.py'`. Hook setup is in the
 [README](README.md#development-checks).
+
+[CI](.github/workflows/ci.yml) runs the same checks on macOS for every pull request in about 90 seconds.
+Windows CI takes about 10 minutes, so it runs on `main` after the merge and opens an issue when it fails.
+Merge without waiting for it. `gh workflow run ci.yml --ref <branch>` runs both jobs on a branch.
 
 When the user wants to test a build by hand, stop the previous instance and run
 `SNAPPYREF_DATA_ROOT="$HOME/dev/snappyref-dev-data" cargo run --locked --release --bin snappyref`

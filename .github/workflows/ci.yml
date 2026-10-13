@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,9 +13,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# A ruleset on main requires this job name once the repo is public. Rename it
-# only together with the ruleset. Windows checks run natively through the
-# use-windows skill.
+# Pull requests wait for the macOS job only, about 90 seconds. A ruleset on
+# main requires that job name, so rename it only together with the ruleset.
+# The Windows job takes about 10 minutes. It runs after the merge and on manual
+# dispatch, and opens an issue when it fails on main.
 jobs:
   macos:
     name: macOS
@@ -51,3 +53,36 @@ jobs:
       - name: script tests
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
+  windows:
+    name: Windows
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install libjpeg-turbo
+        uses: ./.github/actions/install-turbojpeg-windows
+
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --locked
+
+      - name: Report a failure on main
+        if: failure() && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: scripts/report-windows-ci-failure.sh
