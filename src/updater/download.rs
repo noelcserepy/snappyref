@@ -19,7 +19,7 @@
 
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
@@ -75,15 +75,6 @@ impl From<io::Error> for DownloadError {
     }
 }
 
-/// Outcome of a successful download.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct DownloadOutcome {
-    /// Where the verified zip ended up.
-    pub destination: PathBuf,
-    /// Total bytes written. Equal to the manifest's `size`.
-    pub bytes_written: u64,
-}
-
 /// Progress callback signature. Receives a freshly observed
 /// `(bytes_downloaded, total_bytes)` pair on each chunk boundary; the
 /// caller is responsible for rate-limiting if it cares. Total is taken
@@ -97,24 +88,6 @@ pub(crate) type ProgressCallback<'a> = dyn FnMut(u64, u64) + 'a;
 /// On any failure the destination file is removed before returning so a
 /// half-written partial download cannot be mistaken for a verified zip
 /// on the next launch.
-#[cfg(test)]
-pub(crate) fn download_from_reader(
-    source: &mut dyn Read,
-    destination: &Path,
-    expected_size: u64,
-    expected_sha256: &str,
-    progress: &mut ProgressCallback<'_>,
-) -> Result<DownloadOutcome, DownloadError> {
-    download_from_reader_cancellable(
-        source,
-        destination,
-        expected_size,
-        expected_sha256,
-        progress,
-        &|| false,
-    )
-}
-
 pub(crate) fn download_from_reader_cancellable(
     source: &mut dyn Read,
     destination: &Path,
@@ -122,7 +95,7 @@ pub(crate) fn download_from_reader_cancellable(
     expected_sha256: &str,
     progress: &mut ProgressCallback<'_>,
     should_cancel: &dyn Fn() -> bool,
-) -> Result<DownloadOutcome, DownloadError> {
+) -> Result<(), DownloadError> {
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -193,10 +166,7 @@ pub(crate) fn download_from_reader_cancellable(
         });
     }
 
-    Ok(DownloadOutcome {
-        destination: destination.to_path_buf(),
-        bytes_written: written,
-    })
+    Ok(())
 }
 
 /// Production entry point: fetch `url` over HTTPS and delegate to
@@ -207,7 +177,7 @@ pub(crate) fn download_from_url(
     expected_size: u64,
     expected_sha256: &str,
     progress: &mut ProgressCallback<'_>,
-) -> Result<DownloadOutcome, DownloadError> {
+) -> Result<(), DownloadError> {
     download_from_url_cancellable(
         url,
         destination,
@@ -225,7 +195,7 @@ pub(crate) fn download_from_url_cancellable(
     expected_sha256: &str,
     progress: &mut ProgressCallback<'_>,
     should_cancel: &dyn Fn() -> bool,
-) -> Result<DownloadOutcome, DownloadError> {
+) -> Result<(), DownloadError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(DOWNLOAD_TIMEOUT)
         .build()
@@ -309,12 +279,13 @@ mod tests {
         let mut source = &payload[..];
         let mut ticks: Vec<(u64, u64)> = Vec::new();
         let mut progress = |done, total| ticks.push((done, total));
-        download_from_reader(
+        download_from_reader_cancellable(
             &mut source,
             &destination,
             payload.len() as u64,
             &expected,
             &mut progress,
+            &|| false,
         )
         .unwrap();
 
@@ -346,12 +317,13 @@ mod tests {
 
         let mut source = &payload[..];
         let mut progress = |_, _| {};
-        let err = download_from_reader(
+        let err = download_from_reader_cancellable(
             &mut source,
             &destination,
             payload.len() as u64,
             &wrong,
             &mut progress,
+            &|| false,
         )
         .unwrap_err();
 
@@ -377,12 +349,13 @@ mod tests {
 
         let mut source = &payload[..];
         let mut progress = |_, _| {};
-        let err = download_from_reader(
+        let err = download_from_reader_cancellable(
             &mut source,
             &destination,
             payload.len() as u64 + 10,
             &expected,
             &mut progress,
+            &|| false,
         )
         .unwrap_err();
 
@@ -405,7 +378,7 @@ mod tests {
 
         let (url, handle) = serve_once(payload.clone());
         let mut progress = |_, _| {};
-        let outcome = download_from_url(
+        download_from_url(
             &url,
             &destination,
             payload.len() as u64,
@@ -415,8 +388,6 @@ mod tests {
         .unwrap();
         let _ = handle.join();
 
-        assert_eq!(outcome.bytes_written, payload.len() as u64);
-        assert!(destination.exists());
         assert_eq!(fs::read(&destination).unwrap(), payload);
     }
 
@@ -429,14 +400,15 @@ mod tests {
         let dest = dir.join("case.zip");
         let mut source = &bytes[..];
         let mut progress = |_, _| {};
-        let outcome = download_from_reader(
+        download_from_reader_cancellable(
             &mut source,
             &dest,
             bytes.len() as u64,
             &upper,
             &mut progress,
+            &|| false,
         )
         .unwrap();
-        assert_eq!(outcome.bytes_written, bytes.len() as u64);
+        assert_eq!(fs::read(&dest).unwrap(), bytes);
     }
 }

@@ -493,7 +493,6 @@ impl BoardLifecycle<'_> {
         self.editing.persistence.enqueue_board_lifecycle_unit(
             super::persistence::BoardLifecyclePersistence::Create {
                 document: document.clone(),
-                active_board_id: board_id,
             },
             &self.editing.history,
         )?;

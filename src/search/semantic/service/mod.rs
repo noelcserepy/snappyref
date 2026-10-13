@@ -151,8 +151,7 @@ impl SemanticSearchService {
         let canvas_image_max_side = config.canvas_image_max_side;
 
         thread::spawn(move || {
-            let grace = embedding_helper_grace();
-            run_index_worker_loop(&index_rx, grace, |request, helper| {
+            run_index_worker_loop(&index_rx, EMBEDDING_HELPER_GRACE, |request, helper| {
                 process_index_request(
                     request,
                     &worker_library,
@@ -674,18 +673,7 @@ fn unix_timestamp_seconds() -> i64 {
 /// seconds) so the model does not cold-mount per asset, while still letting
 /// the helper exit after a quiet window so **Quiescent Memory** returns to
 /// baseline.
-///
-/// Default 3s; override with `SNAPPYREF_EMBEDDING_HELPER_GRACE_MS=<ms>`. A
-/// value of `0` reproduces the previous behavior (drop helper as soon as the
-/// queue drains).
-fn embedding_helper_grace() -> Duration {
-    const DEFAULT_GRACE_MS: u64 = 3000;
-    std::env::var("SNAPPYREF_EMBEDDING_HELPER_GRACE_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .map(Duration::from_millis)
-        .unwrap_or(Duration::from_millis(DEFAULT_GRACE_MS))
-}
+const EMBEDDING_HELPER_GRACE: Duration = Duration::from_secs(3);
 
 /// Drive the embedding index worker: per `recv()`, start a fresh helper-owning
 /// session, process the first request, then keep accepting requests within
