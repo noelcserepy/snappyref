@@ -1316,14 +1316,19 @@ mod tests {
         }
     }
 
-    /// Finishes a dispatched backfill step with `result`.
+    /// Dispatches a backfill step once the quiet window after `now` passes and
+    /// finishes it with `result`. Returns when it finished.
     fn finish_backfill_step(
         search: &mut SearchController,
         result: SearchIndexResult,
         now: Instant,
-    ) {
-        search.embedding_backfill.in_flight = true;
-        search.note_index_result_for_backfill(&result, now);
+    ) -> Instant {
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+        let finished_at = now + Duration::from_millis(750);
+        search.can_start_embedding_backfill(now, idle);
+        assert_eq!(search.drive_embedding_backfill(finished_at, idle), Ok(true));
+        search.note_index_result_for_backfill(&result, finished_at);
+        finished_at
     }
 
     #[test]
@@ -1331,21 +1336,19 @@ mod tests {
         let (mut search, _root) =
             search_controller_with_semantic_service("snappyref-backfill-retry-search-test");
         let idle = EmbeddingBackfillIdleState { app_idle: true };
-        let start = Instant::now();
 
         // First failure: other Assets and the immediate retry still run.
-        finish_backfill_step(&mut search, backfill_failed(), start);
-        assert!(backfill_starts_after_quiet(&mut search, start));
+        let failed_at = finish_backfill_step(&mut search, backfill_failed(), Instant::now());
+        assert!(backfill_starts_after_quiet(&mut search, failed_at));
 
         // Second failure of that Asset: storage holds its retry for five minutes.
         let retry_in = Duration::from_secs(300);
-        let idle_at = start + Duration::from_secs(10);
-        finish_backfill_step(
+        let idle_at = finish_backfill_step(
             &mut search,
             SearchIndexResult::BackfillIdle {
                 retry_in: Some(retry_in),
             },
-            idle_at,
+            failed_at + Duration::from_secs(10),
         );
         assert_eq!(
             search.embedding_backfill_repaint_after(idle_at),
@@ -1355,11 +1358,10 @@ mod tests {
         assert!(backfill_starts_after_quiet(&mut search, idle_at + retry_in));
 
         // Third failure is terminal in storage, so nothing is left to wait for.
-        let done_at = idle_at + retry_in + Duration::from_secs(10);
-        finish_backfill_step(
+        let done_at = finish_backfill_step(
             &mut search,
             SearchIndexResult::BackfillIdle { retry_in: None },
-            done_at,
+            idle_at + retry_in + Duration::from_secs(10),
         );
         assert_eq!(search.embedding_backfill_repaint_after(done_at), None);
         assert!(!backfill_starts_after_quiet(
@@ -1374,15 +1376,11 @@ mod tests {
             search_controller_with_semantic_service("snappyref-backfill-broken-search-test");
         let now = Instant::now();
 
-        // An Asset embedded by a step or by an import shows the helper works.
+        // A step that embeds an Asset between failures shows the helper works.
         for _ in 0..2 {
             finish_backfill_step(&mut search, backfill_failed(), now);
         }
         finish_backfill_step(&mut search, SearchIndexResult::BackfillIndexed, now);
-        for _ in 0..2 {
-            finish_backfill_step(&mut search, backfill_failed(), now);
-        }
-        search.note_index_result_for_backfill(&SearchIndexResult::Indexed { asset_id: 1 }, now);
         for _ in 0..2 {
             finish_backfill_step(&mut search, backfill_failed(), now);
         }

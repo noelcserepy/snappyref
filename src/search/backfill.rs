@@ -5,9 +5,8 @@ use crate::search::semantic::IndexResult;
 
 const EMBEDDING_BACKFILL_IDLE_QUIET_MS: u64 = 750;
 /// Storage gives each Asset a few attempts. This many failed steps with no
-/// Asset embedded in between, by a step or by an import, means the helper or
-/// storage is broken, so the scheduler stops before it spends every Asset's
-/// attempts.
+/// step embedding an Asset in between means the helper or storage is broken,
+/// so the scheduler stops before it spends every Asset's attempts.
 const MAX_CONSECUTIVE_BACKFILL_FAILURES: u8 = 3;
 
 // Embedding backfill is idle-only background work. Demand embeddings for an
@@ -23,7 +22,8 @@ pub(super) struct EmbeddingBackfillScheduler {
     pub(super) exhausted: bool,
     /// When the earliest stored retry comes due.
     retry_at: Option<Instant>,
-    /// Failed steps since an Asset last embedded.
+    /// Failed steps since the last step that embedded an Asset. Imports do not
+    /// reset it: a re-import of an indexed Asset succeeds without the helper.
     consecutive_failures: u8,
 }
 
@@ -84,11 +84,6 @@ impl SearchController {
     pub(super) fn note_index_result_for_backfill(&mut self, result: &IndexResult, now: Instant) {
         let backfill = &mut self.embedding_backfill;
         match result {
-            // An import that embeds shows the helper works, like a step that does.
-            IndexResult::Indexed { .. } => {
-                backfill.consecutive_failures = 0;
-                return;
-            }
             IndexResult::BackfillIndexed => backfill.consecutive_failures = 0,
             IndexResult::BackfillIdle { retry_in } => {
                 backfill.exhausted = true;
