@@ -147,6 +147,11 @@ the [use-windows](docs/skills/use-windows/SKILL.md) skill.
 [AGENTS.md](AGENTS.md) has the process model, the module map, and the repo
 rules.
 
+## Issues
+
+Found a bug or want a feature? [Open an issue](https://github.com/noelcserepy/snappyref/issues).
+I don't accept pull requests.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
