@@ -86,7 +86,7 @@ pub(super) fn import_board(library: &Library, path: &Path) -> Result<ImportedPur
     let annotations: Vec<CanvasAnnotation> = board
         .notes
         .iter()
-        .map(|note| note_textbox(library, note))
+        .filter_map(|note| note_textbox(library, note))
         .collect();
     // PureRef always draws notes above images.
     let stack_order = placements
@@ -228,7 +228,10 @@ struct ItemGeometry {
 }
 
 impl ItemGeometry {
-    /// `None` for degenerate transforms that collapse the image.
+    /// `None` for degenerate transforms that collapse the image, and for
+    /// geometry that is not finite once it is in canvas `f32`. This is the one
+    /// place file geometry becomes Placement geometry, and a non-finite value
+    /// stored on a Board breaks fitting the view.
     fn of(item: &PureRefImageItem) -> Option<Self> {
         let transform = item.transform;
         let scale_x = transform.m11.hypot(transform.m12);
@@ -246,20 +249,25 @@ impl ItemGeometry {
         let crop = item.crop;
         let (center_x, center_y) =
             transform.map_point(crop.x + crop.width / 2.0, crop.y + crop.height / 2.0);
-        Some(Self {
+        let geometry = Self {
             center: pos2(center_x as f32, center_y as f32),
             size: vec2(crop.width as f32, (crop.height * scale_y / scale_x) as f32),
             scale: scale_x as f32,
             rotation: rotation as f32,
             flipped,
-        })
+        };
+        (geometry.center.is_finite()
+            && geometry.size.is_finite()
+            && geometry.scale.is_finite()
+            && geometry.rotation.is_finite())
+        .then_some(geometry)
     }
 }
 
 /// A note becomes a textbox centred where PureRef centres it, with the nearest text size.
 /// Rotation is dropped. The box starts empty at the note's centre because fonts
-/// live on the UI thread.
-fn note_textbox(library: &Library, note: &PureRefNote) -> CanvasAnnotation {
+/// live on the UI thread. `None` when the centre is not finite in canvas `f32`.
+fn note_textbox(library: &Library, note: &PureRefNote) -> Option<CanvasAnnotation> {
     let transform = note.transform;
     let note_font = NOTE_FONT_PX * transform.m11.hypot(transform.m12) as f32;
     let text_size = CanvasTextSize::ALL
@@ -271,7 +279,10 @@ fn note_textbox(library: &Library, note: &PureRefNote) -> CanvasAnnotation {
         .unwrap_or_default();
     let (x, y) = transform.map_point(0.0, 0.0);
     let center = pos2(x as f32, y as f32);
-    library.new_canvas_annotation(
+    if !center.is_finite() {
+        return None;
+    }
+    Some(library.new_canvas_annotation(
         CanvasAnnotationKind::Textbox,
         center,
         center,
@@ -279,7 +290,7 @@ fn note_textbox(library: &Library, note: &PureRefNote) -> CanvasAnnotation {
         text_size,
         CanvasStrokeWidth::default(),
         CanvasAnnotationColor::default(),
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -327,6 +338,26 @@ mod tests {
         assert!((geometry.scale - 2.0).abs() < 1e-5);
         assert!((geometry.size - vec2(40.0, 45.0)).length() < 1e-3);
         assert!(!geometry.flipped);
+    }
+
+    #[test]
+    fn item_outside_finite_canvas_space_is_skipped() {
+        let crop = PureRefPixelRect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        // Finite in the file's f64, infinite as a canvas f32.
+        let far = PureRefTransform::translation(1e300, 0.0);
+        let squashed = PureRefTransform {
+            m11: 1e-300,
+            ..PureRefTransform::IDENTITY
+        };
+
+        assert!(ItemGeometry::of(&item(far, crop)).is_none());
+        assert!(ItemGeometry::of(&item(squashed, crop)).is_none());
+        assert!(ItemGeometry::of(&item(PureRefTransform::IDENTITY, crop)).is_some());
     }
 
     #[test]
