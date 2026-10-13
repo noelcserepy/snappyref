@@ -341,21 +341,9 @@ impl SearchController {
         let search_results = service.try_recv_search_all();
 
         let mut refresh_active_query = false;
+        let now = Instant::now();
         for result in index_results {
-            if matches!(
-                result,
-                SearchIndexResult::BackfillIndexed
-                    | SearchIndexResult::BackfillIdle
-                    | SearchIndexResult::BackfillFailed { .. }
-            ) {
-                self.embedding_backfill.in_flight = false;
-            }
-            if matches!(
-                result,
-                SearchIndexResult::BackfillIdle | SearchIndexResult::BackfillFailed { .. }
-            ) {
-                self.embedding_backfill.exhausted = true;
-            }
+            self.note_index_result_for_backfill(&result, now);
             refresh_active_query |= self.process_index_result(result);
         }
 
@@ -484,7 +472,7 @@ impl SearchController {
                 }
                 should_refresh
             }
-            SearchIndexResult::BackfillIdle => false,
+            SearchIndexResult::BackfillIdle { .. } => false,
             SearchIndexResult::BackfillFailed { error } => {
                 let _ = error;
                 false
@@ -1315,6 +1303,156 @@ mod tests {
         );
     }
 
+    /// Whether a backfill step may start once the quiet window after `now` passes.
+    fn backfill_starts_after_quiet(search: &mut SearchController, now: Instant) -> bool {
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+        search.can_start_embedding_backfill(now, idle);
+        search.can_start_embedding_backfill(now + Duration::from_millis(750), idle)
+    }
+
+    fn backfill_failed() -> SearchIndexResult {
+        SearchIndexResult::BackfillFailed {
+            error: "decode failed".to_owned(),
+        }
+    }
+
+    /// Dispatches a backfill step once the quiet window after `now` passes and
+    /// finishes it with `result`. Returns when it finished.
+    fn finish_backfill_step(
+        search: &mut SearchController,
+        result: SearchIndexResult,
+        now: Instant,
+    ) -> Instant {
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+        let finished_at = now + Duration::from_millis(750);
+        search.can_start_embedding_backfill(now, idle);
+        assert_eq!(search.drive_embedding_backfill(finished_at, idle), Ok(true));
+        search.note_index_result_for_backfill(&result, finished_at);
+        finished_at
+    }
+
+    #[test]
+    fn embedding_backfill_moves_past_a_failure_and_wakes_for_the_stored_retry() {
+        let (mut search, _root) =
+            search_controller_with_semantic_service("snappyref-backfill-retry-search-test");
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+
+        // First failure: other Assets and the immediate retry still run.
+        let failed_at = finish_backfill_step(&mut search, backfill_failed(), Instant::now());
+        assert!(backfill_starts_after_quiet(&mut search, failed_at));
+
+        // Second failure of that Asset: storage holds its retry for five minutes.
+        let retry_in = Duration::from_secs(300);
+        let idle_at = finish_backfill_step(
+            &mut search,
+            SearchIndexResult::BackfillIdle {
+                retry_in: Some(retry_in),
+            },
+            failed_at + Duration::from_secs(10),
+        );
+        assert_eq!(
+            search.embedding_backfill_repaint_after(idle_at),
+            Some(retry_in)
+        );
+        assert!(!search.can_start_embedding_backfill(idle_at + Duration::from_secs(299), idle));
+        assert!(backfill_starts_after_quiet(&mut search, idle_at + retry_in));
+
+        // Third failure is terminal in storage, so nothing is left to wait for.
+        let done_at = finish_backfill_step(
+            &mut search,
+            SearchIndexResult::BackfillIdle { retry_in: None },
+            idle_at + retry_in + Duration::from_secs(10),
+        );
+        assert_eq!(search.embedding_backfill_repaint_after(done_at), None);
+        assert!(!backfill_starts_after_quiet(
+            &mut search,
+            done_at + Duration::from_secs(3600)
+        ));
+    }
+
+    #[test]
+    fn embedding_backfill_stops_after_three_failures_in_a_row() {
+        let (mut search, _root) =
+            search_controller_with_semantic_service("snappyref-backfill-broken-search-test");
+        let now = Instant::now();
+
+        // A step that embeds an Asset between failures shows the helper works.
+        for _ in 0..2 {
+            finish_backfill_step(&mut search, backfill_failed(), now);
+        }
+        finish_backfill_step(&mut search, SearchIndexResult::BackfillIndexed, now);
+        for _ in 0..2 {
+            finish_backfill_step(&mut search, backfill_failed(), now);
+        }
+        assert!(backfill_starts_after_quiet(&mut search, now));
+
+        finish_backfill_step(&mut search, backfill_failed(), now);
+        assert!(!backfill_starts_after_quiet(&mut search, now));
+        assert!(search.embedding_backfill_is_idle());
+    }
+
+    /// The whole path: a dispatched step, the worker's answer from storage, and
+    /// `handle_results`.
+    #[test]
+    fn dispatched_backfill_step_reports_the_stored_retry_and_frees_the_scheduler() {
+        let root = TempRoot::new("snappyref-backfill-dispatch-search-test");
+        let library = crate::library::storage::Library::initialize(root.join("library")).unwrap();
+        let path = library
+            .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let asset = library
+            .register_original(&path, "image/png", 1, 1, 4, None)
+            .unwrap();
+        let model = crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
+        let unix_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        // The second failure holds the retry for five minutes.
+        for _ in 0..2 {
+            library
+                .record_retryable_asset_embedding_failure(
+                    asset.id,
+                    model.model_key,
+                    model.dimension,
+                    "temporary failure",
+                    unix_now,
+                )
+                .unwrap();
+        }
+        let mut search = search_controller_for_library(library);
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+        let start = Instant::now();
+
+        search.can_start_embedding_backfill(start, idle);
+        assert_eq!(
+            search.drive_embedding_backfill(start + Duration::from_millis(750), idle),
+            Ok(true)
+        );
+        assert_eq!(search.embedding_backfill_repaint_after(start), None);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let wake_in = loop {
+            search.handle_results();
+            if let Some(wake_in) = search.embedding_backfill_repaint_after(Instant::now()) {
+                break wake_in;
+            }
+            assert!(Instant::now() < deadline, "backfill step never finished");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+
+        assert!(
+            (Duration::from_secs(290)..=Duration::from_secs(300)).contains(&wake_in),
+            "{wake_in:?}"
+        );
+        let now = Instant::now();
+        assert!(!backfill_starts_after_quiet(&mut search, now));
+        assert!(backfill_starts_after_quiet(
+            &mut search,
+            now + Duration::from_secs(301)
+        ));
+    }
+
     #[test]
     fn embedding_backfill_does_not_start_before_semantic_search_service_exists() {
         let mut search = SearchController::default();
@@ -1329,7 +1467,13 @@ mod tests {
     fn search_controller_with_semantic_service(prefix: &str) -> (SearchController, TempRoot) {
         let root = TempRoot::new(prefix);
         let library = crate::library::storage::Library::initialize(root.join("library")).unwrap();
-        let search = SearchController {
+        (search_controller_for_library(library), root)
+    }
+
+    fn search_controller_for_library(
+        library: crate::library::storage::Library,
+    ) -> SearchController {
+        SearchController {
             service: Some(
                 crate::search::semantic::SemanticSearchService::new(
                     library,
@@ -1341,8 +1485,7 @@ mod tests {
                 .unwrap(),
             ),
             ..SearchController::default()
-        };
-        (search, root)
+        }
     }
 
     #[test]

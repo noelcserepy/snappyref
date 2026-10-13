@@ -136,11 +136,12 @@ impl SnappyRefApp {
                 && !self.canvas.has_pending_image_loads()
                 && !self.residency.has_pending_backfills(),
         };
-        if let Err(error) = self.search.drive_embedding_backfill(Instant::now(), idle) {
+        let now = Instant::now();
+        if let Err(error) = self.search.drive_embedding_backfill(now, idle) {
             self.status = error;
         }
-        if self.search.embedding_backfill_may_need_repaint() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(750));
+        if let Some(delay) = self.search.embedding_backfill_repaint_after(now) {
+            ctx.request_repaint_after(delay);
         }
     }
 

@@ -38,6 +38,12 @@ pub struct AssetSearchHit {
     pub similarity: f32,
 }
 
+/// Assets the backfill embeds.
+const EMBEDDABLE_ASSET: &str = "a.archived = 0 AND lower(trim(a.mime_type)) <> 'image/svg+xml'";
+/// Failed embeddings that storage offers again once `next_retry_at` passes.
+const RETRY_PENDING: &str =
+    "e.status = 'failed' AND e.failure_kind = 'retryable' AND e.next_retry_at IS NOT NULL";
+
 fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(std::mem::size_of_val(values));
     for value in values {
@@ -238,6 +244,25 @@ impl Library {
         Ok(())
     }
 
+    /// When the earliest stored retry for `model_key` comes due. A backfill that
+    /// found nothing eligible now waits for it.
+    pub fn next_embedding_retry_at_for_model(
+        &self,
+        model_key: &str,
+    ) -> Result<Option<i64>, String> {
+        self.connection()?
+            .query_row(
+                &format!(
+                    "SELECT MIN(e.next_retry_at) FROM assets a
+                     JOIN asset_embeddings e ON e.asset_id = a.id AND e.model_key = ?1
+                     WHERE {EMBEDDABLE_ASSET} AND {RETRY_PENDING}"
+                ),
+                params![model_key],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("failed to read next embedding retry time: {error}"))
+    }
+
     pub fn next_embedding_backfill_job_for_model(
         &self,
         model_key: &str,
@@ -253,10 +278,9 @@ impl Library {
                 ""
             };
             let eligibility = if retry {
-                "e.status = 'failed' AND e.failure_kind = 'retryable'
-                 AND e.next_retry_at IS NOT NULL AND e.next_retry_at <= ?3"
+                format!("{RETRY_PENDING} AND e.next_retry_at <= ?3")
             } else {
-                "e.asset_id IS NULL"
+                "e.asset_id IS NULL".to_owned()
             };
             let retry_order = if retry { "e.next_retry_at ASC," } else { "" };
             let board_order = if active_board {
@@ -268,8 +292,7 @@ impl Library {
                 "SELECT a.id, a.original_path FROM assets a
                  {board_join}
                  LEFT JOIN asset_embeddings e ON e.asset_id = a.id AND e.model_key = ?1
-                 WHERE a.archived = 0 AND lower(trim(a.mime_type)) <> 'image/svg+xml'
-                   AND {eligibility}
+                 WHERE {EMBEDDABLE_ASSET} AND {eligibility}
                  GROUP BY a.id, a.original_path
                  ORDER BY {retry_order} {board_order} a.id ASC LIMIT 1"
             );

@@ -72,7 +72,12 @@ pub enum IndexResult {
         asset_id: i64,
     },
     BackfillIndexed,
-    BackfillIdle,
+    /// Nothing is eligible now. `retry_in` is how long until the earliest
+    /// stored retry comes due.
+    BackfillIdle {
+        retry_in: Option<Duration>,
+    },
+    /// One step failed. An Asset's failure is stored with its next retry.
     BackfillFailed {
         error: String,
     },
@@ -481,10 +486,10 @@ fn process_index_request(
             }
         }
         IndexRequest::BackfillOne => {
-            let job = match worker_library.next_embedding_backfill_job_for_model(
-                model_spec.model_key,
-                unix_timestamp_seconds(),
-            ) {
+            let now = unix_timestamp_seconds();
+            let job = match worker_library
+                .next_embedding_backfill_job_for_model(model_spec.model_key, now)
+            {
                 Ok(job) => job,
                 Err(error) => {
                     let _ = result_tx.send(IndexResult::BackfillFailed { error });
@@ -493,7 +498,12 @@ fn process_index_request(
             };
 
             let Some(job) = job else {
-                let _ = result_tx.send(IndexResult::BackfillIdle);
+                let retry_in = worker_library
+                    .next_embedding_retry_at_for_model(model_spec.model_key)
+                    .ok()
+                    .flatten()
+                    .map(|retry_at| Duration::from_secs((retry_at - now).max(0) as u64));
+                let _ = result_tx.send(IndexResult::BackfillIdle { retry_in });
                 return;
             };
 
@@ -1177,7 +1187,7 @@ mod tests {
         let mut backfill_idle = false;
         while Instant::now() < deadline {
             for result in service.try_recv_all() {
-                if matches!(result, IndexResult::BackfillIdle) {
+                if matches!(result, IndexResult::BackfillIdle { retry_in: None }) {
                     backfill_idle = true;
                 }
             }
@@ -1358,7 +1368,7 @@ mod tests {
                     IndexResult::ModelReady => {}
                     IndexResult::ImportEmbeddingStarted { .. } => {}
                     IndexResult::BackfillIndexed
-                    | IndexResult::BackfillIdle
+                    | IndexResult::BackfillIdle { .. }
                     | IndexResult::BackfillFailed { .. } => {}
                 }
             }

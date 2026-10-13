@@ -174,6 +174,10 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
             .unwrap()
             .is_some()
     );
+    assert_eq!(
+        library.next_embedding_retry_at_for_model("mobileclip_s0"),
+        Ok(Some(1_000))
+    );
 
     library
         .record_retryable_asset_embedding_failure(
@@ -189,6 +193,10 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
             .next_embedding_backfill_job_for_model("mobileclip_s0", 1_309)
             .unwrap()
             .is_none()
+    );
+    assert_eq!(
+        library.next_embedding_retry_at_for_model("mobileclip_s0"),
+        Ok(Some(1_310))
     );
     assert!(
         library
@@ -211,6 +219,10 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
             .next_embedding_backfill_job_for_model("mobileclip_s0", 2_000)
             .unwrap()
             .is_none()
+    );
+    assert_eq!(
+        library.next_embedding_retry_at_for_model("mobileclip_s0"),
+        Ok(None)
     );
 }
 
