@@ -7,7 +7,10 @@ title="Windows CI is red on main"
 body="Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 Commit: ${GITHUB_SHA}"
 
-open_issue=$(gh issue list --state open --limit 200 --json number,title \
+# The search narrows by title on the server, so the open report is found
+# however many newer issues exist. The filter keeps only the exact title.
+open_issue=$(gh issue list --state open --search "\"${title}\" in:title" \
+  --json number,title \
   --jq "map(select(.title == \"${title}\")) | .[0].number // empty")
 
 if [[ -n "$open_issue" ]]; then
