@@ -298,15 +298,15 @@ impl Library {
             stack_order: vec![],
             viewport: Default::default(),
         };
+        // Fixtures add a Board beside the active one.
+        let active_board_id = self.load_user_session()?.active_board_id;
         self.persist_board_unit(
             &crate::library::storage::BoardDurabilityOperation::Lifecycle(
-                crate::active_board::persistence::BoardLifecyclePersistence::Create {
-                    document,
-                    active_board_id: self.load_user_session()?.active_board_id,
-                },
+                crate::active_board::persistence::BoardLifecyclePersistence::Create { document },
             ),
             &Default::default(),
         )?;
+        self.set_active_board(active_board_id)?;
         Ok(board)
     }
 

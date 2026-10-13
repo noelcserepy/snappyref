@@ -133,7 +133,6 @@ fn install_inner(
     canceled: &AtomicBool,
     on_progress: &mut dyn FnMut(SemanticSearchInstallProgress),
 ) -> Result<(), SemanticSearchInstallError> {
-    validate_descriptor(descriptor)?;
     cleanup_install_paths(data_root, &descriptor.model_key);
     check_canceled(canceled)?;
     let updates_dir = install_paths::updates_dir(data_root);
@@ -187,33 +186,6 @@ fn check_canceled(canceled: &AtomicBool) -> Result<(), SemanticSearchInstallErro
     if canceled.load(Ordering::Relaxed) {
         return Err(SemanticSearchInstallError::Descriptor(
             "Semantic Search install canceled.".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_descriptor(
-    descriptor: &SemanticSearchAssetDescriptor,
-) -> Result<(), SemanticSearchInstallError> {
-    if descriptor.url.trim().is_empty() {
-        return Err(SemanticSearchInstallError::Descriptor(
-            "Semantic Search download URL is not configured.".to_owned(),
-        ));
-    }
-    if descriptor.size == 0 {
-        return Err(SemanticSearchInstallError::Descriptor(
-            "Semantic Search download size is not configured.".to_owned(),
-        ));
-    }
-    if descriptor.sha256.len() != 64 || !descriptor.sha256.chars().all(|ch| ch.is_ascii_hexdigit())
-    {
-        return Err(SemanticSearchInstallError::Descriptor(
-            "Semantic Search download sha256 is not configured.".to_owned(),
-        ));
-    }
-    if descriptor.model_key.trim().is_empty() {
-        return Err(SemanticSearchInstallError::Descriptor(
-            "Semantic Search model key is not configured.".to_owned(),
         ));
     }
     Ok(())
@@ -467,51 +439,6 @@ mod tests {
                 b"vision",
             ),
         ]
-    }
-
-    #[test]
-    fn semantic_search_descriptor_rejects_missing_download_contract() {
-        let mut descriptor = SemanticSearchAssetDescriptor {
-            url: "https://example.invalid/snappyref-semantic-search.zip".to_owned(),
-            sha256: "0".repeat(64),
-            size: 1,
-            model_key: DEFAULT_SEMANTIC_SEARCH_MODEL.model_key.to_owned(),
-        };
-
-        descriptor.url.clear();
-        assert!(
-            validate_descriptor(&descriptor)
-                .unwrap_err()
-                .to_string()
-                .contains("URL is not configured")
-        );
-
-        descriptor.url = "https://example.invalid/snappyref-semantic-search.zip".to_owned();
-        descriptor.size = 0;
-        assert!(
-            validate_descriptor(&descriptor)
-                .unwrap_err()
-                .to_string()
-                .contains("size is not configured")
-        );
-
-        descriptor.size = 1;
-        descriptor.sha256 = "not-a-sha".to_owned();
-        assert!(
-            validate_descriptor(&descriptor)
-                .unwrap_err()
-                .to_string()
-                .contains("sha256 is not configured")
-        );
-
-        descriptor.sha256 = "0".repeat(64);
-        descriptor.model_key.clear();
-        assert!(
-            validate_descriptor(&descriptor)
-                .unwrap_err()
-                .to_string()
-                .contains("model key is not configured")
-        );
     }
 
     #[test]

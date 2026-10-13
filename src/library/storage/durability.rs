@@ -123,10 +123,7 @@ fn persist_lifecycle_change(
 ) -> Result<(), String> {
     use crate::active_board::persistence::BoardLifecyclePersistence;
     match change {
-        BoardLifecyclePersistence::Create {
-            document,
-            active_board_id,
-        } => {
+        BoardLifecyclePersistence::Create { document } => {
             // The restore owns every board column; the insert only makes the row exist.
             transaction
                 .execute(
@@ -136,7 +133,7 @@ fn persist_lifecycle_change(
                 .map_err(|error| {
                     format!("failed to create board {}: {error}", document.board.id)
                 })?;
-            super::boards::restore_board_document_rows(transaction, document, *active_board_id)?;
+            super::boards::restore_board_document_rows(transaction, document, document.board.id)?;
         }
         BoardLifecyclePersistence::Rename { board_id, name } => {
             let trimmed_name = name.trim();

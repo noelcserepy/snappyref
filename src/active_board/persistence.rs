@@ -41,9 +41,9 @@ enum PendingPersistenceOperation {
 
 #[derive(Clone)]
 pub(crate) enum BoardLifecyclePersistence {
+    /// The created Board becomes the active Board.
     Create {
         document: crate::data::BoardDocumentSnapshot,
-        active_board_id: i64,
     },
     Rename {
         board_id: i64,
