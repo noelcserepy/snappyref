@@ -341,21 +341,9 @@ impl SearchController {
         let search_results = service.try_recv_search_all();
 
         let mut refresh_active_query = false;
+        let now = Instant::now();
         for result in index_results {
-            if matches!(
-                result,
-                SearchIndexResult::BackfillIndexed
-                    | SearchIndexResult::BackfillIdle
-                    | SearchIndexResult::BackfillFailed { .. }
-            ) {
-                self.embedding_backfill.in_flight = false;
-            }
-            if matches!(
-                result,
-                SearchIndexResult::BackfillIdle | SearchIndexResult::BackfillFailed { .. }
-            ) {
-                self.embedding_backfill.exhausted = true;
-            }
+            self.note_embedding_backfill_result(&result, now);
             refresh_active_query |= self.process_index_result(result);
         }
 
@@ -484,7 +472,7 @@ impl SearchController {
                 }
                 should_refresh
             }
-            SearchIndexResult::BackfillIdle => false,
+            SearchIndexResult::BackfillIdle { .. } => false,
             SearchIndexResult::BackfillFailed { error } => {
                 let _ = error;
                 false
@@ -1313,6 +1301,82 @@ mod tests {
         assert!(
             search.can_start_embedding_backfill(now, EmbeddingBackfillIdleState { app_idle: true })
         );
+    }
+
+    /// Whether a backfill step may start once the quiet window after `now` passes.
+    fn backfill_starts_after_quiet(search: &mut SearchController, now: Instant) -> bool {
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+        search.can_start_embedding_backfill(now, idle);
+        search.can_start_embedding_backfill(now + Duration::from_millis(750), idle)
+    }
+
+    fn backfill_failed() -> SearchIndexResult {
+        SearchIndexResult::BackfillFailed {
+            error: "decode failed".to_owned(),
+        }
+    }
+
+    #[test]
+    fn embedding_backfill_moves_past_a_failure_and_wakes_for_the_stored_retry() {
+        let (mut search, _root) =
+            search_controller_with_semantic_service("snappyref-backfill-retry-search-test");
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+        let start = Instant::now();
+
+        // First failure: other Assets and the immediate retry still run.
+        search.note_embedding_backfill_result(&backfill_failed(), start);
+        assert!(backfill_starts_after_quiet(&mut search, start));
+
+        // Second failure of that Asset: storage holds its retry for five minutes.
+        let retry_in = Duration::from_secs(300);
+        let idle_at = start + Duration::from_secs(10);
+        search.note_embedding_backfill_result(
+            &SearchIndexResult::BackfillIdle {
+                retry_in: Some(retry_in),
+            },
+            idle_at,
+        );
+        assert_eq!(
+            search.embedding_backfill_repaint_after(idle_at),
+            Some(retry_in)
+        );
+        assert!(!search.can_start_embedding_backfill(idle_at + Duration::from_secs(299), idle));
+        assert!(backfill_starts_after_quiet(&mut search, idle_at + retry_in));
+
+        // Third failure is terminal in storage, so nothing is left to wait for.
+        let done_at = idle_at + retry_in + Duration::from_secs(10);
+        search.note_embedding_backfill_result(
+            &SearchIndexResult::BackfillIdle { retry_in: None },
+            done_at,
+        );
+        assert_eq!(search.embedding_backfill_repaint_after(done_at), None);
+        assert!(!backfill_starts_after_quiet(
+            &mut search,
+            done_at + Duration::from_secs(3600)
+        ));
+    }
+
+    #[test]
+    fn embedding_backfill_stops_after_three_failures_in_a_row() {
+        let (mut search, _root) =
+            search_controller_with_semantic_service("snappyref-backfill-broken-search-test");
+        let now = Instant::now();
+
+        // An embedded Asset between failures shows the helper works.
+        for result in [
+            backfill_failed(),
+            backfill_failed(),
+            SearchIndexResult::BackfillIndexed,
+            backfill_failed(),
+            backfill_failed(),
+        ] {
+            search.note_embedding_backfill_result(&result, now);
+        }
+        assert!(backfill_starts_after_quiet(&mut search, now));
+
+        search.note_embedding_backfill_result(&backfill_failed(), now);
+        assert!(!backfill_starts_after_quiet(&mut search, now));
+        assert!(search.embedding_backfill_is_idle());
     }
 
     #[test]

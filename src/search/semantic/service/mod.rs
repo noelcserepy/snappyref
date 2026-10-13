@@ -72,7 +72,12 @@ pub enum IndexResult {
         asset_id: i64,
     },
     BackfillIndexed,
-    BackfillIdle,
+    /// Nothing is eligible now. `retry_in` is how long until the earliest
+    /// stored retry comes due.
+    BackfillIdle {
+        retry_in: Option<Duration>,
+    },
+    /// One step failed. An Asset's failure is stored with its next retry.
     BackfillFailed {
         error: String,
     },
@@ -481,10 +486,10 @@ fn process_index_request(
             }
         }
         IndexRequest::BackfillOne => {
-            let job = match worker_library.next_embedding_backfill_job_for_model(
-                model_spec.model_key,
-                unix_timestamp_seconds(),
-            ) {
+            let now = unix_timestamp_seconds();
+            let job = match worker_library
+                .next_embedding_backfill_job_for_model(model_spec.model_key, now)
+            {
                 Ok(job) => job,
                 Err(error) => {
                     let _ = result_tx.send(IndexResult::BackfillFailed { error });
@@ -493,7 +498,12 @@ fn process_index_request(
             };
 
             let Some(job) = job else {
-                let _ = result_tx.send(IndexResult::BackfillIdle);
+                let retry_in = worker_library
+                    .next_embedding_retry_at_for_model(model_spec.model_key)
+                    .ok()
+                    .flatten()
+                    .map(|retry_at| Duration::from_secs((retry_at - now).max(0) as u64));
+                let _ = result_tx.send(IndexResult::BackfillIdle { retry_in });
                 return;
             };
 
@@ -1177,7 +1187,7 @@ mod tests {
         let mut backfill_idle = false;
         while Instant::now() < deadline {
             for result in service.try_recv_all() {
-                if matches!(result, IndexResult::BackfillIdle) {
+                if matches!(result, IndexResult::BackfillIdle { retry_in: None }) {
                     backfill_idle = true;
                 }
             }
@@ -1189,6 +1199,61 @@ mod tests {
 
         assert!(backfill_idle, "timed out waiting for empty backfill");
         assert!(!service.is_ready());
+    }
+
+    #[test]
+    fn idle_backfill_reports_when_the_stored_retry_comes_due() {
+        let root = TempRoot::new("snappyref-backfill-retry-due-service-test");
+        let library = Library::initialize(root.join("library")).unwrap();
+        let path = library
+            .store_rgba_image("retry", &[255, 0, 0, 255], 1, 1)
+            .unwrap();
+        let asset = library
+            .register_original(&path, "image/png", 1, 1, 4, None)
+            .unwrap();
+        let model = test_model_spec();
+        // The second failure holds the retry for five minutes.
+        for _ in 0..2 {
+            library
+                .record_retryable_asset_embedding_failure(
+                    asset.id,
+                    model.model_key,
+                    model.dimension,
+                    "temporary failure",
+                    super::unix_timestamp_seconds(),
+                )
+                .unwrap();
+        }
+        let service = SemanticSearchService::new(
+            library,
+            SemanticSearchConfig {
+                model,
+                canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+            },
+        )
+        .unwrap();
+
+        service.enqueue_idle_backfill_step().unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let retry_in = loop {
+            let idle = service.try_recv_all().into_iter().find_map(|result| {
+                if let IndexResult::BackfillIdle { retry_in } = result {
+                    Some(retry_in)
+                } else {
+                    None
+                }
+            });
+            if let Some(retry_in) = idle {
+                break retry_in.unwrap();
+            }
+            assert!(Instant::now() < deadline, "timed out waiting for backfill");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(
+            (Duration::from_secs(295)..=Duration::from_secs(300)).contains(&retry_in),
+            "{retry_in:?}"
+        );
     }
 
     #[test]
@@ -1358,7 +1423,7 @@ mod tests {
                     IndexResult::ModelReady => {}
                     IndexResult::ImportEmbeddingStarted { .. } => {}
                     IndexResult::BackfillIndexed
-                    | IndexResult::BackfillIdle
+                    | IndexResult::BackfillIdle { .. }
                     | IndexResult::BackfillFailed { .. } => {}
                 }
             }
