@@ -11,7 +11,7 @@ on:
       notes_url:
         description: Release notes URL included in the signed update manifest
         required: true
-        default: https://github.com/noelcserepy/snappyref-dist/releases
+        default: https://github.com/noelcserepy/snappyref/releases
         type: string
       ref:
         description: Git ref to build
@@ -28,13 +28,8 @@ on:
         required: false
         default: true
         type: boolean
-      create_draft_release:
-        description: Attach final zips to the source-repo draft GitHub Release
-        required: false
-        default: true
-        type: boolean
-      publish_to_dist:
-        description: Create draft release on snappyref-dist with signed latest.json
+      publish_update:
+        description: Sign latest.json and draft the snappyref-dist bridge. Off for a dry run that only attaches zips
         required: false
         default: true
         type: boolean
@@ -173,11 +168,15 @@ jobs:
           token: ${{ github.token }}
 
       - name: Write signing private key
-        if: ${{ inputs.publish_to_dist }}
+        if: ${{ inputs.publish_update }}
         env:
           MANIFEST_SIGNING_KEY: ${{ secrets.MANIFEST_SIGNING_KEY }}
         run: |
           set -euo pipefail
+          if [[ "${{ inputs.include_macos }}" != "true" || "${{ inputs.include_windows }}" != "true" ]]; then
+            echo "publish_update needs both platforms; latest.json lists one zip per platform" >&2
+            exit 1
+          fi
           if [[ -z "${MANIFEST_SIGNING_KEY:-}" ]]; then
             echo "MANIFEST_SIGNING_KEY secret is not configured" >&2
             exit 1
@@ -188,16 +187,14 @@ jobs:
           chmod 600 "${RUNNER_TEMP}/signing/private.pem"
 
       - name: Build and sign latest.json
-        if: ${{ inputs.publish_to_dist && inputs.include_macos && inputs.include_windows }}
-        env:
-          GH_TOKEN: ${{ secrets.DIST_REPO_TOKEN }}
+        if: ${{ inputs.publish_update }}
         run: |
           set -euo pipefail
           tag="${{ needs.resolve.outputs.tag }}"
           version="${{ steps.package.outputs.version }}"
           released_at="${{ steps.package.outputs.released_at }}"
 
-          base_url="https://github.com/${DIST_REPO}/releases/download/${tag}"
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
           macos_url="${base_url}/snappyref-mac-${tag}.zip"
           windows_url="${base_url}/snappyref-windows-${tag}.zip"
 
@@ -214,12 +211,11 @@ jobs:
             --output "${RUNNER_TEMP}/release-assets/latest.json"
 
       - name: Clean up signing key material
-        if: ${{ always() && inputs.publish_to_dist }}
+        if: ${{ always() }}
         run: |
           rm -rf "${RUNNER_TEMP}/signing"
 
       - name: Create source-repo draft release
-        if: ${{ inputs.create_draft_release }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -234,11 +230,20 @@ jobs:
           elif [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" = true ]; then
             # An earlier run's draft keeps that run's target until publishing creates the tag.
             gh release edit "$tag" --target "${{ needs.resolve.outputs.sha }}"
+          else
+            # Installed apps download these zips and check them against the
+            # published latest.json, so a published release is never rewritten.
+            echo "$tag is already published. Bump the version for a new release." >&2
+            exit 1
           fi
-          gh release upload "$tag" "${RUNNER_TEMP}"/release-assets/*.zip --clobber
+          shopt -s nullglob
+          gh release upload "$tag" "${RUNNER_TEMP}"/release-assets/*.zip "${RUNNER_TEMP}"/release-assets/latest.json --clobber
 
-      - name: Publish to snappyref-dist
-        if: ${{ inputs.publish_to_dist && inputs.include_macos && inputs.include_windows }}
+      # Apps from v0.3.0 and older read latest.json from snappyref-dist. This
+      # copy's zip URLs point at this repo, so they update here once and then
+      # read this repo's manifest.
+      - name: Draft snappyref-dist bridge manifest
+        if: ${{ inputs.publish_update }}
         env:
           GH_TOKEN: ${{ secrets.DIST_REPO_TOKEN }}
         run: |
@@ -254,22 +259,17 @@ jobs:
             gh release create "$tag" \
               --repo "$DIST_REPO" \
               --title "SnappyRef $tag" \
-              --notes "SnappyRef $tag. See https://github.com/noelcserepy/snappyref-dist for details." \
+              --notes "SnappyRef releases moved to https://github.com/noelcserepy/snappyref/releases." \
               --draft
           fi
 
-          # Both app zips and the signed manifest are required for an
-          # auto-update-eligible release. Semantic Search assets live on the
-          # dedicated semantic-search release.
           gh release upload "$tag" \
             --repo "$DIST_REPO" \
-            "${RUNNER_TEMP}/release-assets/snappyref-mac-${tag}.zip" \
-            "${RUNNER_TEMP}/release-assets/snappyref-windows-${tag}.zip" \
             "${RUNNER_TEMP}/release-assets/latest.json" \
             --clobber
 
       - name: Refresh SnappyRef web release data
-        if: ${{ inputs.publish_to_dist && inputs.include_macos && inputs.include_windows }}
+        if: ${{ inputs.publish_update }}
         env:
           SNAPPYREF_WEB_RELEASE_REFRESH_URL: ${{ secrets.SNAPPYREF_WEB_RELEASE_REFRESH_URL }}
           SNAPPYREF_WEB_RELEASE_REFRESH_SECRET: ${{ secrets.SNAPPYREF_WEB_RELEASE_REFRESH_SECRET }}
