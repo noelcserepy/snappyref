@@ -202,13 +202,6 @@ impl SearchController {
         std::mem::take(&mut self.perf_events)
     }
 
-    pub(crate) fn unload_model_for_perf(&mut self) -> bool {
-        let Some(service) = &self.service else {
-            return false;
-        };
-        service.unload_model()
-    }
-
     /// Drop the semantic-search service so its worker thread closes the
     /// channel to the embedding helper child process. The child's
     /// `EmbeddingHelperClient::drop` impl kills the child as the worker

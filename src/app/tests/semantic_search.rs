@@ -9,8 +9,6 @@ fn embedding_phase_markers_report_summary_durations() {
         first_embedding_started_ms: Some(450.0),
         first_embedding_done_ms: Some(475.0),
         all_embeddings_done_ms: Some(825.0),
-        semantic_model_unload_requested_ms: Some(900.0),
-        semantic_model_unloaded_ms: Some(940.0),
         model_load_timing: Some(ModelLoadTimingSummary {
             assets_resolved_ms: 5.0,
             tokenizer_loaded_ms: 0.0,
@@ -31,7 +29,6 @@ fn embedding_phase_markers_report_summary_durations() {
     assert_eq!(summary.first_embedding_after_model_ready_ms, Some(50.0));
     assert_eq!(summary.first_embedding_run_ms, Some(25.0));
     assert_eq!(summary.total_import_embedding_drain_ms, Some(725.0));
-    assert_eq!(summary.model_unload_ms, Some(40.0));
     assert_eq!(
         summary.model_load_timing.unwrap().vision_session_loaded_ms,
         290.0

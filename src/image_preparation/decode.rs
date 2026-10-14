@@ -11,9 +11,6 @@ use crate::library::storage::Library;
 
 use super::{CanvasImageSettings, canvas_source_image_from_rgba};
 
-#[cfg(not(test))]
-const IMAGEPREP_HELPER_DISABLED_ENV: &str = "SNAPPYREF_DISABLE_IMAGEPREP_HELPER";
-
 #[derive(Clone, Debug)]
 pub(super) struct PreparedImage {
     pub(super) rgba: Vec<u8>,
@@ -51,10 +48,6 @@ pub(super) fn prepare_image_with_helper(
 
     #[cfg(not(test))]
     {
-        if std::env::var_os(IMAGEPREP_HELPER_DISABLED_ENV).is_some() {
-            return Ok(None);
-        }
-
         let rgba_path = unique_imageprep_rgba_path();
         let output =
             Command::new(std::env::current_exe().map_err(|error| {

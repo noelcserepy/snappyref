@@ -130,6 +130,7 @@ pub struct SemanticSearchService {
     #[cfg(test)]
     library: Library,
     model_state: Arc<Mutex<ModelState>>,
+    #[cfg(test)]
     text_embedding_cache: Arc<Mutex<HashMap<String, Vec<f32>>>>,
     asset_index: AssetIndex,
     index_tx: mpsc::Sender<IndexRequest>,
@@ -232,6 +233,7 @@ impl SemanticSearchService {
             #[cfg(test)]
             library,
             model_state,
+            #[cfg(test)]
             text_embedding_cache,
             asset_index,
             index_tx,
@@ -355,23 +357,6 @@ impl SemanticSearchService {
             .unwrap_or(false)
     }
 
-    pub fn unload_model(&self) -> bool {
-        let mut unloaded = false;
-        if let Ok(mut state) = self.model_state.lock()
-            && matches!(&*state, ModelState::Ready(_))
-        {
-            *state = ModelState::Uninitialized;
-            unloaded = true;
-        }
-        if unloaded {
-            if let Ok(mut cache) = self.text_embedding_cache.lock() {
-                cache.clear();
-            }
-            release_allocator_pressure();
-        }
-        unloaded
-    }
-
     pub fn search_embedding_cache_warming(&self) -> bool {
         self.asset_index.is_warming()
     }
@@ -380,27 +365,6 @@ impl SemanticSearchService {
         self.asset_index.invalidate();
     }
 }
-
-#[cfg(target_os = "macos")]
-fn release_allocator_pressure() {
-    unsafe extern "C" {
-        fn malloc_default_zone() -> *mut std::ffi::c_void;
-        fn malloc_zone_pressure_relief(
-            zone: *mut std::ffi::c_void,
-            goal: usize,
-        ) -> std::ffi::c_ulong;
-    }
-
-    unsafe {
-        let zone = malloc_default_zone();
-        if !zone.is_null() {
-            let _ = malloc_zone_pressure_relief(zone, 0);
-        }
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn release_allocator_pressure() {}
 
 fn search_with_image_pivot_with_limit_for(
     library: &Library,
