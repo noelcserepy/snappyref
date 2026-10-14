@@ -1388,6 +1388,29 @@ mod tests {
         assert!(search.embedding_backfill_is_idle());
     }
 
+    #[test]
+    fn cached_import_does_not_reset_backfill_failure_streak() {
+        let (mut search, _root) =
+            search_controller_with_semantic_service("snappyref-cached-import-backfill-test");
+        let mut now = Instant::now();
+        for _ in 0..2 {
+            now = finish_backfill_step(&mut search, backfill_failed(), now);
+        }
+
+        let cached_import = SearchIndexResult::Indexed { asset_id: 42 };
+        search.note_index_result_for_backfill(&cached_import, now);
+        search.process_index_result(cached_import);
+        assert!(backfill_starts_after_quiet(&mut search, now));
+        now = finish_backfill_step(&mut search, backfill_failed(), now);
+
+        assert_eq!(search.embedding_backfill_repaint_after(now), None);
+        assert!(!backfill_starts_after_quiet(
+            &mut search,
+            now + Duration::from_secs(3600)
+        ));
+        assert!(search.embedding_backfill_is_idle());
+    }
+
     /// The whole path: a dispatched step, the worker's answer from storage, and
     /// `handle_results`.
     #[test]
@@ -1515,7 +1538,7 @@ mod tests {
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)),
             super::SearchPlacementCreationConfig {
                 placement_target_area: 10_000.0,
-                placement_gap: crate::ui::theme::SPACE_2,
+                placement_gap: 10.0,
                 visible_canvas_rect: egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(1200.0, 800.0),
@@ -1528,19 +1551,21 @@ mod tests {
             .into_iter()
             .map(|placement| {
                 (
-                    placement.state.geometry.center.x,
-                    placement.state.geometry.center.y,
+                    placement.state.geometry.center,
+                    placement.scaled_display_size(),
                 )
             })
             .collect::<Vec<_>>();
-        let mut rows = layout
-            .iter()
-            .map(|(_, y)| y.round() as i32)
-            .collect::<Vec<_>>();
-        rows.sort_unstable();
-        rows.dedup();
-        assert_eq!(layout.len(), 5);
-        assert!(rows.len() > 1);
+        assert_eq!(
+            layout,
+            vec![
+                (egui::pos2(345.0, 190.0), egui::vec2(100.0, 100.0)),
+                (egui::pos2(455.0, 190.0), egui::vec2(100.0, 100.0)),
+                (egui::pos2(345.0, 300.0), egui::vec2(100.0, 100.0)),
+                (egui::pos2(455.0, 300.0), egui::vec2(100.0, 100.0)),
+                (egui::pos2(345.0, 410.0), egui::vec2(100.0, 100.0)),
+            ]
+        );
     }
 
     #[test]
@@ -1664,8 +1689,8 @@ mod tests {
             None,
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)),
             super::SearchPlacementCreationConfig {
-                placement_target_area: 10_000.0,
-                placement_gap: crate::ui::theme::SPACE_2,
+                placement_target_area: 5_000.0,
+                placement_gap: 10.0,
                 visible_canvas_rect: egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(1200.0, 800.0),
@@ -1673,13 +1698,25 @@ mod tests {
             },
         );
 
-        let bounds = canvas
-            .selected_bounds_world()
-            .expect("expected provisional search placement bounds");
-        assert_eq!(canvas.provisional_placements_in_selection_order().len(), 5);
-        assert!(
-            bounds.width() < 360.0 && bounds.height() < 420.0,
-            "expected compact search provisional batch, got bounds {bounds:?}"
+        let layout = canvas
+            .provisional_placements_in_selection_order()
+            .into_iter()
+            .map(|placement| {
+                (
+                    placement.state.geometry.center,
+                    placement.scaled_display_size(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            layout,
+            vec![
+                (egui::pos2(345.0, 240.0), egui::vec2(100.0, 50.0)),
+                (egui::pos2(455.0, 240.0), egui::vec2(100.0, 50.0)),
+                (egui::pos2(345.0, 300.0), egui::vec2(100.0, 50.0)),
+                (egui::pos2(455.0, 300.0), egui::vec2(100.0, 50.0)),
+                (egui::pos2(345.0, 360.0), egui::vec2(100.0, 50.0)),
+            ]
         );
     }
 

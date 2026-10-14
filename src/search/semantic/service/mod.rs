@@ -1215,22 +1215,22 @@ mod tests {
 
         service.enqueue_idle_backfill_step().unwrap();
 
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let mut backfill_idle = false;
-        while Instant::now() < deadline {
-            for result in service.try_recv_all() {
-                if matches!(result, IndexResult::BackfillIdle { retry_in: None }) {
-                    backfill_idle = true;
-                }
-            }
-            if backfill_idle {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
-        assert!(backfill_idle, "timed out waiting for empty backfill");
-        assert!(!service.is_ready());
+        let result = service
+            .result_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        assert!(matches!(
+            result,
+            IndexResult::BackfillIdle { retry_in: None }
+        ));
+        assert!(matches!(
+            *service.model_state.lock().unwrap(),
+            super::ModelState::Uninitialized
+        ));
+        assert_eq!(
+            service.result_rx.try_recv().err(),
+            Some(std::sync::mpsc::TryRecvError::Empty)
+        );
     }
 
     #[test]

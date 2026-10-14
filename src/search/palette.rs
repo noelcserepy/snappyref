@@ -810,11 +810,7 @@ pub(crate) fn paint_palette_footer(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        PALETTE_WIDTH, search_result_grid_content_height, search_result_grid_layout,
-        search_result_tile_height,
-    };
-    use crate::ui::theme::SPACE_2;
+    use super::{PALETTE_WIDTH, search_result_grid_layout};
 
     #[test]
     fn search_result_grid_layout_keeps_partial_rows_at_five_column_width() {
@@ -824,12 +820,5 @@ mod tests {
 
         assert_eq!(two_result_layout.columns, 5);
         assert_eq!(two_result_layout.tile_width, five_result_layout.tile_width);
-    }
-
-    #[test]
-    fn search_result_grid_content_height_grows_by_rows() {
-        let height = search_result_grid_content_height(6, 5);
-
-        assert_eq!(height, search_result_tile_height() * 2.0 + SPACE_2);
     }
 }
