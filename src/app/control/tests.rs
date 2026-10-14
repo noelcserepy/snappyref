@@ -59,6 +59,33 @@ fn reply(client: JoinHandle<Option<Value>>) -> Value {
     client.join().unwrap().unwrap()
 }
 
+fn search_request(waiting: &Waiting) -> u64 {
+    match waiting.on {
+        WaitingOn::Search { request_id, .. } => request_id,
+        _ => unreachable!(),
+    }
+}
+
+fn take_search_result(app: &mut SnappyRefApp, request: u64) -> SearchQueryResult {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        app.search.handle_results();
+        if let Some(result) = app.search.take_direct_search_result(request) {
+            return result;
+        }
+        assert!(Instant::now() < deadline, "search result did not arrive");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+fn assert_unindexed_result(result: SearchQueryResult, expected_request: u64) {
+    let SearchQueryResult::Failed { request_id, error } = result else {
+        panic!("unindexed pivot must fail")
+    };
+    assert_eq!(request_id, expected_request);
+    assert_eq!(error, "Source image not indexed yet");
+}
+
 #[test]
 fn search_calls_complete_fail_retry_model_pending_and_expire() {
     let root = TempRoot::new("snappyref-control-search-results");
@@ -74,18 +101,24 @@ fn search_calls_complete_fail_retry_model_pending_and_expire() {
     let asset = library
         .register_original(&path, "image/png", 1, 1, 4, None)
         .unwrap();
-    let (mut waiting, client) = pending(
-        &mut app,
-        &ctx,
-        &root,
-        "search_library",
-        json!({"query":"blue","limit":1}),
-    );
+    let path = library
+        .store_rgba_image("green", &[0, 255, 0, 255], 1, 1)
+        .unwrap();
+    let pivot = library
+        .register_original(&path, "image/png", 1, 1, 4, None)
+        .unwrap()
+        .id;
+    // An unindexed image pivot never loads a real model. Controlled service
+    // results below exercise the app's continuation, independently of ranking.
+    let args = json!({"similar_to":pivot,"limit":1});
+    let (mut waiting, client) = pending(&mut app, &ctx, &root, "search_library", args.clone());
+    let request = search_request(&waiting);
+    app.search.forget_direct_search(request); // The service delivery consumes its entry.
     let result = app
         .poll_control_search(
             &mut waiting,
             Some(SearchQueryResult::Completed {
-                request_id: 1,
+                request_id: request,
                 results: vec![crate::search::semantic::SearchResultAssetEntry {
                     asset_id: asset.id,
                     asset_preview_path: None,
@@ -104,18 +137,14 @@ fn search_calls_complete_fail_retry_model_pending_and_expire() {
         value,
         json!({"assets":[{"asset":asset.id,"width":1,"height":1,"file":asset.filename}]})
     );
-    let (mut waiting, client) = pending(
-        &mut app,
-        &ctx,
-        &root,
-        "search_library",
-        json!({"query":"blue"}),
-    );
+    let (mut waiting, client) = pending(&mut app, &ctx, &root, "search_library", args.clone());
+    let request = search_request(&waiting);
+    app.search.forget_direct_search(request);
     let result = app
         .poll_control_search(
             &mut waiting,
             Some(SearchQueryResult::Failed {
-                request_id: 2,
+                request_id: request,
                 error: "fixture search failed".to_owned(),
             }),
             false,
@@ -126,17 +155,9 @@ fn search_calls_complete_fail_retry_model_pending_and_expire() {
         reply(client),
         json!({"content":[{"type":"text","text":"fixture search failed"}],"isError":true})
     );
-    let (mut waiting, client) = pending(
-        &mut app,
-        &ctx,
-        &root,
-        "search_library",
-        json!({"query":"blue"}),
-    );
-    let previous = match waiting.on {
-        WaitingOn::Search { request_id, .. } => request_id,
-        _ => unreachable!(),
-    };
+    let (mut waiting, client) = pending(&mut app, &ctx, &root, "search_library", args);
+    let previous = search_request(&waiting);
+    app.search.forget_direct_search(previous);
     assert!(
         app.poll_control_search(
             &mut waiting,
@@ -147,12 +168,21 @@ fn search_calls_complete_fail_retry_model_pending_and_expire() {
         )
         .is_none()
     );
-    let next = match waiting.on {
-        WaitingOn::Search { request_id, .. } => request_id,
-        _ => unreachable!(),
-    };
-    assert_eq!(next, previous + 1);
+    let renewed = search_request(&waiting);
+    let result = take_search_result(&mut app, renewed);
+    assert_unindexed_result(result, renewed);
     assert!(!client.is_finished());
+    assert!(
+        app.poll_control_search(
+            &mut waiting,
+            Some(SearchQueryResult::ModelPending {
+                request_id: renewed
+            }),
+            false
+        )
+        .is_none()
+    );
+    let expired = search_request(&waiting);
     app.control.waiting.push(waiting);
     app.drive_control_at(&ctx, Instant::now() + Duration::from_secs(31));
     assert_eq!(
@@ -160,6 +190,18 @@ fn search_calls_complete_fail_retry_model_pending_and_expire() {
         json!({"content":[{"type":"text","text":"The search model is still loading. Try again in a moment."}],"isError":true})
     );
     assert!(app.control.waiting.is_empty());
+    // The search worker answers in request order. Receiving this later request
+    // proves the expired result has arrived before checking that it was forgotten.
+    let barrier = app
+        .search
+        .start_direct_search(None, Some(pivot), 1)
+        .unwrap();
+    let result = take_search_result(&mut app, barrier);
+    assert_unindexed_result(result, barrier);
+    assert!(
+        app.search.take_direct_search_result(expired).is_none(),
+        "expired search is still tracked after its late result arrived"
+    );
 }
 
 #[test]
@@ -231,13 +273,18 @@ fn screenshot_events_answer_matching_calls_out_of_order_with_decodable_pngs() {
     let root = TempRoot::new("snappyref-control-screenshot-order");
     let (mut app, ctx) = app(&root);
     let (first, one) = pending(&mut app, &ctx, &root, "screenshot", json!({}));
+    let first_data = screenshot_command_data(&ctx);
     let (second, two) = pending(&mut app, &ctx, &root, "screenshot", json!({}));
+    let second_data = screenshot_command_data(&ctx);
     app.control.waiting.extend([first, second]);
-    for (id, size, client) in [(2, [2000, 1000], two), (1, [80, 40], one)] {
+    for (user_data, size, expected, client) in [
+        (second_data, [2000, 1000], (1568, 784), two),
+        (first_data, [80, 40], (80, 40), one),
+    ] {
         let mut input = egui::RawInput {
             events: vec![egui::Event::Screenshot {
                 viewport_id: egui::ViewportId::ROOT,
-                user_data: egui::UserData::new(id as u64),
+                user_data,
                 image: std::sync::Arc::new(egui::ColorImage::filled(size, egui::Color32::BLUE)),
             }],
             ..Default::default()
@@ -250,7 +297,6 @@ fn screenshot_events_answer_matching_calls_out_of_order_with_decodable_pngs() {
             .decode(result["content"][1]["data"].as_str().unwrap())
             .unwrap();
         let image = image::load_from_memory(&bytes).unwrap();
-        let expected = if id == 2 { (1568, 784) } else { (80, 40) };
         assert_eq!((image.width(), image.height()), expected);
         let dimensions: Value =
             serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
@@ -258,4 +304,16 @@ fn screenshot_events_answer_matching_calls_out_of_order_with_decodable_pngs() {
         assert_eq!(image.to_rgba8().get_pixel(0, 0).0, [0, 0, 255, 255]);
     }
     assert!(app.control.waiting.is_empty());
+}
+
+fn screenshot_command_data(ctx: &egui::Context) -> egui::UserData {
+    let output = crate::ui::test_frame::run_ui(ctx, Default::default(), |_| {});
+    output.viewport_output[&egui::ViewportId::ROOT]
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            egui::ViewportCommand::Screenshot(data) => Some(data.clone()),
+            _ => None,
+        })
+        .expect("screenshot command was emitted")
 }
