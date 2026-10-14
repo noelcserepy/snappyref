@@ -2856,6 +2856,18 @@ fn inspect_search_keyboard_placement_writes_artifact() {
             == vec![Some(entries[1].asset_id), Some(entries[2].asset_id)],
     );
     scenario.capture_screen("screen-002-enter-provisional", &mut harness);
+    harness.hover_at(egui::pos2(820.0, 520.0));
+    harness.step();
+    harness.step();
+    scenario.assertion(
+        "Enter preview follows the moved cursor before a click",
+        harness
+            .state()
+            .canvas
+            .selected_bounds_world()
+            .is_some_and(|b| b.center().distance(egui::pos2(220.0, 120.0)) < 0.1),
+    );
+    scenario.capture_screen("screen-002-enter-following-cursor", &mut harness);
     harness.key_press(egui::Key::Escape);
     harness.step();
     harness.state_mut().flush_persistence();
@@ -2886,6 +2898,17 @@ fn inspect_search_keyboard_placement_writes_artifact() {
     harness.step();
     harness.key_press(egui::Key::Enter);
     harness.step();
+    harness.hover_at(egui::pos2(860.0, 560.0));
+    harness.step();
+    harness.step();
+    scenario.assertion(
+        "selected keyboard preview follows the cursor before commit",
+        harness
+            .state()
+            .canvas
+            .selected_bounds_world()
+            .is_some_and(|b| b.center().distance(egui::pos2(260.0, 160.0)) < 0.1),
+    );
     inspect_click_at(&harness, egui::pos2(900.0, 600.0), egui::Modifiers::NONE);
     harness.step();
     harness.state_mut().flush_persistence();
@@ -2941,6 +2964,18 @@ fn inspect_search_keyboard_placement_writes_artifact() {
             .collect::<Vec<_>>()
             == entries.iter().map(|e| Some(e.asset_id)).collect::<Vec<_>>(),
     );
+    harness.hover_at(egui::pos2(780.0, 500.0));
+    harness.step();
+    harness.step();
+    scenario.assertion(
+        "Mod-Enter preview follows the moved cursor before a click",
+        harness
+            .state()
+            .canvas
+            .selected_bounds_world()
+            .is_some_and(|b| b.center().distance(egui::pos2(180.0, 100.0)) < 0.1),
+    );
+    scenario.capture_screen("screen-005-all-results-following-cursor", &mut harness);
     harness.key_press(egui::Key::Escape);
     harness.step();
     harness.key_press_modifiers(

@@ -1827,6 +1827,39 @@ fn inspect_library_dedupe_shortcut_writes_artifact() {
         (120, 80),
         egui::pos2(180.0, 0.0),
     );
+    let geometries = [
+        crate::data::RectGeometry::new(
+            egui::pos2(-180.0, 0.0),
+            egui::vec2(140.0, 90.0),
+            1.25,
+            0.2,
+            2,
+        ),
+        crate::data::RectGeometry::new(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(160.0, 70.0),
+            0.75,
+            -0.35,
+            5,
+        ),
+        crate::data::RectGeometry::new(
+            egui::pos2(180.0, 0.0),
+            egui::vec2(90.0, 130.0),
+            1.6,
+            0.5,
+            8,
+        ),
+    ];
+    let ids = [first.id(), duplicate.id(), distinct.id()];
+    for (id, geometry) in ids.into_iter().zip(geometries) {
+        harness
+            .state_mut()
+            .canvas
+            .set_rect_item_geometry(id, geometry);
+    }
+    harness.state_mut().persist_canvas_changes();
+    harness.state_mut().flush_persistence();
+    harness.step();
     let ctx = harness.ctx.clone();
     harness.state_mut().import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
         library.clone(),
@@ -1865,17 +1898,41 @@ fn inspect_library_dedupe_shortcut_writes_artifact() {
         .unwrap()
         .load_placements()
         .unwrap();
+    let durable = stored
+        .iter()
+        .map(|p| {
+            (
+                p.id(),
+                p.asset_id(),
+                p.state.geometry.center.x,
+                p.state.geometry.center.y,
+                p.state.geometry.size.x,
+                p.state.geometry.size.y,
+                p.state.geometry.scale,
+                p.state.geometry.rotation,
+                p.state.geometry.z_index,
+            )
+        })
+        .collect::<Vec<_>>();
+    scenario.fact("dedupe.durable-placements", serde_json::json!(durable));
     scenario.assertion(
-        "dedupe preserves all placement identities and literal geometry on disk",
+        "dedupe preserves complete non-default geometry and placement identities on disk",
         stored.iter().all(Placement::is_loaded)
-            && stored
-                .iter()
-                .map(|p| (p.id(), p.asset_id(), p.state.geometry.center))
-                .collect::<Vec<_>>()
+            && durable
                 == vec![
-                    (first.id(), Some(1), egui::pos2(-180.0, 0.0)),
-                    (duplicate.id(), Some(1), egui::pos2(0.0, 0.0)),
-                    (distinct.id(), Some(3), egui::pos2(180.0, 0.0)),
+                    (first.id(), Some(1), -180.0, 0.0, 140.0, 90.0, 1.25, 0.2, 2),
+                    (
+                        duplicate.id(),
+                        Some(1),
+                        0.0,
+                        0.0,
+                        160.0,
+                        70.0,
+                        0.75,
+                        -0.35,
+                        5,
+                    ),
+                    (distinct.id(), Some(3), 180.0, 0.0, 90.0, 130.0, 1.6, 0.5, 8),
                 ],
     );
     scenario.assertion(
