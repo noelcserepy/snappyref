@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Local lint before the push: formatting and clippy. CI is switched off, so run
-# `cargo test --locked` yourself. Bypass with `git push --no-verify` if you mean it.
+# Local checks before the push. Commands are owned by AGENTS.md.
+# Bypass with `git push --no-verify` if you mean it.
 #
 # Setup: README.md#development-checks
 
@@ -20,5 +20,11 @@ cargo fmt --check
 
 echo "[pre-push] cargo clippy --locked --all-targets -- -D warnings"
 cargo clippy --locked --all-targets -- -D warnings
+
+echo "[pre-push] cargo test --locked"
+cargo test --locked
+
+echo "[pre-push] Python script tests"
+python3 -m unittest discover -s scripts -p 'test_*.py'
 
 echo "[pre-push] ok"
