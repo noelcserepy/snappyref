@@ -18,6 +18,9 @@ impl BoardEditing {
         board_id: i64,
         label: &str,
     ) -> Result<bool, String> {
+        // Explicit submission, including board transitions and shutdown, ends
+        // a typing session before accepting its text as one Undo step.
+        canvas.finish_textbox_edit();
         self.record_pending_changes(canvas, library, board_id, label, false)
     }
 
@@ -68,8 +71,8 @@ impl BoardEditing {
         self.queue_canvas_document(canvas, board_id)
     }
 
-    /// Gesture deletions record their own history, so only direct edits ask
-    /// for `deletions` here.
+    /// Placement deletions record their own history, so only direct edits
+    /// ask for `deletions` here.
     fn pending_changes_action(
         &mut self,
         canvas: &mut crate::canvas::CanvasState,
@@ -141,20 +144,22 @@ impl BoardEditing {
                         }
                     }),
             );
-            annotation_changes.extend(
-                current_annotations
-                    .iter()
-                    .filter(|annotation| changes.archived_annotation_ids.contains(&annotation.id))
-                    .map(|annotation| {
-                        let mut archived = annotation.clone();
-                        archived.archived = true;
-                        HistoryChange {
-                            before: Some(annotation.clone()),
-                            after: Some(archived),
-                        }
-                    }),
-            );
         }
+        // Empty-label commits remove an annotation without a separate Delete
+        // action. Explicit Delete already submits and consumes its changes.
+        annotation_changes.extend(
+            current_annotations
+                .iter()
+                .filter(|annotation| changes.archived_annotation_ids.contains(&annotation.id))
+                .map(|annotation| {
+                    let mut archived = annotation.clone();
+                    archived.archived = true;
+                    HistoryChange {
+                        before: Some(annotation.clone()),
+                        after: Some(archived),
+                    }
+                }),
+        );
         let stack_order = changes.stack_order.map(|after| HistoryChange {
             before: current_stack_order,
             after: Some(after),

@@ -228,7 +228,19 @@ pub(crate) fn show_textbox_editor(ui: &egui::Ui, rect: egui::Rect, state: &mut C
             // that opened the editor does not also close it.
             let opening = state.interaction.focus_text_editor;
             let commit = !opening
-                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+                && ui.input_mut(|input| {
+                    // consume_key ignores extra Shift and Alt. Only plain Enter
+                    // commits; the multiline editor must receive Shift+Enter.
+                    let mut commit = false;
+                    input.events.retain(|event| {
+                        let plain_enter = matches!(event, egui::Event::Key {
+                            key: egui::Key::Enter, pressed: true, modifiers, ..
+                        } if modifiers.is_none());
+                        commit |= plain_enter;
+                        !plain_enter
+                    });
+                    commit
+                });
             let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _width: f32| {
                 layout_textbox_galley(
                     ui,

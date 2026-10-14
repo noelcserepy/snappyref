@@ -1032,9 +1032,9 @@ impl SnappyRefApp {
     }
 
     fn persist_canvas_changes_debounced(&mut self, ctx: &egui::Context) {
-        // A scrub records one entry on release. Explicit flushes, like board
-        // activation, still record mid-scrub.
-        if self.canvas.group_dock_scrubbing() {
+        // A scrub or typing session records one entry when it ends. Explicit
+        // submissions, like board activation, finish and accept the draft.
+        if self.canvas.group_dock_scrubbing() || self.canvas.textbox_editing() {
             return;
         }
         let document_changed = match self.board_editing.record_pending_document_changes_history(
