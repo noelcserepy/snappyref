@@ -12,7 +12,6 @@ if [[ -f "$env_file" ]]; then
 fi
 
 : "${SNAPPYREF_WINDOWS_HOST:?Set SNAPPYREF_WINDOWS_HOST in .env.windows or the environment.}"
-: "${SNAPPYREF_WINDOWS_REPO:?Set SNAPPYREF_WINDOWS_REPO in .env.windows or the environment.}"
 
 export SNAPPYREF_WINDOWS_HOST
 export SNAPPYREF_WINDOWS_REPO

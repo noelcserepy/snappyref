@@ -1,6 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+encode_powershell() {
+  printf '%s' "$1" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n'
+}
+
+# The scheduled task runs as the SSH account, so its own desktop must be signed in.
+session_check='$ErrorActionPreference = "Stop"
+$signedIn = @(Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -eq "explorer.exe" -and $_.SessionId -gt 0
+} | ForEach-Object {
+    $owner = Invoke-CimMethod -InputObject $_ -MethodName GetOwner
+    if ($owner.User -eq $env:USERNAME -and $owner.Domain -eq $env:USERDOMAIN) { $_ }
+})
+if ($signedIn.Count -eq 0) { exit 3 }
+exit 0'
+session_enc=$(encode_powershell "$session_check")
+# Preserve the child status through windows-remote's outer PowerShell process.
+if "$script_dir/windows-remote.sh" "powershell -NoProfile -EncodedCommand $session_enc; exit \$LASTEXITCODE"; then
+  :
+else
+  result=$?
+  if [[ "$result" -eq 3 ]]; then
+    echo 'No signed-in interactive session is available. Sign in at the PC first.' >&2
+    exit 1
+  fi
+  echo 'Could not check the Windows interactive session.' >&2
+  exit "$result"
+fi
+
 script='$taskName = "SnappyRefAgentLaunch"
 $launch = Join-Path $env:TEMP "launch-snappyref-gui.ps1"
 $repo = (Get-Location).Path
@@ -30,5 +59,5 @@ for ($i = 0; $i -lt 20; $i++) {
 }
 exit 0
 '
-enc=$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')
-scripts/windows-remote.sh "powershell -NoProfile -EncodedCommand $enc"
+enc=$(encode_powershell "$script")
+"$script_dir/windows-remote.sh" "powershell -NoProfile -EncodedCommand $enc; exit \$LASTEXITCODE"
