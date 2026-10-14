@@ -173,6 +173,17 @@ pub enum ImagePrepResult {
         lod: CanvasImageLod,
         error: String,
     },
+    /// A pixel-load error leaves the saved image intact; its exact LOD can be
+    /// suppressed in canvas session state without changing placement content.
+    ExistingLoadFailed {
+        asset_id: Option<i64>,
+        target_board_id: i64,
+        queue_id: Option<u64>,
+        placement_id: i64,
+        lod: CanvasImageLod,
+        context: String,
+        error: String,
+    },
     Failed {
         target_board_id: Option<i64>,
         queue_id: Option<u64>,

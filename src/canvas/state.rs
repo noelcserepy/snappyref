@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use eframe::egui;
@@ -134,6 +134,9 @@ pub(crate) struct CanvasRenderState {
     /// Image LOD upgrades wanted by rendering. An entry lives until the load
     /// lands or fails so the same upgrade is never requested twice.
     pub(super) image_lod_loads: HashMap<i64, ImageLodLoad>,
+    /// Failed upgrades stay suppressed until image success, reload, or replacement.
+    /// This is session render state, never Board content.
+    pub(super) failed_image_lod_loads: HashSet<(i64, CanvasImageLod)>,
     pub(super) pending_crop_previews: HashMap<i64, PendingCropPreview>,
     pub(super) animation_time_override_seconds: Option<f32>,
 }

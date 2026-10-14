@@ -52,6 +52,34 @@ impl PlacementCreation {
                 context.residency.note_backfill_completed(asset_id, lod);
                 PreparationOutcome::Status(Some(error))
             }
+            ImagePrepResult::ExistingLoadFailed {
+                asset_id,
+                target_board_id,
+                queue_id,
+                placement_id,
+                lod,
+                context: label,
+                error,
+            } => {
+                let status = format!("{label}: {error}");
+                let completion =
+                    self.resolve_completion(queue_id, Some(target_board_id), Some(placement_id));
+                if target_board_id == context.board_id
+                    && context
+                        .canvas
+                        .placement_for_id(placement_id)
+                        .is_some_and(|p| p.asset_id() == asset_id)
+                {
+                    context.canvas.note_image_lod_load_failed(placement_id, lod);
+                }
+                let result = self.finish_batch(
+                    context,
+                    completion.target_board_id,
+                    completion.queue_id,
+                    None,
+                );
+                PreparationOutcome::Status(Some(result.err().unwrap_or(status)))
+            }
             ImagePrepResult::Failed {
                 target_board_id,
                 queue_id,
@@ -72,6 +100,11 @@ impl PlacementCreation {
                 let result = (|| {
                     if let (Some(board_id), Some(id)) =
                         (completion.target_board_id, completion.placement_id)
+                        // Pixel preparation cannot replace an already accepted image.
+                        && context
+                            .editing
+                            .accepted_placement(board_id, id)
+                            .is_some_and(|placement| !placement.is_loaded())
                         && let Some(placement) =
                             context
                                 .editing
@@ -105,6 +138,12 @@ impl PlacementCreation {
                 };
                 (queue_id, loaded.target_board_id, loaded.placement.id())
             }
+            ImagePrepResult::ExistingLoadFailed {
+                queue_id: Some(q),
+                target_board_id: b,
+                placement_id: id,
+                ..
+            } => (*q, *b, *id),
             ImagePrepResult::Failed {
                 queue_id: Some(q),
                 target_board_id: Some(b),

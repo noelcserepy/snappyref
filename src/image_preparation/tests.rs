@@ -1060,7 +1060,6 @@ fn serve_bytes_once(
     (format!("http://{address}{path}"), handle)
 }
 
-/// Reserve a real Loading Placement before worker tests prepare its content.
 fn next_preparation(worker: &ImagePrepWorker) -> ImagePrepResult {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
@@ -1076,6 +1075,7 @@ fn next_preparation(worker: &ImagePrepWorker) -> ImagePrepResult {
     }
 }
 
+/// Reserve a real Loading Placement before worker tests prepare its content.
 pub(super) fn reserve_import_fixture(
     library: &Library,
     mut request: ImportRequest,
@@ -1439,4 +1439,180 @@ fn helper_hang_fails_import_and_next_import_loads() {
 #[test]
 fn worker_panic_fails_import_and_next_import_loads() {
     assert_helper_failure_then_success("panic", "image preparation panicked");
+}
+
+fn assert_failed_existing_preparation_preserves_saved_images(mode: &str) {
+    use crate::active_board::editing::BoardEditing;
+    use crate::active_board::persistence::DocumentPersistence;
+    use crate::placement::completion::{CompletionContext, PreparationOutcome};
+    use crate::placement::content_resolution::PlacementCreation;
+
+    let root = TempRoot::new(&format!("existing-load-preserves-{mode}"));
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut placements = Vec::new();
+    for (id, name, pixel) in [
+        (1, mode, [30, 100, 220, 255]),
+        (2, "valid", [10, 20, 30, 255]),
+    ] {
+        let source = root.join(format!("{name}.png"));
+        image::RgbaImage::from_pixel(1, 1, image::Rgba(pixel))
+            .save(&source)
+            .unwrap();
+        let mut placement = import_path_sync(&library, source, eframe::egui::Pos2::ZERO)
+            .unwrap()
+            .placement;
+        placement.state.id = id;
+        placements.push(library.fixture_placement(1, placement).unwrap());
+    }
+    assert_eq!(
+        library
+            .load_placements()
+            .unwrap()
+            .iter()
+            .map(|p| (p.id(), p.asset_id()))
+            .collect::<Vec<_>>(),
+        vec![(1, Some(1)), (2, Some(2))],
+    );
+    for placement in &placements {
+        if let Some(cache) = library.canvas_image_cache_path_for_lod(
+            placement.require_loaded_asset().id,
+            CanvasImageSettings::default().max_side,
+            CanvasImageLod::Working,
+        ) {
+            fs::remove_file(cache).unwrap();
+        }
+    }
+    let ctx = eframe::egui::Context::default();
+    let worker_library = library.clone();
+    let helper = super::decode::ImagePrepHelper {
+        executable: Some(helper_fixture().to_path_buf()),
+        timeout: Duration::from_secs(5),
+    };
+    let worker = ImagePrepWorker::new_with_processor(
+        ctx.clone(),
+        ImagePrepWorkerConfig::single_worker(),
+        move |request| match request {
+            super::ImagePrepRequest::LoadExisting {
+                target_board_id,
+                queue_id,
+                placement,
+                max_texture_side,
+                canvas_image_settings,
+                target_lod,
+                trace,
+                ..
+            } => {
+                if placement
+                    .require_loaded_asset()
+                    .original_path
+                    .to_string_lossy()
+                    .ends_with("panic.png")
+                {
+                    panic!("fixture existing-load panic");
+                }
+                super::existing_load::load_existing_with_helper(
+                    &worker_library,
+                    target_board_id,
+                    queue_id,
+                    placement,
+                    max_texture_side,
+                    canvas_image_settings,
+                    target_lod,
+                    trace,
+                    None,
+                    &helper,
+                )
+            }
+            other => panic!("unexpected existing-load request {other:?}"),
+        },
+    );
+    let mut canvas = crate::canvas::CanvasState::default();
+    for placement in &placements {
+        canvas.add_unresolved_placement(placement.clone());
+    }
+    let mut editing = BoardEditing::default();
+    editing.accepted_board_document(&library, 1).unwrap();
+    editing.persistence = DocumentPersistence::queued(library.clone());
+    let mut creation = PlacementCreation::new();
+    let settings = crate::data::WorkspaceSettings::default();
+    let mut residency = crate::canvas::residency::ImageResidencyCoordinator::default();
+    let mut context = CompletionContext {
+        canvas: &mut canvas,
+        library: Some(&library),
+        board_id: 1,
+        worker: None,
+        settings: &settings,
+        residency: &mut residency,
+        editing: &mut editing,
+    };
+    for (index, placement) in placements.into_iter().enumerate() {
+        worker
+            .enqueue(super::ImagePrepRequest::LoadExisting {
+                target_board_id: 1,
+                queue_id: None,
+                placement,
+                max_texture_side: 16,
+                canvas_image_settings: CanvasImageSettings::default(),
+                target_lod: CanvasImageLod::Overview,
+                priority: super::ExistingLoadPriority::Background,
+                trace: None,
+            })
+            .unwrap();
+        let result = next_preparation(&worker);
+        if index == 0 {
+            match &result {
+                ImagePrepResult::ExistingLoadFailed { error, .. } => {
+                    let expected = if mode == "crash" {
+                        "imageprep helper failed"
+                    } else {
+                        "image preparation panicked"
+                    };
+                    assert!(error.starts_with(expected), "{error}");
+                }
+                other => panic!("expected existing-load failure, got {other:?}"),
+            }
+            assert!(matches!(
+                creation.accept_result(&ctx, &mut context, result),
+                PreparationOutcome::Status(Some(_))
+            ));
+        } else {
+            match &result {
+                ImagePrepResult::Loaded(loaded) => {
+                    assert_eq!((loaded.preview_width, loaded.preview_height), (1, 1));
+                    assert_eq!(loaded.preview_rgba, [30, 100, 220, 255]);
+                }
+                other => panic!("expected next existing image to load, got {other:?}"),
+            }
+            assert!(matches!(
+                creation.accept_result(&ctx, &mut context, result),
+                PreparationOutcome::Loaded(_)
+            ));
+        }
+        context.editing.persistence.flush().unwrap();
+        let reopened = Library::initialize(root.to_path_buf()).unwrap();
+        let saved = reopened.load_placements().unwrap();
+        assert_eq!(
+            saved
+                .iter()
+                .map(|p| (p.id(), p.asset_id()))
+                .collect::<Vec<_>>(),
+            vec![(1, Some(1)), (2, Some(2))],
+            "saved asset links after {mode} completion {index}",
+        );
+        assert_eq!(
+            context.canvas.placement_for_id(1).unwrap().asset_id(),
+            Some(1),
+        );
+    }
+    assert_eq!(worker.stats().in_flight, 0);
+}
+
+#[test]
+fn helper_failure_preserves_saved_images_after_reopen() {
+    assert_failed_existing_preparation_preserves_saved_images("crash");
+}
+
+#[test]
+fn existing_load_panic_preserves_saved_images_after_reopen() {
+    assert_failed_existing_preparation_preserves_saved_images("panic");
 }

@@ -34,6 +34,32 @@ pub(crate) fn load_existing(
     trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
 ) -> ImagePrepResult {
+    load_existing_with_helper(
+        library,
+        target_board_id,
+        queue_id,
+        placement,
+        max_texture_side,
+        canvas_image_settings,
+        target_lod,
+        trace,
+        wgpu_render_state,
+        &ImagePrepHelper::default(),
+    )
+}
+
+pub(super) fn load_existing_with_helper(
+    library: &Library,
+    target_board_id: i64,
+    queue_id: Option<u64>,
+    placement: Placement,
+    max_texture_side: usize,
+    canvas_image_settings: CanvasImageSettings,
+    target_lod: CanvasImageLod,
+    trace: Option<ImagePrepTrace>,
+    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
+    helper: &ImagePrepHelper,
+) -> ImagePrepResult {
     let worker_started_at = Instant::now();
     let mut trace = trace;
     if let Some(trace) = &mut trace {
@@ -74,10 +100,12 @@ pub(crate) fn load_existing(
                 }));
             }
             Err(error) => {
-                return ImagePrepResult::Failed {
-                    target_board_id: Some(target_board_id),
+                return ImagePrepResult::ExistingLoadFailed {
+                    asset_id: placement.asset_id(),
+                    target_board_id,
                     queue_id,
-                    placement_id: Some(placement.state.id),
+                    placement_id: placement.state.id,
+                    lod: target_lod,
                     context: placement
                         .require_loaded_asset()
                         .original_path
@@ -97,6 +125,7 @@ pub(crate) fn load_existing(
         canvas_image_settings,
         target_lod,
         max_texture_side,
+        helper,
     ) {
         Ok((preview, animated_preview, diagnostics)) => {
             let decode_or_load = decode_started_at.elapsed();
@@ -106,10 +135,12 @@ pub(crate) fn load_existing(
                 match build_preview_texture(wgpu_render_state, &preview) {
                     Ok(preview_texture) => preview_texture,
                     Err(error) => {
-                        return ImagePrepResult::Failed {
-                            target_board_id: Some(target_board_id),
+                        return ImagePrepResult::ExistingLoadFailed {
+                            asset_id: placement.asset_id(),
+                            target_board_id,
                             queue_id,
-                            placement_id: Some(placement.state.id),
+                            placement_id: placement.state.id,
+                            lod: target_lod,
                             context: placement
                                 .require_loaded_asset()
                                 .original_path
@@ -140,10 +171,12 @@ pub(crate) fn load_existing(
                 trace,
             }))
         }
-        Err(error) => ImagePrepResult::Failed {
-            target_board_id: Some(target_board_id),
+        Err(error) => ImagePrepResult::ExistingLoadFailed {
+            asset_id: placement.asset_id(),
+            target_board_id,
             queue_id,
-            placement_id: Some(placement.state.id),
+            placement_id: placement.state.id,
+            lod: target_lod,
             context: placement
                 .require_loaded_asset()
                 .original_path
@@ -177,6 +210,7 @@ fn load_existing_preview(
     canvas_image_settings: CanvasImageSettings,
     target_lod: CanvasImageLod,
     max_texture_side: usize,
+    helper: &ImagePrepHelper,
 ) -> Result<
     (
         PreviewImage,
@@ -272,19 +306,14 @@ fn load_existing_preview(
                         placement,
                         lod_settings,
                         target_lod,
-                        &ImagePrepHelper::default(),
+                        helper,
                     )?;
                     (preview, None, diagnostics)
                 }
             }
         } else {
-            let (preview, diagnostics) = backfill_canvas_image_cache(
-                library,
-                placement,
-                lod_settings,
-                target_lod,
-                &ImagePrepHelper::default(),
-            )?;
+            let (preview, diagnostics) =
+                backfill_canvas_image_cache(library, placement, lod_settings, target_lod, helper)?;
             (preview, None, diagnostics)
         };
 

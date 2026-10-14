@@ -363,13 +363,19 @@ impl ImagePrepRequest {
                 target_board_id,
                 queue_id,
                 placement,
+                target_lod,
                 ..
-            } => (
-                Some(*target_board_id),
-                *queue_id,
-                Some(placement.id()),
-                "load existing image".to_owned(),
-            ),
+            } => {
+                return ImagePrepResult::ExistingLoadFailed {
+                    asset_id: placement.asset_id(),
+                    target_board_id: *target_board_id,
+                    queue_id: *queue_id,
+                    placement_id: placement.id(),
+                    lod: *target_lod,
+                    context: "load existing image".to_owned(),
+                    error,
+                };
+            }
             Self::BackfillLod { placement, lod, .. } => {
                 if let Some(asset) = placement.loaded_asset() {
                     return ImagePrepResult::CacheLodBackfillFailed {
