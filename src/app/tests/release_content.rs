@@ -217,15 +217,19 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
         harness.step();
         let id = *harness.state().canvas.all_annotation_ids().last().unwrap();
         let annotation = harness.state().canvas.annotation_for_id(id).unwrap();
-        assert_eq!(
-            annotation.kind,
-            if key == egui::Key::A {
-                CanvasAnnotationKind::Arrow
-            } else {
-                CanvasAnnotationKind::Line
-            }
+        scenario.assertion(
+            "draw shortcut creates the requested segment kind",
+            (annotation.kind)
+                == (if key == egui::Key::A {
+                    CanvasAnnotationKind::Arrow
+                } else {
+                    CanvasAnnotationKind::Line
+                }),
         );
-        assert!((annotation.end() - annotation.start() - delta).length() < 1.);
+        scenario.assertion(
+            "segment endpoints follow the drag delta",
+            (annotation.end() - annotation.start() - delta).length() < 1.,
+        );
     }
     let segment_ids = harness.state().canvas.all_annotation_ids();
     let untouched = harness
@@ -251,7 +255,10 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
         (egui::Key::Num3, CanvasStrokeWidth::L),
     ] {
         shortcut(&mut harness, egui::Modifiers::SHIFT, key);
-        assert_eq!(selected(&harness).stroke_width, width);
+        scenario.assertion(
+            "stroke control applies the chosen width",
+            (selected(&harness).stroke_width) == (width),
+        );
     }
     for (key, color) in [
         egui::Key::Num1,
@@ -264,19 +271,26 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
     .zip(crate::data::CanvasAnnotationColor::ALL)
     {
         shortcut(&mut harness, egui::Modifiers::NONE, key);
-        assert_eq!(selected(&harness).color, color);
+        scenario.assertion(
+            "color control applies the chosen color",
+            (selected(&harness).color) == (color),
+        );
     }
     for kind in [CanvasAnnotationKind::Line, CanvasAnnotationKind::Arrow] {
         shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::H);
-        assert_eq!(selected(&harness).kind, kind);
+        scenario.assertion(
+            "kind control applies the chosen segment kind",
+            (selected(&harness).kind) == (kind),
+        );
     }
-    assert_eq!(
-        harness
+    scenario.assertion(
+        "style edits leave the other segment unchanged",
+        (harness
             .state()
             .canvas
             .annotation_for_id(segment_ids[1])
-            .unwrap(),
-        untouched
+            .unwrap())
+            == (untouched),
     );
     for id in [segment_ids[0], segment_ids[4]] {
         harness.state_mut().canvas.select_content(&[], &[id]);
@@ -290,8 +304,14 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
             egui::Modifiers::NONE,
         );
         let moved = harness.state().canvas.annotation_for_id(id).unwrap();
-        assert!((moved.start() - before.start() - egui::vec2(0., 45.)).length() < 1.);
-        assert!((moved.end() - before.end() - egui::vec2(0., 45.)).length() < 1.);
+        scenario.assertion(
+            "segment body drag moves its start by 45",
+            (moved.start() - before.start() - egui::vec2(0., 45.)).length() < 1.,
+        );
+        scenario.assertion(
+            "segment body drag moves its end by 45",
+            (moved.end() - before.end() - egui::vec2(0., 45.)).length() < 1.,
+        );
     }
     for key in [egui::Key::A, egui::Key::L] {
         harness.key_down(key);
@@ -305,7 +325,10 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
         harness.key_up(key);
         harness.step();
     }
-    assert_eq!(harness.state().canvas.all_annotation_ids(), segment_ids);
+    scenario.assertion(
+        "Undo removes the newly placed label",
+        (harness.state().canvas.all_annotation_ids()) == (segment_ids),
+    );
     scenario.assertion(
         "directed arrows and line create, tiny gestures leave no segment",
         segment_ids.len() == 5,
@@ -320,74 +343,90 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
     harness.event(egui::Event::Text(text.into()));
     harness.step();
     let note_id = *harness.state().canvas.all_annotation_ids().last().unwrap();
-    assert_eq!(
-        harness
+    scenario.assertion(
+        "text edit stores the entered Unicode text",
+        (harness
             .state()
             .canvas
             .annotation_for_id(note_id)
             .unwrap()
-            .text,
-        text
+            .text)
+            == (text),
     );
     // Style keys type text while the label is open; Escape leaves it selected.
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Escape);
-    assert!(!harness.ctx.egui_wants_keyboard_input());
+    scenario.assertion(
+        "Escape releases text editing",
+        !harness.ctx.egui_wants_keyboard_input(),
+    );
     for (key, size) in [
         (egui::Key::Num1, CanvasTextSize::S),
         (egui::Key::Num5, CanvasTextSize::Xxl),
         (egui::Key::Num3, CanvasTextSize::L),
     ] {
         shortcut(&mut harness, egui::Modifiers::SHIFT, key);
-        assert_eq!(
-            harness
+        scenario.assertion(
+            "text size control applies the chosen size",
+            (harness
                 .state()
                 .canvas
                 .annotation_for_id(note_id)
                 .unwrap()
-                .text_size,
-            size
+                .text_size)
+                == (size),
         );
     }
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Num2);
-    assert_eq!(
-        harness
+    scenario.assertion(
+        "text color control applies coral",
+        (harness
             .state()
             .canvas
             .annotation_for_id(note_id)
             .unwrap()
-            .color,
-        crate::data::CanvasAnnotationColor::Coral
+            .color)
+            == (crate::data::CanvasAnnotationColor::Coral),
     );
     harness.hover_at(center + egui::vec2(350., 230.));
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Enter);
     harness.step();
-    assert!(harness.ctx.egui_wants_keyboard_input());
+    scenario.assertion(
+        "Enter starts editing the selected label",
+        harness.ctx.egui_wants_keyboard_input(),
+    );
     shortcut(&mut harness, CMD, egui::Key::A);
     harness.event(egui::Event::Text("gqwe Åß\nreplacement".into()));
     harness.step();
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Backspace);
-    assert_eq!(
-        harness
+    scenario.assertion(
+        "text shortcuts and Backspace edit the Unicode content",
+        (harness
             .state()
             .canvas
             .annotation_for_id(note_id)
             .unwrap()
-            .text,
-        "gqwe Åß\nreplacemen"
+            .text)
+            == ("gqwe Åß\nreplacemen"),
     );
-    assert_eq!(harness.state().canvas.all_annotation_ids().len(), 6);
-    assert!(harness.state().canvas.groups().is_empty());
+    scenario.assertion(
+        "typing shortcut letters creates no extra annotations",
+        (harness.state().canvas.all_annotation_ids().len()) == (6),
+    );
+    scenario.assertion(
+        "typing G creates no group",
+        harness.state().canvas.groups().is_empty(),
+    );
     inspect_click_at(
         &harness,
         center + egui::vec2(350., 230.),
         egui::Modifiers::NONE,
     );
     harness.step();
-    assert!(!harness.ctx.egui_wants_keyboard_input());
     scenario.assertion(
-        "multiline Unicode, size, Enter, Escape and text Backspace stay editor owned",
-        true,
+        "outside click releases text editing",
+        !harness.ctx.egui_wants_keyboard_input(),
     );
+
     scenario.capture_screen("text-edited", &mut harness);
     let from = center + egui::vec2(70., 100.);
     harness.key_down(egui::Key::S);
@@ -401,9 +440,10 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
     harness.key_up(egui::Key::S);
     harness.step();
     let id = *harness.state().canvas.all_annotation_ids().last().unwrap();
-    assert_eq!(
-        harness.state().canvas.annotation_for_id(id).unwrap().kind,
-        CanvasAnnotationKind::Rectangle
+    scenario.assertion(
+        "S drag creates a rectangle",
+        (harness.state().canvas.annotation_for_id(id).unwrap().kind)
+            == (CanvasAnnotationKind::Rectangle),
     );
     harness.state_mut().canvas.select_content(&[], &[id]);
     harness.step();
@@ -416,7 +456,10 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
         egui::Modifiers::NONE,
     );
     let resized = harness.state().canvas.annotation_for_id(id).unwrap();
-    assert!(resized.end().x > before.end().x + 40.);
+    scenario.assertion(
+        "rectangle corner drag expands its bounds",
+        resized.end().x > before.end().x + 40.,
+    );
     let body = inspect_world_to_screen(resized.end() - egui::vec2(40., 20.), screen);
     drag(
         &mut harness,
@@ -425,11 +468,11 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
         egui::Modifiers::NONE,
     );
     let moved = harness.state().canvas.annotation_for_id(id).unwrap();
-    assert!((moved.start() - resized.start() - egui::vec2(-30., 50.)).length() < 1.);
     scenario.assertion(
-        "S-drag creates a rectangle, corner resize and body move reshape it",
-        true,
+        "rectangle body drag moves by the pointer delta",
+        (moved.start() - resized.start() - egui::vec2(-30., 50.)).length() < 1.,
     );
+
     scenario.capture_screen("rectangle-moved", &mut harness);
 
     harness.state_mut().canvas.select_content(&[], &[note_id]);
@@ -443,7 +486,10 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
         egui::Modifiers::NONE,
     );
     let moved = harness.state().canvas.annotation_for_id(note_id).unwrap();
-    assert!((moved.start() - label.start() - egui::vec2(-30., 50.)).length() < 1.);
+    scenario.assertion(
+        "label body drag moves by the pointer delta",
+        (moved.start() - label.start() - egui::vec2(-30., 50.)).length() < 1.,
+    );
     let text_point = inspect_world_to_screen(moved.start().lerp(moved.end(), 0.5), screen);
     for _ in 0..40 {
         harness.step();
@@ -460,27 +506,36 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
             harness.step();
         }
     }
-    assert!(harness.ctx.egui_wants_keyboard_input());
+    scenario.assertion(
+        "double click edits the moved label",
+        harness.ctx.egui_wants_keyboard_input(),
+    );
     shortcut(&mut harness, CMD, egui::Key::A);
     harness.event(egui::Event::Text("edited after moving".into()));
     harness.step();
-    assert_eq!(
-        harness
+    scenario.assertion(
+        "moved label accepts replacement text",
+        (harness
             .state()
             .canvas
             .annotation_for_id(note_id)
             .unwrap()
-            .text,
-        "edited after moving"
+            .text)
+            == ("edited after moving"),
     );
     scenario.capture_screen("text-editing-after-move", &mut harness);
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Escape);
-    assert!(!harness.ctx.egui_wants_keyboard_input());
     scenario.assertion(
-        "label body move preserves text, double-click edits it, Escape commits",
-        true,
+        "Escape releases editing of the moved label",
+        !harness.ctx.egui_wants_keyboard_input(),
     );
-    assert!(scenario.finish().passed);
+
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
 }
 
 #[test]
@@ -526,32 +581,39 @@ fn inspect_annotation_endpoint_drag_writes_artifact() {
             scenario.action("drag selected segment endpoint", from + delta);
             drag(&mut harness, from, from + delta, egui::Modifiers::NONE);
             let after = harness.state().canvas.annotation_for_id(id).unwrap();
-            assert_eq!(
-                if start { after.end() } else { after.start() },
-                if start { before.end() } else { before.start() }
+            scenario.assertion(
+                "endpoint drag preserves the opposite endpoint",
+                (if start { after.end() } else { after.start() })
+                    == (if start { before.end() } else { before.start() }),
             );
-            assert!(
-                ((if start { after.start() } else { after.end() }) - point - delta).length() < 0.1
+            scenario.assertion(
+                "dragged endpoint follows the pointer delta",
+                ((if start { after.start() } else { after.end() }) - point - delta).length() < 0.1,
             );
             shortcut(&mut harness, CMD, egui::Key::Z);
-            assert_eq!(
-                harness.state().canvas.annotation_for_id(id).unwrap(),
-                before
+            scenario.assertion(
+                "one Undo restores both endpoints",
+                (harness.state().canvas.annotation_for_id(id).unwrap()) == (before),
             );
             shortcut(
                 &mut harness,
                 egui::Modifiers { shift: true, ..CMD },
                 egui::Key::Z,
             );
-            assert_eq!(harness.state().canvas.annotation_for_id(id).unwrap(), after);
+            scenario.assertion(
+                "Redo restores the edited endpoints",
+                (harness.state().canvas.annotation_for_id(id).unwrap()) == (after),
+            );
         }
     }
-    scenario.assertion(
-        "line and arrow endpoints move independently with one undoable edit per drag",
-        true,
-    );
+
     scenario.capture_screen("edited-endpoints", &mut harness);
-    assert!(scenario.finish().passed);
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
 }
 
 #[test]

@@ -48,9 +48,8 @@ Preconditions:
 - **Pasted URL, mixed batch, inactive board.** Run `run-scenario.sh slow-url-inactive-mixed-batch`.
   It serves a slow PNG from a local HTTP server, pastes its URL, then drops a
   valid file, a corrupt file, and a failing URL. ⌘N switches boards while the
-  batch loads and ⌘1 switches back. The real checks are plain asserts that run
-  before the summary assertions, so the summary assertions read as passed
-  whenever the run passes. Frames are `screen-000-url-loading`,
+  batch loads and ⌘1 switches back. Each live check is recorded in the report,
+  so a failed URL, geometry, or inactive-board check keeps its artifact. Frames are `screen-000-url-loading`,
   `screen-001-url-loaded`, and `screen-002-return-to-completed-batch`.
 - **Loading appearance.** Run `run-scenario.sh sample-image-import` to see the
   before, loading, and loaded frames. Everything in it is seeded. It shows how

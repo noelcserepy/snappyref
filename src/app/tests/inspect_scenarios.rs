@@ -259,7 +259,7 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
 
     let root = TempRoot::new("snappyref-inspect-semantic-sidebar-status");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let actual_status = crate::search::semantic::default_local_model_store_status();
+    let actual_status = LocalModelStoreStatus::Downloading { percent: 42 };
     let mut app = test_app(Some(library));
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Settings;
@@ -280,6 +280,11 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
     );
 
     let frame_stats = scenario.capture_screen("screen", &mut harness);
+    scenario.assertion(
+        "seeded model status displays Downloading 42% and Cancel",
+        harness.query_by_label("Downloading 42%").is_some()
+            && harness.query_by_label("Cancel").is_some(),
+    );
     scenario.fact(
         "semantic-search.local-model-store-status",
         serde_json::json!({

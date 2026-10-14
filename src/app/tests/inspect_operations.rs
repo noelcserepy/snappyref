@@ -1105,8 +1105,14 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
     harness.event(egui::Event::Paste(format!("http://{address}/slow.png")));
     harness.step();
     let slow_id = harness.state().canvas.selected_placement_ids()[0];
-    assert_eq!(harness.state().canvas.viewport_state(), view_before);
-    assert_eq!(harness.state().placement_creation.pending_len(), 1);
+    scenario.assertion(
+        "accepting a slow URL keeps the viewport",
+        (harness.state().canvas.viewport_state()) == (view_before),
+    );
+    scenario.assertion(
+        "slow URL reserves one pending placement",
+        (harness.state().placement_creation.pending_len()) == (1),
+    );
     scenario.capture_screen("screen-000-url-loading", &mut harness);
     drag_with_modifiers(
         &mut harness,
@@ -1116,7 +1122,10 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
         egui::PointerButton::Primary,
     );
     let moved = center_of(&harness, slow_id);
-    assert!(moved.distance(egui::Pos2::ZERO) > 20.0);
+    scenario.assertion(
+        "loading placement moves with the pointer",
+        moved.distance(egui::Pos2::ZERO) > 20.0,
+    );
     drag_with_modifiers(
         &mut harness,
         screen.center() + egui::vec2(300.0, 200.0),
@@ -1125,25 +1134,38 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
         egui::PointerButton::Primary,
     );
     let navigated = harness.state().canvas.viewport_state();
-    assert_ne!(navigated, view_before);
+    scenario.assertion(
+        "canvas pans while URL preparation waits",
+        (navigated) != (view_before),
+    );
     release.send(()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     while harness.state().placement_creation.pending_len() != 0 && Instant::now() < deadline {
         harness.step();
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(harness.state().placement_creation.pending_len(), 0);
-    assert!(
+    scenario.assertion(
+        "slow URL finishes its pending work",
+        (harness.state().placement_creation.pending_len()) == (0),
+    );
+    scenario.assertion(
+        "slow URL resolves to loaded content",
         harness
             .state()
             .canvas
             .placement_for_id(slow_id)
             .unwrap()
-            .is_loaded()
+            .is_loaded(),
     );
-    assert!(center_of(&harness, slow_id).distance(moved) < 0.01);
-    assert_eq!(harness.state().canvas.viewport_state(), navigated);
-    scenario.assertion("slow URL accepts without viewport movement; pending placement moves and pans; completion preserves identity, edited center and navigated viewport", true);
+    scenario.assertion(
+        "URL completion preserves the edited center",
+        center_of(&harness, slow_id).distance(moved) < 0.01,
+    );
+    scenario.assertion(
+        "URL completion preserves the navigated viewport",
+        (harness.state().canvas.viewport_state()) == (navigated),
+    );
+
     scenario.capture_screen("screen-001-url-loaded", &mut harness);
     harness.input_mut().dropped_files = vec![
         dropped_file(source),
@@ -1152,34 +1174,54 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
     ];
     harness.step();
     let ids = harness.state().canvas.selected_placement_ids();
-    assert_eq!(ids.len(), 3);
+    scenario.assertion(
+        "mixed drop selects its three reserved placements",
+        (ids.len()) == (3),
+    );
     let board_a = harness.state().active_board_id;
     shortcut(&mut harness, CMD, egui::Key::N);
     let board_b = harness.state().active_board_id;
-    assert_ne!(board_a, board_b);
+    scenario.assertion(
+        "New board switches away from the import target",
+        (board_a) != (board_b),
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while harness.state().placement_creation.pending_len() != 0 && Instant::now() < deadline {
         harness.step();
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(harness.state().placement_creation.pending_len(), 0);
-    assert!(harness.state().canvas.canvas_stack_order().is_empty());
+    scenario.assertion(
+        "inactive mixed batch finishes pending work",
+        (harness.state().placement_creation.pending_len()) == (0),
+    );
+    scenario.assertion(
+        "new active board stays empty",
+        harness.state().canvas.canvas_stack_order().is_empty(),
+    );
     harness.state_mut().flush_persistence();
     let completed = library.load_placements_for_board(board_a).unwrap();
-    assert_eq!(completed.len(), 4);
-    assert_eq!(completed.iter().filter(|p| p.is_loaded()).count(), 2);
-    assert_eq!(
-        completed
+    scenario.assertion(
+        "target board retains the URL and all three batch placements",
+        (completed.len()) == (4),
+    );
+    scenario.assertion(
+        "URL and valid file resolve to loaded images",
+        (completed.iter().filter(|p| p.is_loaded()).count()) == (2),
+    );
+    scenario.assertion(
+        "corrupt file and HTTP failure become failed placements",
+        (completed
             .iter()
             .filter(|p| matches!(p.content, crate::data::PlacementContent::Failed { .. }))
-            .count(),
-        2
+            .count())
+            == (2),
     );
-    assert!(
+    scenario.assertion(
+        "inactive completion adds nothing to the active board",
         library
             .load_placements_for_board(board_b)
             .unwrap()
-            .is_empty()
+            .is_empty(),
     );
     let batch = completed
         .iter()
@@ -1188,11 +1230,9 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
     for (i, a) in batch.iter().enumerate() {
         for b in &batch[i + 1..] {
             let overlap = a.visual_bounds().intersect(b.visual_bounds());
-            assert!(
+            scenario.assertion(
+                "completed batch placements do not overlap",
                 overlap.width() <= 0.01 || overlap.height() <= 0.01,
-                "batch bounds {:?} {:?}",
-                a.visual_bounds(),
-                b.visual_bounds()
             );
         }
     }
@@ -1214,18 +1254,24 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
     for _ in 0..20 {
         harness.step();
     }
-    assert_eq!(harness.state().active_board_id, board_a);
-    assert_eq!(harness.state().canvas.canvas_stack_order().len(), 4);
-    scenario.assertion("mixed valid, corrupt and failed HTTP batch completes only on inactive target board with stable IDs and nonoverlapping final layout", true);
+    scenario.assertion(
+        "board shortcut returns to the import target",
+        (harness.state().active_board_id) == (board_a),
+    );
+    scenario.assertion(
+        "returning shows all four target placements",
+        (harness.state().canvas.canvas_stack_order().len()) == (4),
+    );
+
     scenario.capture_screen("screen-002-return-to-completed-batch", &mut harness);
     harness.state_mut().canvas.select_placements(&ids);
     harness.key_press(INSPECT_DELETE_KEY);
     harness.step();
-    assert_eq!(harness.state().canvas.canvas_stack_order().len(), 1);
     scenario.assertion(
-        "failed placements leave no endless loading and delete with the mixed batch",
-        true,
+        "Delete removes the mixed batch and keeps the original URL",
+        (harness.state().canvas.canvas_stack_order().len()) == (1),
     );
+
     server.join().unwrap();
     finish(scenario);
 }

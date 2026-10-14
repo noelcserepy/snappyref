@@ -38,8 +38,7 @@ be placed with Enter or dragged onto the canvas.
 Preconditions:
 
 - `doctor.sh` exits 0.
-- `semantic-search-sidebar-status` reads the real model store. Other scenarios
-  inject model status and results, except `semantic-search-real-install`.
+- Scenarios inject model status and results, except `semantic-search-real-install`.
   The injected scenarios do not rank, index, or download.
 
 - **First launch and remove dialog.** Run `run-scenario.sh semantic-search-install`.
@@ -58,9 +57,8 @@ Preconditions:
   `check-harness.sh` also runs. It renders the full app before and after the
   drop and checks the source asset and placement at the drop pointer.
 - **Settings row.** Run `run-scenario.sh semantic-search-sidebar-status`. It
-  shows whatever model status this machine has on disk, and no assertion checks
-  the status text. `sidebar-pages` seeds a download in progress and is the
-  only scenario that asserts the row text, "Downloading 42%".
+  injects a download in progress and asserts "Downloading 42%" with Cancel.
+  Its output does not depend on this machine's model files.
 
 ## Gotchas
 
