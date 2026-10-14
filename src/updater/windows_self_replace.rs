@@ -166,17 +166,27 @@ pub(crate) fn perform_file_swap(current_exe: &Path, staged_exe: &Path) -> Result
         });
     }
 
-    if let Err(error) = fs::rename(&new_slot, current_exe) {
-        let _ = fs::rename(&backup, current_exe);
-        let _ = fs::rename(&previous_backup, &backup);
-        let _ = fs::remove_file(&new_slot);
+    promote_new_slot(current_exe, &new_slot, &backup, &previous_backup)
+}
+
+/// Finish promotion, restoring the live executable when promotion fails.
+fn promote_new_slot(
+    current_exe: &Path,
+    new_slot: &Path,
+    backup: &Path,
+    previous_backup: &Path,
+) -> Result<(), ApplyError> {
+    if let Err(error) = fs::rename(new_slot, current_exe) {
+        let _ = fs::rename(backup, current_exe);
+        let _ = fs::rename(previous_backup, backup);
+        let _ = fs::remove_file(new_slot);
         return Err(ApplyError::Io {
             step: "rename new slot to current exe",
             error,
         });
     }
 
-    let _ = fs::remove_file(&previous_backup);
+    let _ = fs::remove_file(previous_backup);
     Ok(())
 }
 
@@ -318,5 +328,53 @@ mod tests {
         assert_eq!(fs::read(&current).unwrap(), b"new-exe");
         assert_eq!(fs::read(&backup).unwrap(), b"old-exe");
         assert!(!replacing.exists());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn promotion_failure_restores_current_or_retains_recovery_bytes_when_restore_is_locked() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_SHARE_READ: u32 = 0x1;
+        for lock_restore in [false, true] {
+            let root = TempRoot::new("promotion-failure");
+            let current = root.join("snappyref.exe");
+            let new_slot = root.join("snappyref.exe.new");
+            let backup = root.join("snappyref.exe.old");
+            let previous = root.join("snappyref.exe.old.replacing");
+            fs::write(&new_slot, b"new-exe").unwrap();
+            fs::write(&backup, b"old-exe").unwrap();
+            fs::write(&previous, b"older-backup").unwrap();
+            let held_new = OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_READ)
+                .open(&new_slot)
+                .unwrap();
+            let held_backup = lock_restore.then(|| {
+                OpenOptions::new()
+                    .read(true)
+                    .share_mode(FILE_SHARE_READ)
+                    .open(&backup)
+                    .unwrap()
+            });
+            let error = promote_new_slot(&current, &new_slot, &backup, &previous).unwrap_err();
+            assert!(matches!(
+                error,
+                ApplyError::Io {
+                    step: "rename new slot to current exe",
+                    ..
+                }
+            ));
+            if lock_restore {
+                assert!(!current.exists());
+                assert_eq!(fs::read(&backup).unwrap(), b"old-exe");
+                assert_eq!(fs::read(&previous).unwrap(), b"older-backup");
+            } else {
+                assert_eq!(fs::read(&current).unwrap(), b"old-exe");
+                assert_eq!(fs::read(&backup).unwrap(), b"older-backup");
+                assert!(!previous.exists());
+            }
+            assert_eq!(fs::read(&new_slot).unwrap(), b"new-exe");
+            drop(held_backup);
+            drop(held_new);
+        }
     }
 }
