@@ -17,7 +17,8 @@ $signedIn = @(Get-CimInstance Win32_Process | Where-Object {
 if ($signedIn.Count -eq 0) { exit 3 }
 exit 0'
 session_enc=$(encode_powershell "$session_check")
-if "$script_dir/windows-remote.sh" "powershell -NoProfile -EncodedCommand $session_enc"; then
+# Preserve the child status through windows-remote's outer PowerShell process.
+if "$script_dir/windows-remote.sh" "powershell -NoProfile -EncodedCommand $session_enc; exit \$LASTEXITCODE"; then
   :
 else
   result=$?
@@ -59,4 +60,4 @@ for ($i = 0; $i -lt 20; $i++) {
 exit 0
 '
 enc=$(encode_powershell "$script")
-"$script_dir/windows-remote.sh" "powershell -NoProfile -EncodedCommand $enc"
+"$script_dir/windows-remote.sh" "powershell -NoProfile -EncodedCommand $enc; exit \$LASTEXITCODE"

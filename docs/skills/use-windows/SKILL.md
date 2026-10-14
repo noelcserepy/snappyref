@@ -93,6 +93,16 @@ For one-off commands, use:
 scripts/windows-remote.sh '<powershell-command>'
 ```
 
+The helper regression tests run without connecting to a PC or launching a GUI:
+
+```sh
+python3 -m unittest scripts.test_windows_helpers
+```
+
+The session/launch test executes PowerShell with stubbed OS adapters. It uses
+`pwsh` on PATH, or the executable path in `SNAPPYREF_TEST_PWSH`; without that
+runtime it reports a skip. Wake tests need only Python and stub SSH.
+
 ## Native file and URL drops
 
 Use this guidance when changing the Windows drop bridge in
