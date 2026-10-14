@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::zip_extraction::{self, ExtractError};
 
-use super::model_store::{model_store_root, recover_interrupted_model_promotion};
+use super::model_store::{model_store_root, recover_interrupted_model_promotion, remove_path_any};
 use crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
 use crate::updater::{download, install_paths};
 
@@ -100,6 +100,8 @@ pub(crate) fn remove_semantic_search_assets(
     for name in [
         descriptor.model_key.clone(),
         format!("{}.previous", descriptor.model_key),
+        format!("{}.installing", descriptor.model_key),
+        format!("{}.preparing", descriptor.model_key),
     ] {
         let model_root = model_store_root(data_root).join(name);
         remove_path_any(&model_root)
@@ -252,13 +254,20 @@ fn promote_staged_model(
     descriptor: &SemanticSearchAssetDescriptor,
     staged_model_root: &Path,
 ) -> Result<(), SemanticSearchInstallError> {
-    promote_staged_model_with_hook(data_root, descriptor, staged_model_root, || {})
+    promote_staged_model_with_hooks(
+        data_root,
+        descriptor,
+        staged_model_root,
+        |from, to| fs::rename(from, to),
+        || {},
+    )
 }
 
-fn promote_staged_model_with_hook(
+fn promote_staged_model_with_hooks(
     data_root: &Path,
     descriptor: &SemanticSearchAssetDescriptor,
     staged_model_root: &Path,
+    move_staged_model: impl FnOnce(&Path, &Path) -> io::Result<()>,
     before_final_replace: impl FnOnce(),
 ) -> Result<(), SemanticSearchInstallError> {
     recover_interrupted_model_promotion(
@@ -270,12 +279,13 @@ fn promote_staged_model_with_hook(
     fs::create_dir_all(&store_root)?;
     let final_model_root = store_root.join(&descriptor.model_key);
     let installing_model_root = store_root.join(format!("{}.installing", descriptor.model_key));
+    let preparing_model_root = store_root.join(format!("{}.preparing", descriptor.model_key));
     let backup_model_root = store_root.join(format!("{}.previous", descriptor.model_key));
-    if installing_model_root.exists() {
-        remove_path_any(&installing_model_root)?;
-    }
-    fs::rename(staged_model_root, &installing_model_root).or_else(|_| {
-        copy_dir_recursive(staged_model_root, &installing_model_root)?;
+    remove_path_any(&installing_model_root)?;
+    remove_path_any(&preparing_model_root)?;
+    move_staged_model(staged_model_root, &installing_model_root).or_else(|_| {
+        copy_dir_recursive(staged_model_root, &preparing_model_root)?;
+        fs::rename(&preparing_model_root, &installing_model_root)?;
         fs::remove_dir_all(staged_model_root)
     })?;
 
@@ -309,15 +319,6 @@ fn promote_staged_model_with_hook(
     Ok(())
 }
 
-fn remove_path_any(path: &Path) -> Result<(), io::Error> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path),
-        Ok(_) => fs::remove_file(path),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
 fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), io::Error> {
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
@@ -346,7 +347,9 @@ fn cleanup_install_paths(data_root: &Path, model_key: &str) {
             }
         }
     }
-    let _ = fs::remove_dir_all(model_store_root(data_root).join(format!("{model_key}.installing")));
+    for suffix in ["preparing", "installing"] {
+        let _ = remove_path_any(&model_store_root(data_root).join(format!("{model_key}.{suffix}")));
+    }
 }
 
 fn cleanup_attempt_paths(zip_path: &Path, staging_root: &Path) {
@@ -632,9 +635,15 @@ mod tests {
         let installing_model_root = root
             .join("models")
             .join(format!("{}.installing", descriptor.model_key));
-        let error = promote_staged_model_with_hook(&root, &descriptor, &staged_model_root, || {
-            remove_path_any(&installing_model_root).unwrap();
-        })
+        let error = promote_staged_model_with_hooks(
+            &root,
+            &descriptor,
+            &staged_model_root,
+            |from, to| fs::rename(from, to),
+            || {
+                remove_path_any(&installing_model_root).unwrap();
+            },
+        )
         .unwrap_err();
 
         assert!(matches!(error, SemanticSearchInstallError::Io(_)));
@@ -772,9 +781,15 @@ mod tests {
             fs::write(directory.join("onnx/text_model_int8.onnx"), text).unwrap();
             fs::write(directory.join("onnx/vision_model_int8.onnx"), vision).unwrap();
         }
-        let error = promote_staged_model_with_hook(&root, &descriptor, &staged, || {
-            remove_path_any(&installing).unwrap();
-        })
+        let error = promote_staged_model_with_hooks(
+            &root,
+            &descriptor,
+            &staged,
+            |from, to| fs::rename(from, to),
+            || {
+                remove_path_any(&installing).unwrap();
+            },
+        )
         .unwrap_err();
         assert!(matches!(error, SemanticSearchInstallError::Io(_)));
         assert_eq!(
@@ -788,6 +803,124 @@ mod tests {
         assert_eq!(
             fs::read(model.join("onnx/vision_model_int8.onnx")).unwrap(),
             b"old-vision"
+        );
+    }
+
+    #[test]
+    fn first_install_recovers_ready_model_over_nonempty_partial_final() {
+        use super::super::model_store::{
+            LocalModelStoreStatus, initialize_local_model_store_status,
+        };
+        let root = TempRoot::new("first-install-copy");
+        let descriptor = descriptor_for_bytes(b"unused");
+        let model = root.join("models").join(&descriptor.model_key);
+        let installing = root
+            .join("models")
+            .join(format!("{}.installing", descriptor.model_key));
+        for (directory, tokenizer, text, vision) in [
+            (&model, &b"n"[..], &b"n"[..], &b"n"[..]),
+            (
+                &installing,
+                &b"new-tokenizer"[..],
+                &b"new-text"[..],
+                &b"new-vision"[..],
+            ),
+        ] {
+            fs::create_dir_all(directory.join("onnx")).unwrap();
+            fs::write(directory.join("tokenizer.json"), tokenizer).unwrap();
+            fs::write(directory.join("onnx/text_model_int8.onnx"), text).unwrap();
+            fs::write(directory.join("onnx/vision_model_int8.onnx"), vision).unwrap();
+        }
+        assert_eq!(
+            initialize_local_model_store_status(
+                &root,
+                &descriptor.model_key,
+                &DEFAULT_SEMANTIC_SEARCH_MODEL.required_model_files()
+            ),
+            LocalModelStoreStatus::Installed
+        );
+        assert_eq!(
+            fs::read(model.join("tokenizer.json")).unwrap(),
+            b"new-tokenizer"
+        );
+        assert_eq!(
+            fs::read(model.join("onnx/text_model_int8.onnx")).unwrap(),
+            b"new-text"
+        );
+        assert_eq!(
+            fs::read(model.join("onnx/vision_model_int8.onnx")).unwrap(),
+            b"new-vision"
+        );
+    }
+
+    #[test]
+    fn staging_copy_failure_keeps_old_model_and_successful_retry_publishes_ready_bytes() {
+        let root = TempRoot::new("staging-copy-failure");
+        let descriptor = descriptor_for_bytes(b"unused");
+        let model = root.join("models").join(&descriptor.model_key);
+        let installing = root
+            .join("models")
+            .join(format!("{}.installing", descriptor.model_key));
+        let staged = root.join("staged");
+        fs::create_dir_all(model.join("onnx")).unwrap();
+        fs::write(model.join("tokenizer.json"), b"old-tokenizer").unwrap();
+        fs::write(model.join("onnx/text_model_int8.onnx"), b"old-text").unwrap();
+        fs::write(model.join("onnx/vision_model_int8.onnx"), b"old-vision").unwrap();
+
+        assert!(matches!(
+            promote_staged_model(&root, &descriptor, &staged),
+            Err(SemanticSearchInstallError::Io(_))
+        ));
+        assert!(!installing.exists());
+        assert_eq!(
+            fs::read(model.join("tokenizer.json")).unwrap(),
+            b"old-tokenizer"
+        );
+        assert_eq!(
+            fs::read(model.join("onnx/text_model_int8.onnx")).unwrap(),
+            b"old-text"
+        );
+        assert_eq!(
+            fs::read(model.join("onnx/vision_model_int8.onnx")).unwrap(),
+            b"old-vision"
+        );
+
+        fs::create_dir_all(staged.join("onnx")).unwrap();
+        fs::write(staged.join("tokenizer.json"), b"new-tokenizer").unwrap();
+        fs::write(staged.join("onnx/text_model_int8.onnx"), b"new-text").unwrap();
+        fs::write(staged.join("onnx/vision_model_int8.onnx"), b"new-vision").unwrap();
+        promote_staged_model_with_hooks(
+            &root,
+            &descriptor,
+            &staged,
+            |_, _| Err(io::Error::other("move unavailable")),
+            || {
+                assert_eq!(
+                    fs::read(installing.join("tokenizer.json")).unwrap(),
+                    b"new-tokenizer"
+                );
+                assert_eq!(
+                    fs::read(installing.join("onnx/text_model_int8.onnx")).unwrap(),
+                    b"new-text"
+                );
+                assert_eq!(
+                    fs::read(installing.join("onnx/vision_model_int8.onnx")).unwrap(),
+                    b"new-vision"
+                );
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(model.join("tokenizer.json")).unwrap(),
+            b"new-tokenizer"
+        );
+        assert_eq!(
+            fs::read(model.join("onnx/text_model_int8.onnx")).unwrap(),
+            b"new-text"
+        );
+        assert_eq!(
+            fs::read(model.join("onnx/vision_model_int8.onnx")).unwrap(),
+            b"new-vision"
         );
     }
 
@@ -809,6 +942,11 @@ mod tests {
             .join("models")
             .join(format!("{}.previous", descriptor.model_key));
         copy_dir_recursive(&model_root, &previous).unwrap();
+        let preparing = root
+            .join("models")
+            .join(format!("{}.preparing", descriptor.model_key));
+        fs::create_dir_all(&preparing).unwrap();
+        fs::write(preparing.join("tokenizer.json"), b"partial").unwrap();
         let library_root = root.join("library");
         let library = crate::library::storage::Library::initialize(library_root.clone()).unwrap();
         let path = library

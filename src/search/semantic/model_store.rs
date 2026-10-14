@@ -1,7 +1,11 @@
 //! Availability in the Local Model Store. Startup recovers interrupted promotions; checks are read-only.
-//! A surviving `.previous` marks an uncommitted promotion. Its complete model
-//! takes priority over a final directory that may contain a truncated fallback copy.
+//! Recovery prefers the old `.previous`, then the ready `.installing`, then final.
+//! New incoming copies use `.preparing` and become `.installing` atomically only
+//! after copying completes. Legacy `.installing` directories were copied in place;
+//! their required-file presence cannot prove that every byte is complete.
 
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn model_store_root(data_root: &Path) -> PathBuf {
@@ -53,26 +57,37 @@ pub(crate) fn recover_interrupted_model_promotion(
     let final_model = store.join(model_key);
     for name in [
         format!("{model_key}.previous"),
-        model_key.to_owned(),
         format!("{model_key}.installing"),
+        model_key.to_owned(),
     ] {
         let recovery = store.join(name);
         if model_files_complete(&recovery, required_files) {
             if recovery == final_model {
                 return Ok(());
             }
-            match std::fs::symlink_metadata(&final_model) {
-                Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(&final_model)?,
-                Ok(_) => std::fs::remove_file(&final_model)?,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
+            if recovery == store.join(format!("{model_key}.previous")) {
+                // A rollback must discard the replacement before consuming its backup.
+                for suffix in ["installing", "preparing"] {
+                    let incoming = store.join(format!("{model_key}.{suffix}"));
+                    remove_path_any(&incoming)?;
+                }
             }
+            remove_path_any(&final_model)?;
             // Both paths are in the model store, so recovery is an atomic rename.
             std::fs::rename(recovery, &final_model)?;
             break;
         }
     }
     Ok(())
+}
+
+pub(crate) fn remove_path_any(path: &Path) -> Result<(), io::Error> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(path),
+        Ok(_) => fs::remove_file(path),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn refresh_local_model_store_status(
