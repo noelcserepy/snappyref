@@ -1,6 +1,6 @@
 //! The sidebar: one floating card off the window's left edge holding the
-//! Boards list and Settings, with the tab between them pinned to its
-//! bottom so switching never moves the card.
+//! Boards list and Settings, with navigation pinned above the page content
+//! so switching and scrolling never move the tabs.
 
 use eframe::egui;
 
@@ -154,31 +154,9 @@ pub(crate) fn show_sidebar(
                 ui.set_min_size(inner_size);
                 ui.spacing_mut().item_spacing = card::ITEM_SPACING;
                 let tab_rect = egui::Rect::from_min_max(
-                    egui::pos2(inner.left(), inner.bottom() - TAB_HEIGHT),
-                    inner.max,
+                    inner.min,
+                    egui::pos2(inner.right(), inner.top() + TAB_HEIGHT),
                 );
-                // The body spans the padding too, so its scroll bar sits
-                // there. A child Ui keeps it from widening the frame.
-                let body = egui::Rect::from_min_max(
-                    egui::pos2(rect.left(), inner.top()),
-                    egui::pos2(rect.right(), tab_rect.top() - 14.0),
-                );
-                let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body));
-                match sidebar_tab {
-                    SidebarTab::Boards => {
-                        result.board_action = boards::show(&mut body_ui, boards, active_board_id);
-                    }
-                    SidebarTab::Settings => {
-                        settings::show(
-                            &mut body_ui,
-                            settings,
-                            canvas,
-                            about,
-                            semantic_search,
-                            &mut result,
-                        );
-                    }
-                }
                 ui.scope_builder(egui::UiBuilder::new().max_rect(tab_rect), |ui| {
                     let tabs = [SidebarTab::Boards, SidebarTab::Settings];
                     let open = tabs.iter().position(|tab| tab == sidebar_tab).unwrap_or(0);
@@ -201,6 +179,28 @@ pub(crate) fn show_sidebar(
                         *sidebar_tab = tabs[i];
                     }
                 });
+                // The body spans the padding too, so its scroll bar sits
+                // there. A child Ui keeps it from widening the frame.
+                let body = egui::Rect::from_min_max(
+                    egui::pos2(rect.left(), tab_rect.bottom() + theme::SPACE_3),
+                    egui::pos2(rect.right(), inner.bottom()),
+                );
+                let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body));
+                match sidebar_tab {
+                    SidebarTab::Boards => {
+                        result.board_action = boards::show(&mut body_ui, boards, active_board_id);
+                    }
+                    SidebarTab::Settings => {
+                        settings::show(
+                            &mut body_ui,
+                            settings,
+                            canvas,
+                            about,
+                            semantic_search,
+                            &mut result,
+                        );
+                    }
+                }
             });
         });
     result.interactive_rect = Some(area.response.rect);

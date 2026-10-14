@@ -1,15 +1,15 @@
-//! The Boards tab: every board as a row with the digit that switches to it,
+//! The Boards tab: every board as a row with its full shortcut and item count,
 //! then the row that makes a new one.
 
 use eframe::egui::{self, Align2, FontId};
 
 use super::SidebarBoardAction;
-use crate::app::{BOARD_DIGITS, NEW_BOARD, SWITCH_BOARD};
+use crate::app::{BOARD_DIGITS, NEW_BOARD};
 use crate::ui::shortcut::{self, Key};
 use crate::ui::{card, theme};
 
 const ROW_HEIGHT: f32 = 30.0;
-/// The digit cap's center and the name's start, from the row's left.
+/// The New board icon center and label start, from the row's left.
 const CAP_X: f32 = 17.0;
 const NAME_X: f32 = 32.0;
 /// The count's and Delete's right edge, from the row's right.
@@ -23,12 +23,7 @@ pub(super) fn show(
     active_board_id: i64,
 ) -> Option<SidebarBoardAction> {
     super::column(ui, 18.0, |ui| {
-        ui.horizontal_centered(|ui| {
-            ui.label(theme::editorial_caption("All boards"));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                shortcut::show(ui, SWITCH_BOARD);
-            });
-        });
+        ui.label(theme::editorial_caption("All boards"));
     });
     let mut action = None;
     super::scroll(ui, "sidebar_boards_scroll", |ui| {
@@ -78,14 +73,23 @@ fn board_row(
         egui::Color32::TRANSPARENT
     };
     ui.painter().rect_filled(rect, theme::RADIUS_CONTROL, fill);
-    if let Some(digit) = digit {
-        shortcut::cap(
+    // The full chord uses the same chips as New board. Counts are metadata.
+    let name_left = if let Some(digit) = digit {
+        let keys = shortcut::paint(
             ui.painter(),
-            rect.left_center() + egui::vec2(CAP_X, 0.0),
-            digit,
-            active,
+            rect.left_center() + egui::vec2(TRAILING_X, 0.0),
+            Align2::LEFT_CENTER,
+            &[Key::Command, digit],
+            if active {
+                theme::TEXT
+            } else {
+                theme::TEXT_MUTED
+            },
         );
-    }
+        keys.right() + theme::SPACE_2
+    } else {
+        rect.left() + TRAILING_X
+    };
 
     let detail = FontId::proportional(theme::TYPE_DETAIL);
     let trailing = egui::pos2(rect.right() - TRAILING_X, rect.center().y);
@@ -122,14 +126,14 @@ fn board_row(
         ui.painter().text(
             trailing,
             Align2::RIGHT_CENTER,
-            count.to_string(),
+            format!("{count} {}", if count == 1 { "item" } else { "items" }),
             detail,
             ink,
         )
     };
 
     let name_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.left() + NAME_X, rect.top()),
+        egui::pos2(name_left, rect.top()),
         egui::pos2(trailing_rect.left() - 10.0, rect.bottom()),
     );
     let name_hit = ui.interact(

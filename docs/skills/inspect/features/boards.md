@@ -57,7 +57,14 @@ Preconditions:
   Enter must not confirm, and Escape must keep the board. The board list is
   read back from the library.
 - **Sidebar pages.** Run `run-scenario.sh sidebar-pages`. It renders the
-  "Boards", "General", and "Keys" pages with long board names.
+  "Boards", "General", and "Keys" pages with long board names and explicit
+  item counts. It checks top navigation at full and short window heights,
+  including scrolling General to the update action.
+- **Sidebar board shortcuts.** Run `run-scenario.sh sidebar-board-shortcuts`.
+  It clicks a board row, focuses a sidebar button with Tab, and drives all ten
+  board digits. It also switches boards from Settings and Keys. A double-click
+  opens the rename editor, then typing, Command-1, and Enter prove it keeps
+  its keys and commits the name before board switching resumes.
 - **Restart.** Run `run-scenario.sh session-restart-restore`. It drives a drag,
   a zoom, and ⌘B on the first board, then creates and edits a second board.
   A second app instance reopens the same library with the second board active.
@@ -70,9 +77,6 @@ Preconditions:
 
 ## Gotchas
 
-- Rename by double-click has no scenario.
-- Switching by clicking a board row has no scenario. `sidebar-pages` only
-  hovers a row, and `canvas-navigation-boards` switches with ⌘1.
 - `session-restart-restore` saves and flushes explicitly before restarting.
   The process-exit flush itself is covered by
   `real_startup_and_exit_keep_pending_content_session_and_history`.
