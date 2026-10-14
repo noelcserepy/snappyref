@@ -7,7 +7,7 @@ use super::SnappyRefApp;
 impl SnappyRefApp {
     pub(super) fn handle_history_shortcuts(&mut self, ctx: &egui::Context) {
         // A focused text field owns Undo/Redo; board history must stay put.
-        if ctx.egui_wants_keyboard_input() {
+        if ctx.text_edit_focused() {
             return;
         }
         let undo_requested = ctx.input(|input| {
