@@ -33,10 +33,9 @@ else when direct setup makes the scenario clearer and more deterministic.
 
 Agents verify SnappyRef through these in-process scenarios, not by launching
 the GUI. Most scenarios build the full app inside a `cargo test`, drive it
-with `egui_kittest`, and write an artifact. `search-drag-to-canvas` builds
-only the search overlay and draws its board-state frame. It does not capture
-the app viewport. There is no server to start or keep
-alive. The first run compiles the test binary, which takes a few minutes. Later
+with `egui_kittest`, and write an artifact. Each scenario's own facts live in
+its code, in `run-scenario.sh --list`, and in the [feature maps](features/README.md),
+not in this skill. There is no server to start or keep alive. The first run compiles the test binary, which takes a few minutes. Later
 runs take seconds. The one exception in this skill is `mcp-drive.py`, under
 "Driving the real app through MCP" below.
 
@@ -138,9 +137,7 @@ answer. Gestures, shortcuts, menus, and dialogs still need a scenario.
 Each scenario opens its library in a fresh directory under the OS temp dir and
 removes it on drop. Scenarios never write the user's library or data root, with
 one exception. `semantic-search-real-install` downloads the model into the
-resolved data root and leaves it there. `semantic-search-sidebar-status` only
-reads model status from that root, so its screenshot depends on the machine. Runs
-from the same checkout queue on cargo's build lock, so start them one after
+resolved data root and leaves it there. Runs from the same checkout queue on cargo's build lock, so start them one after
 another.
 
 `mcp-drive.py` sets `SNAPPYREF_DATA_ROOT` to a fresh temp directory and removes
@@ -200,10 +197,6 @@ state setup logic.
 
 Use full app viewport screenshots for new scenarios. If a scenario needs a
 detail, capture the full app and optionally add a derived crop later.
-
-The existing `search-drag-to-canvas` scenario is an exception. It drives only
-the overlay and saves a drawn board-state rectangle. Report that frame as a
-state render, not an app screenshot.
 
 Current screenshot primitive:
 
@@ -297,9 +290,10 @@ Be concise. The artifact is the detailed evidence.
 
 ## Refactor behavior evidence
 
-`cargo test --locked` runs every inspect scenario except the two `#[ignore]`d
-ones, so it is the behavior gate for refactors. `image-format-gallery` needs
-`SNAPPYREF_MEDIA_FIXTURES`, and `semantic-search-real-install` is networked.
+`cargo test --locked` runs every inspect scenario except the `#[ignore]`d ones,
+so it is the behavior gate for refactors. The last field of each entry in
+`scripts/inspect_scenarios.py` marks an ignored scenario, such as the networked
+`semantic-search-real-install`.
 
 Keep the existing tests that describe user-visible outcomes. Add a focused
 scenario only when the boundary being changed lacks coverage. Search ranking
