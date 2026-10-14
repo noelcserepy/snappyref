@@ -468,14 +468,60 @@ mod tests {
             .unwrap();
         persistence.flush().unwrap();
 
-        let stored = library
-            .load_placements()
-            .unwrap()
-            .into_iter()
-            .find(|placement| placement.state.id == record.state.id)
-            .unwrap();
-        assert_eq!(stored.state.geometry.center.x, 42.0);
-        assert_eq!(stored.state.geometry.center.y, 64.0);
+        let snapshot = |placement: &crate::data::Placement| {
+            (
+                placement.state.id,
+                placement.state.geometry,
+                placement.state.archived,
+                placement.content.clone(),
+                placement.lifecycle,
+            )
+        };
+        drop(persistence);
+        drop(library);
+        let reopened = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
+        assert_eq!(
+            reopened
+                .load_placements()
+                .unwrap()
+                .iter()
+                .map(snapshot)
+                .collect::<Vec<_>>(),
+            vec![snapshot(&moved)]
+        );
+        let mut stored_history = reopened.load_document_history().unwrap();
+        let undo = stored_history.undo(board_id).unwrap();
+        assert_eq!(
+            undo.direction,
+            crate::active_board::history::HistoryDirection::Backward
+        );
+        let crate::active_board::history::HistoryAction::Document(action) = undo.action else {
+            panic!("expected document history")
+        };
+        assert_eq!(action.label, "Move");
+        assert_eq!(action.placements.len(), 1);
+        assert_eq!(
+            action.placements[0]
+                .target(undo.direction)
+                .as_ref()
+                .map(snapshot),
+            Some(snapshot(&record))
+        );
+        let redo = stored_history.redo(board_id).unwrap();
+        assert_eq!(
+            redo.direction,
+            crate::active_board::history::HistoryDirection::Forward
+        );
+        let crate::active_board::history::HistoryAction::Document(action) = redo.action else {
+            panic!("expected document history")
+        };
+        assert_eq!(
+            action.placements[0]
+                .target(redo.direction)
+                .as_ref()
+                .map(snapshot),
+            Some(snapshot(&moved))
+        );
     }
 
     #[test]
