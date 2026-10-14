@@ -389,3 +389,5 @@ mod boards;
 mod assets;
 
 mod migrations;
+
+mod session;

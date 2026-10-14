@@ -1,5 +1,5 @@
 use super::boards::{active_board_id, board_is_non_archived};
-use super::connection::Library;
+use super::connection::{Library, write_transaction};
 use crate::data::CanvasBackground;
 use crate::data::UserSession;
 use crate::data::ViewportState;
@@ -119,14 +119,15 @@ impl Library {
     }
 
     pub fn save_user_session(&self, session: &UserSession) -> Result<(), String> {
-        let connection = self.connection()?;
-        let active_board_id = if board_is_non_archived(&connection, session.active_board_id)? {
+        let mut connection = self.connection()?;
+        let transaction = write_transaction(&mut connection, "user session")?;
+        let active_board_id = if board_is_non_archived(&transaction, session.active_board_id)? {
             session.active_board_id
         } else {
-            active_board_id(&connection)?
+            active_board_id(&transaction)?
         };
         let session_payload = encode_user_session_payload(session)?;
-        connection
+        transaction
             .execute(
                 "INSERT INTO user_session (
                     id, session_payload, active_board_id
@@ -139,7 +140,7 @@ impl Library {
             )
             .map_err(|error| format!("failed to save user session: {error}"))?;
 
-        connection
+        transaction
             .execute(
                 "UPDATE boards
                  SET camera_pan_x = ?1,
@@ -157,6 +158,9 @@ impl Library {
             )
             .map_err(|error| format!("failed to save board viewport: {error}"))?;
 
+        transaction
+            .commit()
+            .map_err(|error| format!("failed to commit user session: {error}"))?;
         Ok(())
     }
 }
