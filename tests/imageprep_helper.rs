@@ -57,3 +57,18 @@ fn helper_rejects_corrupt_image() {
     assert!(!output.status.success());
     assert!(!rgba_output.exists());
 }
+
+#[test]
+fn helper_reports_malformed_xpm_without_panicking() {
+    let root = TempRoot::new("snappyref-imageprep-xpm");
+    let source = root.join("malformed.xpm");
+    let rgba_output = root.join("output.rgba");
+    std::fs::write(&source, "\"1 1 1 1\" \"é c #ff0000\" \"a\"").unwrap();
+    let output = run_helper(&source, &rgba_output);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("XPM strings must contain only ASCII characters")
+    );
+}

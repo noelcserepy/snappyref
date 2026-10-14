@@ -1062,6 +1062,21 @@ fn serve_bytes_once(
 }
 
 /// Reserve a real Loading Placement before worker tests prepare its content.
+fn next_preparation(worker: &ImagePrepWorker) -> ImagePrepResult {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(result) = worker.try_recv_up_to(1).into_iter().next() {
+            return result;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "preparation did not finish: {:?}",
+            worker.stats()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 pub(super) fn reserve_import_fixture(
     library: &Library,
     mut request: ImportRequest,
@@ -1167,4 +1182,102 @@ fn local_intake_failures_unicode_dedup_and_managed_source_restart() {
             ImagePrepResult::Loaded(_)
         ));
     }
+}
+
+#[test]
+fn malformed_xpm_fails_its_import_and_the_worker_accepts_the_next_image() {
+    let root = TempRoot::new("malformed-xpm-worker");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let worker = ImagePrepWorker::new_with_config(
+        library.clone(),
+        eframe::egui::Context::default(),
+        None,
+        ImagePrepWorkerConfig::single_worker(),
+    );
+    for (index, contents) in [
+        "\"1 1 1 1\" \"é c #ff0000\" \"a\"",
+        "\"1 1 1 1\" \"a c #ff0000\" \"é\"",
+        "\"1 1 1 1\" \"a c #aé123\" \"a\"",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let source = root.join(format!("bad-{index}.xpm"));
+        fs::write(&source, contents).unwrap();
+        let mut request = reserve_import_fixture(
+            &library,
+            ImportRequest {
+                target_board_id: 1,
+                queue_id: index as u64 + 10,
+                placement_id: 0,
+                source: ImportSource::Path(source.clone()),
+                reserved_world: eframe::egui::Pos2::ZERO,
+                max_texture_side: 16,
+                canvas_image_settings: CanvasImageSettings::default(),
+                placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+                trace: None,
+            },
+        );
+        request.queue_id = index as u64 + 10;
+        let placement_id = request.placement_id;
+        worker
+            .enqueue(super::ImagePrepRequest::Import(request))
+            .unwrap();
+        match next_preparation(&worker) {
+            ImagePrepResult::Failed {
+                target_board_id,
+                queue_id,
+                placement_id: failed_id,
+                context,
+                error,
+            } => {
+                assert_eq!(
+                    (target_board_id, queue_id, failed_id),
+                    (Some(1), Some(index as u64 + 10), Some(placement_id))
+                );
+                assert_eq!(context, source.display().to_string());
+                assert_eq!(
+                    error.split("; native fallback failed:").next().unwrap(),
+                    format!(
+                        "{}: XPM strings must contain only ASCII characters",
+                        source.display()
+                    )
+                );
+            }
+            other => panic!("expected failed XPM completion, got {other:?}"),
+        }
+    }
+    let source = root.join("valid.xpm");
+    fs::write(&source, "\"1 1 1 1\" \"a c #1e64dc\" \"a\"").unwrap();
+    let mut request = reserve_import_fixture(
+        &library,
+        ImportRequest {
+            target_board_id: 1,
+            queue_id: 20,
+            placement_id: 0,
+            source: ImportSource::Path(source),
+            reserved_world: eframe::egui::pos2(12.0, 34.0),
+            max_texture_side: 16,
+            canvas_image_settings: CanvasImageSettings::default(),
+            placement_target_area: DEFAULT_PLACEMENT_TARGET_AREA,
+            trace: None,
+        },
+    );
+    request.queue_id = 20;
+    worker
+        .enqueue(super::ImagePrepRequest::Import(request))
+        .unwrap();
+    match next_preparation(&worker) {
+        ImagePrepResult::Loaded(loaded) => {
+            assert_eq!(loaded.queue_id, Some(20));
+            assert_eq!((loaded.preview_width, loaded.preview_height), (1, 1));
+            assert_eq!(loaded.preview_rgba, [30, 100, 220, 255]);
+            assert_eq!(
+                loaded.placement.state.geometry.center,
+                eframe::egui::pos2(12.0, 34.0)
+            );
+        }
+        other => panic!("expected next import to load, got {other:?}"),
+    }
+    assert_eq!(worker.stats().in_flight, 0);
 }
