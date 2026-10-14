@@ -2996,22 +2996,19 @@ fn inspect_search_keyboard_placement_writes_artifact() {
     scenario.capture_screen("screen-006-all-results-placed", &mut harness);
     harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Z);
     harness.step();
-    harness
-        .state_mut()
-        .search
+    harness.state_mut().flush_persistence();
+    drop(harness);
+    let mut app = test_app(Some(library.clone()));
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+    app.search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+    app.search
         .set_recent_searches(vec!["stone arches".into(), "blue chairs".into()]);
-    harness.state_mut().search.overlay.results.clear();
-    harness.state_mut().search.overlay.result_selection.clear();
-    harness.state_mut().search.overlay.query.clear();
-    harness
-        .state_mut()
-        .search
-        .overlay
-        .active_recent_search_index = 0;
-    harness.state_mut().search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
-    harness.state_mut().search.overlay.open = true;
-    harness.state_mut().search.overlay.focus_requested = true;
+    app.search.overlay.open = true;
+    app.search.overlay.focus_requested = true;
+    let mut harness = app_full_harness(app);
     harness.step();
+    scenario.capture_screen("screen-007-recents-before-keyboard", &mut harness);
     harness.key_press(egui::Key::ArrowDown);
     harness.step();
     harness.key_press(egui::Key::Enter);
