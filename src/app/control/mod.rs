@@ -247,6 +247,10 @@ impl SnappyRefApp {
     }
 
     pub(super) fn drive_control(&mut self, ctx: &egui::Context) {
+        self.drive_control_at(ctx, Instant::now());
+    }
+
+    fn drive_control_at(&mut self, ctx: &egui::Context, now: Instant) {
         while let Some(request) = self
             .control
             .server
@@ -259,7 +263,7 @@ impl SnappyRefApp {
                 }
                 Ok(Step::Wait(timeout, on)) => self.control.waiting.push(Waiting {
                     responder: request.responder,
-                    deadline: Instant::now() + timeout,
+                    deadline: now + timeout,
                     on,
                 }),
                 Err(error) => request
@@ -268,7 +272,7 @@ impl SnappyRefApp {
             }
         }
         for waiting in std::mem::take(&mut self.control.waiting) {
-            if let Some(waiting) = self.poll_waiting(waiting) {
+            if let Some(waiting) = self.poll_waiting(waiting, now) {
                 self.control.waiting.push(waiting);
             }
         }
@@ -920,8 +924,8 @@ impl SnappyRefApp {
     }
 
     /// Answers the call and returns None, or hands it back to keep waiting.
-    fn poll_waiting(&mut self, mut waiting: Waiting) -> Option<Waiting> {
-        let timed_out = Instant::now() >= waiting.deadline;
+    fn poll_waiting(&mut self, mut waiting: Waiting, now: Instant) -> Option<Waiting> {
+        let timed_out = now >= waiting.deadline;
         let result = match &mut waiting.on {
             // `answer_screenshots` sends the image. This arm only gives up.
             WaitingOn::Screenshot(_) => {
@@ -934,55 +938,13 @@ impl SnappyRefApp {
                 Some(result) => result,
                 None => return Some(waiting),
             },
-            WaitingOn::Search {
-                request_id,
-                query,
-                similar_to,
-                limit,
-            } => match self.search.take_direct_search_result(*request_id) {
-                Some(SearchQueryResult::Completed { results, .. }) => {
-                    let ids = results
-                        .iter()
-                        .map(|result| result.asset_id)
-                        .collect::<Vec<_>>();
-                    let files = self
-                        .library
-                        .as_ref()
-                        .and_then(|library| library.load_assets(&ids).ok())
-                        .unwrap_or_default();
-                    let assets = results
-                        .iter()
-                        .map(|result| {
-                            json!({
-                                "asset": result.asset_id,
-                                "width": result.asset_width,
-                                "height": result.asset_height,
-                                "file": files.get(&result.asset_id).map(|asset| &asset.filename),
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    Ok(json!({"assets": assets}))
+            WaitingOn::Search { request_id, .. } => {
+                let result = self.search.take_direct_search_result(*request_id);
+                match self.poll_control_search(&mut waiting, result, timed_out) {
+                    Some(result) => result,
+                    None => return Some(waiting),
                 }
-                Some(SearchQueryResult::Failed { error, .. }) => Err(error),
-                // The model was still loading. Ask again until it answers.
-                Some(SearchQueryResult::ModelPending { .. }) if !timed_out => {
-                    match self
-                        .search
-                        .start_direct_search(query.as_deref(), *similar_to, *limit)
-                    {
-                        Ok(next) => {
-                            *request_id = next;
-                            return Some(waiting);
-                        }
-                        Err(error) => Err(error),
-                    }
-                }
-                None if !timed_out => return Some(waiting),
-                _ => {
-                    self.search.forget_direct_search(*request_id);
-                    Err("The search model is still loading. Try again in a moment.".to_owned())
-                }
-            },
+            }
             WaitingOn::PureRef(_) if timed_out => Err(
                 "The PureRef file took too long. SnappyRef finishes it in the background."
                     .to_owned(),
@@ -1001,6 +963,68 @@ impl SnappyRefApp {
         };
         waiting.responder.send(ControlReply::from_result(result));
         None
+    }
+
+    /// Resolves one direct search result or renews it while the model loads.
+    fn poll_control_search(
+        &mut self,
+        waiting: &mut Waiting,
+        result: Option<SearchQueryResult>,
+        timed_out: bool,
+    ) -> Option<Result<Value, String>> {
+        let WaitingOn::Search {
+            request_id,
+            query,
+            similar_to,
+            limit,
+        } = &mut waiting.on
+        else {
+            unreachable!()
+        };
+        Some(match result {
+            Some(SearchQueryResult::Completed { results, .. }) => {
+                let ids = results
+                    .iter()
+                    .map(|result| result.asset_id)
+                    .collect::<Vec<_>>();
+                let files = self
+                    .library
+                    .as_ref()
+                    .and_then(|library| library.load_assets(&ids).ok())
+                    .unwrap_or_default();
+                let assets = results
+                    .iter()
+                    .map(|result| {
+                        json!({
+                            "asset": result.asset_id,
+                            "width": result.asset_width,
+                            "height": result.asset_height,
+                            "file": files.get(&result.asset_id).map(|asset| &asset.filename),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                Ok(json!({"assets": assets}))
+            }
+            Some(SearchQueryResult::Failed { error, .. }) => Err(error),
+            // The model was still loading. Ask again until it answers.
+            Some(SearchQueryResult::ModelPending { .. }) if !timed_out => {
+                match self
+                    .search
+                    .start_direct_search(query.as_deref(), *similar_to, *limit)
+                {
+                    Ok(next) => {
+                        *request_id = next;
+                        return None;
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            None if !timed_out => return None,
+            _ => {
+                self.search.forget_direct_search(*request_id);
+                Err("The search model is still loading. Try again in a moment.".to_owned())
+            }
+        })
     }
 
     /// What `add_images` answers, or None while an image still loads. The
@@ -1105,3 +1129,6 @@ fn screenshot_reply(image: &egui::ColorImage) -> ControlReply {
         Err(error) => ControlReply::from_result(Err(error)),
     }
 }
+
+#[cfg(test)]
+mod tests;
