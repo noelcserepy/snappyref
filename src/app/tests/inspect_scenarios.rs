@@ -2402,7 +2402,9 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
     let durable = library.load_placements().unwrap();
     scenario.assertion(
         "explicit flush preserves exactly the loaded cropped Asset relation",
-        durable.iter().map(|p| p.asset_id()).collect::<Vec<_>>() == vec![Some(cropped_asset_id)],
+        durable.iter().all(Placement::is_loaded)
+            && durable.iter().map(|p| p.asset_id()).collect::<Vec<_>>()
+                == vec![Some(cropped_asset_id)],
     );
 
     let report = scenario.finish();

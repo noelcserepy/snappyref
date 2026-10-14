@@ -326,7 +326,7 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
         harness.step();
     }
     scenario.assertion(
-        "Undo removes the newly placed label",
+        "tiny A and L clicks create no segment",
         (harness.state().canvas.all_annotation_ids()) == (segment_ids),
     );
     scenario.assertion(
