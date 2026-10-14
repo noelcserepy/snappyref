@@ -67,7 +67,9 @@ by a key they do not know.
 The run refuses to upload to a tag that is already published, because installed
 apps check those zips against the published `latest.json`. Bump the version
 first, even for a dry run. A dry run dispatches with `publish_update=false`. The
-zips land on the draft here, with no `latest.json` and no bridge draft.
+zips land on the draft here, with no `latest.json` and no bridge draft. A dry run
+cannot replace the zips of a signed draft. Rerun with `publish_update` or delete
+the draft.
 
 ```sh
 gh workflow run publish-full-release.yml --ref main -f ref=main -f publish_update=false
@@ -114,7 +116,10 @@ Build Windows App and Build macOS App attach their app archive and descriptor to
 `windows_build_tag` and `macos_build_tag` to reuse those builds without compiling.
 Blank build tags use the target `release_tag`. Every successful Package Release Zips
 run attaches its final zips to that release, creating a draft if the tag has no release.
-It refuses a published release, like Full Release. Full Release uses the same packaging action,
+Both workflows upload through `scripts/upload-release-assets.sh`, which keeps a
+release's zips and signed `latest.json` matching. It refuses a published release,
+and it refuses new zips on a draft that holds a signed `latest.json` unless a new
+`latest.json` comes with them. Full Release uses the same packaging action,
 attaches the zips to its draft, signs its manifest, and removes its temporary build
 handoff assets.
 

@@ -215,33 +215,17 @@ jobs:
         run: |
           rm -rf "${RUNNER_TEMP}/signing"
 
-      - name: Create source-repo draft release
+      - name: Upload to source-repo draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${{ needs.resolve.outputs.tag }}"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" \
-              --target "${{ needs.resolve.outputs.sha }}" \
-              --title "SnappyRef $tag" \
-              --notes "Draft SnappyRef release." \
-              --draft
-          elif [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" = true ]; then
-            # An earlier run's draft keeps that run's target until publishing creates the tag.
-            gh release edit "$tag" --target "${{ needs.resolve.outputs.sha }}"
-          else
-            # Installed apps download these zips and check them against the
-            # published latest.json, so a published release is never rewritten.
-            echo "$tag is already published. Bump the version for a new release." >&2
-            exit 1
-          fi
           assets=("${RUNNER_TEMP}"/release-assets/*.zip)
           # A dry run signs no latest.json.
           if [ -f "${RUNNER_TEMP}/release-assets/latest.json" ]; then
             assets+=("${RUNNER_TEMP}/release-assets/latest.json")
           fi
-          gh release upload "$tag" "${assets[@]}" --clobber
+          scripts/upload-release-assets.sh "${{ needs.resolve.outputs.tag }}" "${{ needs.resolve.outputs.sha }}" "${assets[@]}"
 
       # Apps from v0.3.0 and older read latest.json from snappyref-dist. This
       # copy's zip URLs point at this repo, so they update here once and then

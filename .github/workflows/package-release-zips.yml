@@ -78,16 +78,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${{ steps.package.outputs.tag }}"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" \
-              --title "SnappyRef $tag" \
-              --notes "Draft SnappyRef release." \
-              --draft
-          elif [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" != true ]; then
-            # Installed apps check these zips against the published latest.json,
-            # so a published release is never rewritten.
-            echo "$tag is already published. Bump the version for a new release." >&2
-            exit 1
-          fi
-          gh release upload "$tag" "${RUNNER_TEMP}"/release-assets/*.zip --clobber
+          scripts/upload-release-assets.sh "${{ steps.package.outputs.tag }}" "" "${RUNNER_TEMP}"/release-assets/*.zip
