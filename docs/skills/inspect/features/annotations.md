@@ -66,7 +66,8 @@ Preconditions:
   the library. It types "first", Shift+Enter, and "second", commits with Enter,
   reads "first\nsecond" back after a flush, and undoes the whole session.
   Finally it exits with an unfinished edit and checks the saved text and
-  batched history after reopening.
+  batched history after reopening. Clearing a label and committing removes
+  it; one Undo restores its original text.
 - **Board of real images.** Run `run-scenario.sh annotation-board`.
   It seeds six readme-board images, places labels with T, draws arrows
   from labels and rectangles with S, and colors them with number keys. Frames

@@ -920,6 +920,28 @@ fn inspect_annotation_text_sessions_writes_artifact() {
         "exit stores one Undo step back to hello",
         restored.canvas.annotation_for_id(id).unwrap().text == "hello",
     );
+    let mut restored = app_full_harness_with_step_dt(restored, 1. / 60.);
+    restored.hover_at(test_screen_rect().center() + egui::vec2(300., 200.));
+    restored.step();
+    shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Enter);
+    restored.step();
+    shortcut(&mut restored, CMD, egui::Key::A);
+    shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Backspace);
+    shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Enter);
+    scenario.assertion(
+        "an empty committed label is removed",
+        restored.state().canvas.annotation_for_id(id).is_none(),
+    );
+    shortcut(&mut restored, CMD, egui::Key::Z);
+    scenario.assertion(
+        "one Undo restores the label cleared during editing",
+        restored
+            .state()
+            .canvas
+            .annotation_for_id(id)
+            .is_some_and(|a| a.text == "hello"),
+    );
+    scenario.capture_screen("undo-cleared-label", &mut restored);
     let report = scenario.finish();
     assert!(
         report.passed,
