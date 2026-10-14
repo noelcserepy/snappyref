@@ -395,9 +395,8 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
             &[1.0, 0.0],
         )
         .unwrap();
-    let connection = Connection::open(root.join("library.db")).unwrap();
-    let failure_count: i64 = connection.query_row("SELECT failure_count FROM asset_embeddings WHERE asset_id = ?1 AND model_key = 'mobileclip_s0'", [placement.require_loaded_asset().id], |row| row.get(0)).unwrap();
-    assert_eq!(failure_count, 0);
+    drop(library);
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     assert_eq!(
         library
             .load_asset_embedding(placement.require_loaded_asset().id, "mobileclip_s0")
@@ -410,6 +409,25 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
             .unwrap()
             .is_none()
     );
+    library
+        .record_retryable_asset_embedding_failure(
+            placement.require_loaded_asset().id,
+            "mobileclip_s0",
+            768,
+            "failure after successful embedding",
+            3_000,
+        )
+        .unwrap();
+    assert_eq!(
+        library.next_embedding_retry_at_for_model("mobileclip_s0"),
+        Ok(Some(3_000))
+    );
+    let job = library
+        .next_embedding_backfill_job_for_model("mobileclip_s0", 3_000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.asset_id, placement.require_loaded_asset().id);
+    assert_eq!(job.original_path, path);
 }
 
 #[test]
