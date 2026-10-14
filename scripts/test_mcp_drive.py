@@ -66,7 +66,7 @@ for line in sys.stdin:
                 calls.write_text(json.dumps([[tool, arguments]]))
                 with patch.object(drive, 'ROOT', root), \
                         patch.object(drive, 'grant_full_access', side_effect=lambda exe, env, library: library.mkdir(parents=True)), \
-                        patch('sys.argv', ['mcp-drive', str(calls), '--exe', str(exe)]):
+                        patch('sys.argv', ['mcp-drive', str(calls), '--exe', str(exe), '--timeout', '30']):
                     self.assertEqual(drive.main(), 0 if passed else 1)
                 self.assertEqual(json.loads((root / 'request.json').read_text()),
                                  {'name': tool, 'arguments': arguments})

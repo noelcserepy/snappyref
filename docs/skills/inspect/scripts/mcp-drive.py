@@ -15,6 +15,7 @@ focus. `screenshot` answers from there too.
 import argparse
 import base64
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -201,24 +202,25 @@ def main():
     parser.add_argument('--exe', type=Path, default=ROOT / 'target/debug/snappyref')
     parser.add_argument('--timeout', type=float, default=60, help='deadline in seconds for each MCP reply and shutdown')
     args = parser.parse_args()
-    if args.timeout <= 0:
-        parser.error('--timeout must be positive')
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        parser.error('--timeout must be a positive finite number')
     if not args.exe.is_file():
         parser.error(f'{args.exe} is missing. Run `cargo build --locked --bin snappyref` first.')
 
     scenario_dir = ROOT / 'target/snappyref-inspect/mcp-drive'
     artifact = scenario_dir / f'run-{time.time_ns()}'
-    (artifact / 'frames').mkdir(parents=True)
-    calls = json.loads(args.calls.read_text().replace('$REPO', str(ROOT)).replace('$OUT', str(artifact)))
-    data_root = Path(tempfile.mkdtemp(prefix='snappyref-mcp-'))
-    # The update check would otherwise reach the published release.
-    env = dict(os.environ, SNAPPYREF_DATA_ROOT=str(data_root),
-               SNAPPYREF_UPDATE_MANIFEST_URL='http://127.0.0.1:9/mcp-drive-no-updates')
-    env.pop('SNAPPYREF_LIBRARY_ROOT', None)
-    endpoint = data_root / 'library/control.json'
-    session, app_pid = None, None
+    session, app_pid, data_root, died = None, None, None, None
     tools, assertions, frames, replies = [], [], [], {}
+    artifact.mkdir(parents=True)
     try:
+        (artifact / 'frames').mkdir()
+        calls = json.loads(args.calls.read_text().replace('$REPO', str(ROOT)).replace('$OUT', str(artifact)))
+        data_root = Path(tempfile.mkdtemp(prefix='snappyref-mcp-'))
+        # The update check would otherwise reach the published release.
+        env = dict(os.environ, SNAPPYREF_DATA_ROOT=str(data_root),
+                   SNAPPYREF_UPDATE_MANIFEST_URL='http://127.0.0.1:9/mcp-drive-no-updates')
+        env.pop('SNAPPYREF_LIBRARY_ROOT', None)
+        endpoint = data_root / 'library/control.json'
         grant_full_access(str(args.exe), env, data_root / 'library')
         # An endpoint nothing answers on makes `--mcp` start the app itself.
         endpoint.write_text(json.dumps({'port': 1, 'token': 'stale'}))
@@ -259,9 +261,12 @@ def main():
         # names an older pass.
         died = {'type': 'assertion', 'passed': False, 'name': f'the drive finishes: {error}'}
         assertions.append(died)
-        with open(artifact / 'events.ndjson', 'a') as events:
-            events.write(json.dumps(died) + '\n')
-        print(f"FAIL: {died['name']}")
+        try:
+            with open(artifact / 'events.ndjson', 'a') as events:
+                events.write(json.dumps(died) + '\n')
+        except OSError as logging_error:
+            assertions.append({'type': 'assertion', 'passed': False,
+                               'name': f'events are recorded: {logging_error}'})
     finally:
         cleanup_errors = []
         if session:
@@ -290,7 +295,8 @@ def main():
         for error in cleanup_errors:
             assertions.append({'type': 'assertion', 'passed': False,
                                'name': f'cleanup finishes: {error}'})
-        shutil.rmtree(data_root, ignore_errors=True)
+        if data_root is not None:
+            shutil.rmtree(data_root, ignore_errors=True)
     failed = [assertion['name'] for assertion in assertions if not assertion['passed']]
     status = 'fail' if failed else 'pass'
     (artifact / 'report.json').write_text(json.dumps({
@@ -298,6 +304,8 @@ def main():
         'first_failure': failed[0] if failed else None, 'assertions': assertions, 'frames': frames,
     }, indent=2))
     (scenario_dir / 'latest.txt').write_text(str(artifact))
+    if died is not None:
+        print(f"FAIL: {died['name']}")
     print(f'tools={len(tools)}\ncalls={len(assertions)}\nfailed={len(failed)}\n'
           f'status={status}\nartifact={artifact}')
     return 1 if failed else 0
