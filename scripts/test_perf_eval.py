@@ -5,6 +5,7 @@ import tempfile
 import json
 import os
 import signal
+import subprocess
 from unittest.mock import Mock, patch
 from pathlib import Path
 
@@ -154,17 +155,21 @@ class EvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             directory = Path(scratch)
             binary = directory / 'hung-app'
-            binary.write_text("#!/usr/bin/env python3\nimport os, pathlib, time\n"
-                              "pathlib.Path(os.environ['SNAPPYREF_DATA_ROOT']).write_text(str(os.getpid()))\n"
-                              "time.sleep(60)\n")
+            binary.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(60)\n")
             binary.chmod(0o755)
-            pid_file = directory / 'pid'
             trial = directory / 'trial'
-            with self.assertRaises(TimeoutError):
-                run_case(binary, directory, trial, pid_file, 'import-1', timeout=0.5)
+            # Keep the spawned app, so the check holds even when a loaded
+            # machine times the app out before it starts.
+            started, popen = [], subprocess.Popen
+            def spawn(*args, **kwargs):
+                started.append(popen(*args, **kwargs))
+                return started[-1]
+            with patch('perf_eval.subprocess.Popen', side_effect=spawn), self.assertRaises(TimeoutError):
+                run_case(binary, directory, trial, directory, 'import-1', timeout=0.5)
             self.assertFalse(json.loads((trial / 'result.json').read_text())['valid'])
+            self.assertIn(started[0].returncode, (-signal.SIGTERM, -signal.SIGKILL))
             with self.assertRaises(ProcessLookupError):
-                os.kill(int(pid_file.read_text()), 0)
+                os.kill(started[0].pid, 0)
 
     def test_timeout_kills_a_helper_that_ignores_termination(self):
         with tempfile.TemporaryDirectory() as scratch:
