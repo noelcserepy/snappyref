@@ -148,7 +148,11 @@ impl SemanticSearchService {
         let (search_result_tx, search_result_rx) = mpsc::channel::<SearchQueryResult>();
         let model_state = Arc::new(Mutex::new(ModelState::Uninitialized));
         let text_embedding_cache = Arc::new(Mutex::new(HashMap::new()));
-        let asset_index = AssetIndex::new(library.clone(), config.model.model_key);
+        let asset_index = AssetIndex::new(
+            library.clone(),
+            config.model.model_key,
+            config.model.dimension,
+        );
         let worker_result_tx = result_tx.clone();
         let worker_library = library.clone();
         let worker_state = model_state.clone();
@@ -773,6 +777,70 @@ mod tests {
             Err(super::SearchQueryError::Failed("Loading model…".to_owned()))
         );
         assert!(index_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn image_pivot_search_skips_malformed_persisted_embeddings() {
+        for corruption in ["length", "dimension", "nonfinite"] {
+            let root = TempRoot::new("snappyref-corrupt-embedding-service-test");
+            let library = Library::initialize(root.join("library")).unwrap();
+            let mut assets = Vec::new();
+            for (name, pixel) in [
+                ("source", [255, 0, 0, 255]),
+                ("valid", [0, 255, 0, 255]),
+                ("corrupt", [0, 0, 255, 255]),
+            ] {
+                let path = library.store_rgba_image(name, &pixel, 1, 1).unwrap();
+                let asset = library
+                    .register_original(&path, "image/png", 1, 1, 4, None)
+                    .unwrap();
+                library
+                    .upsert_asset_embedding_blob(asset.id, "test-model", &[1.0, 0.0])
+                    .unwrap();
+                assets.push(asset);
+            }
+            let blob = match corruption {
+                "length" => vec![0, 0, 0],
+                "dimension" => 1.0_f32.to_ne_bytes().to_vec(),
+                _ => [f32::NAN, 0.0]
+                    .into_iter()
+                    .flat_map(f32::to_ne_bytes)
+                    .collect(),
+            };
+            rusqlite::Connection::open(root.join("library/library.db"))
+                .unwrap()
+                .execute(
+                    "UPDATE asset_embeddings SET embedding_blob = ?1 WHERE asset_id = ?2",
+                    rusqlite::params![blob, assets[2].id],
+                )
+                .unwrap();
+            drop(library);
+            let library = Library::initialize(root.join("library")).unwrap();
+            let service = SemanticSearchService::new(
+                library,
+                SemanticSearchConfig {
+                    model: test_model_spec(),
+                    canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+                },
+            )
+            .unwrap();
+            let results = service
+                .search_with_image_pivot_with_limit(assets[0].id, None, 5)
+                .unwrap();
+            assert_eq!(
+                results
+                    .iter()
+                    .map(|hit| (
+                        hit.asset_id,
+                        hit.asset_width,
+                        hit.asset_height,
+                        hit.asset_preview_path.clone()
+                    ))
+                    .collect::<Vec<_>>(),
+                vec![(assets[1].id, 1, 1, None)],
+                "{corruption}"
+            );
+        }
     }
 
     #[test]
