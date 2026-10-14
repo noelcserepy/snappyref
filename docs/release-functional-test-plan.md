@@ -1,6 +1,6 @@
 # Release feature list
 
-Every user-facing feature on current main, one row each, for a release QA pass
+User-facing features on current main, for a release QA pass
 on macOS and Windows. A computer-use agent can walk it top to bottom, except
 the rows under [Human only](#human-only). App updating and the networked
 smokes are out of scope.
@@ -12,7 +12,8 @@ The Covered column names the inspect scenario (`inspect::name`, run with
 `docs/skills/inspect/scripts/run-scenario.sh name`) or harness test that checks
 every action and result in the row. Those run in `cargo test --locked`, so a
 manual pass skips them. A test that checks only part of a row does not count,
-and that row stays blank. Rows that depend on the OS, such as Finder or
+and that row stays blank or says Partial. Partial rows still need the full manual
+check. Rows that depend on the OS, such as Finder or
 Explorer drops, the system clipboard, real wheel or trackpad input, and window
 stacking, always need a native run.
 
@@ -43,7 +44,7 @@ stacking, always need a native run.
 | WIN-4 | Switch the sidebar between Boards and Settings tabs, scroll each | Both tabs reachable, scroll does not pan or zoom the canvas | |
 | WIN-5 | Resize the window small, then large; minimize and restore | Canvas redraws, sidebar and cards stay usable, no blank viewport | |
 | WIN-6 | Settings > Always on top on, focus another app; toggle off with `Mod+Shift+T` | On keeps SnappyRef above other windows, off restores normal stacking, setting and shortcut agree | |
-| WIN-7 | Read Settings > Shortcuts and the version line | Shortcuts use the platform's keys, version matches the build. Do not click update controls | |
+| WIN-7 | Read Settings > Keys and Settings > General > About | Shortcuts use the platform's keys, version matches the build. Do not click update controls | |
 
 ## Boards
 
@@ -77,6 +78,13 @@ stacking, always need a native run.
 | IMP-14 | Hover an animated GIF, then move the pointer away | Animation plays while hovered or selected and holds its frame otherwise | |
 | IMP-15 | Start a large batch, switch to another board right away, come back later | Batch lands only on the first board, complete | |
 | IMP-16 | After IMP-13, press `P` (Dedupe library) with no text field focused, then search and switch boards | Status reports the duplicates removed or none found; every board keeps its images, search lists each image once | |
+
+## PureRef file exchange
+
+| ID | Do | Expect | Covered |
+| --- | --- | --- | --- |
+| PUR-1 | Drop a `.pur` board with repeated images, rotation, crop and notes; Undo and Redo | New board named after the file, images retain placement geometry and stacking, notes become textboxes; Undo removes the board, Redo restores it | Partial: `inspect::pureref-import` does not check Redo |
+| PUR-2 | On a board with loaded images, a textbox and an arrow, press `Mod+Shift+E`, choose a path; open the file in PureRef | Native save panel writes a `.pur` file; images and textbox appear in PureRef, omitted arrow counted in status | Partial: `inspect::pureref-export` substitutes the save path and reads with the codec |
 
 ## Canvas navigation
 
@@ -129,7 +137,7 @@ There is no flip command. Mirrored images only come from EXIF (IMP-10).
 | ANN-5 | Click away, double-click to edit again, then select and press Enter, then Escape | Text kept, editing resumes both ways, Escape ends editing | |
 | ANN-6 | Select a label, press 1 to 5 and Shift+1 to 5; move it | Keys change the label, the chip resizes to its text, moving does not edit text | |
 | ANN-7 | While editing text, type Q, W, E, G, P, C, R, A, L, S, T, F, H, Delete and `Mod+Z` | Text edits only, no board command fires | |
-| ANN-8 | Press S, then drag; select the rectangle, press Shift+1 to 5 and F three times | Border weight follows the size key; fill goes solid, none, then back to tint | `inspect::annotation-style-keys` |
+| ANN-8 | Press S, then drag; select the rectangle, press Shift+1 to 5 and F three times | Border weight follows the size key; fill goes solid, none, then back to tint | Partial: `inspect::annotation-style-keys` checks Shift+5 and two F changes |
 
 ## Grouping and Group card
 
@@ -164,11 +172,11 @@ There is no flip command. Mirrored images only come from EXIF (IMP-10).
 | ID | Do | Expect | Covered |
 | --- | --- | --- | --- |
 | ORD-1 | `Mod+.` and `Mod+,` on overlapping items; then context menu Bring to front, Send to back | Selection moves above or below others, relative order kept | |
-| ORD-2 | Context menu with nothing selected | Stack order items disabled | `stack_order_context_actions_are_disabled_without_canvas_item_selection` |
+| ORD-2 | Context menu with nothing selected | Stack order items disabled | |
 | CPY-1 | `Mod+D` and context menu Duplicate on a mixed selection | Offset copies, selected, editable on their own | |
 | CPY-2 | `Mod+C` a cropped, rotated image, `Mod+V` on the same and another board; repeat with context menu Copy and Paste | Copies keep crop and rotation | |
 | CPY-3 | Copy one SnappyRef image, paste into an external image editor | Pixels arrive | |
-| CPY-4 | Copy from PureRef, paste into SnappyRef | Referenced images import once | |
+| CPY-4 | On Windows, copy from PureRef, paste into SnappyRef | Referenced images import once | |
 | CPY-5 | Delete, then context menu Delete | Items leave this board only, Library keeps the image | |
 | CPY-6 | Context menu > Remove from library…, cancel, then confirm | Cancel keeps all; confirm removes the image from every board and from search | |
 | CPY-7 | Open the context menu, dismiss with Escape and with an outside click | Menu closes, nothing underneath fires | |
@@ -208,6 +216,14 @@ Semantic rows need the model installed in the data root.
 | SET-2 | Rotation snap and Placement gap: type 0, max, -4, blank, `abc`, click away | Clamps to range, invalid text restores the previous value | |
 | SET-3 | Semantic Search: Remove, cancel, Remove and confirm | Cancel keeps it; confirm removes model availability, boards and images stay | |
 | SET-4 | Type shortcut letters and digits into every text field: board name, group name, picker, search, textbox, settings numbers | Text only, no board command | |
+
+## AI control
+
+| ID | Do | Expect | Covered |
+| --- | --- | --- | --- |
+| AI-1 | Settings > General > AI control: choose Ask, Copy MCP config, configure an AI client; read and edit the board, then Undo | Config names this install; client reads the board and its batch edit undoes as one step | Partial: `inspect::ai-control` covers access and edits, not config copy or client setup |
+| AI-2 | At Ask, request removal of a Library image through the client, cancel, then repeat and confirm; choose Full and repeat with another image; choose Off | Ask waits for the app confirmation, cancel keeps the image, confirm removes it; Full removes without asking; Off refuses access | Partial: `inspect::ai-control` confirms removal at Ask and switches Off |
+| AI-3 | With Ask or Full enabled, quit SnappyRef and make a client tool call | App starts behind other windows and answers, with existing boards intact | |
 
 ## Dialogs
 

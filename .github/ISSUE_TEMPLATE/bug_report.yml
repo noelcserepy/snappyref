@@ -13,7 +13,7 @@ body:
     id: app_version
     attributes:
       label: App version
-      description: Shown in the sidebar (Cmd+B / Ctrl+B) under Version. Write "source" plus the commit hash if you built it yourself.
+      description: Shown in the sidebar (Cmd+B / Ctrl+B) under Settings > General > About. Write "source" plus the commit hash if you built it yourself.
       placeholder: v0.2.0
     validations:
       required: true
