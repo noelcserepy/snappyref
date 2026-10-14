@@ -32,36 +32,36 @@ Avoid:
 ## Inputs
 
 - Release number: use the user's provided release number. If missing, infer it from the latest unreleased version/tag context when obvious; otherwise ask for it.
-- Previous release: select the latest published app release from `noelcserepy/snappyref-dist`, excluding drafts and `semantic-search`. Resolve its tag in `noelcserepy/snappyref` for the source commit boundary. Never use a dist commit or `targetCommitish` as a source boundary.
+- Previous release: select the latest published app release from `noelcserepy/snappyref`, excluding drafts and `semantic-search`. Its tag is the source commit boundary. Never use `targetCommitish` as a source boundary.
 - Target commit: resolve the new release tag or intended release ref to its exact commit. Use `HEAD` only when that is the intended release code.
 - Change set: commits included in the target but absent from the previous release, with their associated PRs.
 - Do not use the PR that updates the version number as the release boundary. Version bumps may happen before or after release work and are not reliable.
 
 ## Gathering PRs
 
-1. Select the latest published app release in the public distribution repository:
+1. Select the latest published app release:
 
 ```sh
 git status --short
-gh api --paginate repos/noelcserepy/snappyref-dist/releases --slurp | \
+gh api --paginate repos/noelcserepy/snappyref/releases --slurp | \
   jq 'add | map(select(.draft == false and .published_at != null and .tag_name != "semantic-search" and any(.assets[]?; .name | test("^snappyref-(mac|windows)-.*\\.zip$")))) | sort_by(.published_at) | last | {tag_name, published_at, html_url}'
 ```
 
 Confirm the selected release has app ZIP assets, not just the standalone model
 asset. Inspect its release metadata and assets if the tag is unfamiliar.
 
-2. Resolve that exact tag in the source repository:
+2. Resolve that exact tag to its commit:
 
 ```sh
-gh release view <published-app-tag> --repo noelcserepy/snappyref-dist --json tagName,publishedAt,assets,url
+gh release view <published-app-tag> --repo noelcserepy/snappyref --json tagName,publishedAt,assets,url
 git fetch origin tag <published-app-tag>
 git rev-parse '<published-app-tag>^{commit}'
 ```
 
-Confirm `origin` is `noelcserepy/snappyref` before fetching. Record the dist
-release URL/tag and resolved source commit. If the source tag is missing,
-stop and resolve the missing source provenance. Do not substitute a dist commit,
-release publication date, or version-bump PR.
+Confirm `origin` is `noelcserepy/snappyref` before fetching. Record the
+release URL/tag and resolved commit. If the tag is missing, stop and resolve
+the missing provenance. Do not substitute a release publication date or
+version-bump PR.
 
 3. Enumerate the complete commit range:
 

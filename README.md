@@ -29,7 +29,7 @@ arrange them, and find them again across every board with on-device search.
 
 ## Download
 
-Releases are at <https://github.com/noelcserepy/snappyref-dist/releases>.
+Releases are at <https://github.com/noelcserepy/snappyref/releases>.
 Each release has `snappyref-mac-<version>.zip` and
 `snappyref-windows-<version>.zip`. Unzip, keep the `SnappyRef` folder
 together, and run the app from inside it. The Library is stored beside the app

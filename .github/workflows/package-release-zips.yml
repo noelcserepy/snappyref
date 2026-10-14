@@ -78,11 +78,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${{ steps.package.outputs.tag }}"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" \
-              --title "SnappyRef $tag" \
-              --notes "Draft SnappyRef release." \
-              --draft
-          fi
-          gh release upload "$tag" "${RUNNER_TEMP}"/release-assets/*.zip --clobber
+          scripts/upload-release-assets.sh "${{ steps.package.outputs.tag }}" "" "${RUNNER_TEMP}"/release-assets/*.zip

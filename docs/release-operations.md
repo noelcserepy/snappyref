@@ -1,13 +1,18 @@
 # Release Operations
 
-SnappyRef releases are app-only updates published through `snappyref-dist`.
-Semantic Search assets are distributed separately and are not bundled into
-ordinary app release zips.
+SnappyRef releases are app-only updates published as this repo's GitHub
+Releases. Semantic Search assets are distributed separately and are not bundled
+into ordinary app release zips.
 
 ## Release Model
 
-- `snappyref-dist` hosts the public release assets: per-platform app zips,
-  signed `latest.json`, and the standalone `snappyref-semantic-search.zip`.
+- Each app release here carries the per-platform app zips and the signed
+  `latest.json`. The app reads `releases/latest/download/latest.json`, which
+  follows the newest published release that is not a prerelease.
+- The standalone `snappyref-semantic-search.zip` lives on the `semantic-search`
+  prerelease, which never takes the `latest` alias.
+- `snappyref-dist` is the old release host. Apps from v0.3.0 and older still read
+  its `latest.json` and its model package. See [Dist bridge](#dist-bridge).
 - App release zips contain a single top-level `SnappyRef/` folder.
 - macOS zips contain `SnappyRef/SnappyRef.app/`, including the macOS
   `snappyref-updater` helper and `Contents/Resources/THIRD_PARTY_NOTICES.txt`
@@ -30,7 +35,7 @@ ordinary app release zips.
 - `MANIFEST_SIGNING_KEY`: ed25519 private key used by
   `publish-full-release.yml` to sign `latest.json`.
 - `DIST_REPO_TOKEN`: fine-grained token with Contents read/write access to
-  `noelcserepy/snappyref-dist`.
+  `noelcserepy/snappyref-dist`, used only for the [Dist bridge](#dist-bridge).
 - Public key: [keys/signing-key.pub.pem](keys/signing-key.pub.pem) is the single
   source for release verification and the app's trusted key. Cargo decodes and
   validates it during the build, then embeds its 32 key bytes. The installed app
@@ -49,27 +54,49 @@ by a key they do not know.
 3. Bump the package version as needed. The release tag must match it.
 4. Dispatch `Publish Full Release` with the release tag.
 5. Public builds use the shipping `release` profile.
-6. Inspect the draft `snappyref-dist` release assets before publishing.
+6. Inspect the draft release here. It holds both app zips and `latest.json`.
 7. Confirm archive validation passed for both app zips.
-8. Publish the source-repo draft release. That creates the release tag on the
-   commit the run built, which the patchnotes range starts from next time.
-9. Run [update smokes](#update-smokes) only on explicit user request.
+8. Publish the draft release here. That makes its `latest.json` the update for
+   current apps and creates the release tag on the commit the run built, which
+   the patchnotes range starts from next time.
+9. Then publish the `snappyref-dist` bridge draft with the same tag. In the other
+   order, older apps read a manifest whose zips are still draft assets, and
+   their download fails until the release here is public.
+10. Run [update smokes](#update-smokes) only on explicit user request.
 
-For a dry run, dispatch with `publish_to_dist=false` and keep
-`create_draft_release=true`, so the final zips land on the source-repo draft.
-With both off, the zips go nowhere.
+The run refuses to upload to a tag that is already published, because installed
+apps check those zips against the published `latest.json`. Bump the version
+first, even for a dry run. A dry run dispatches with `publish_update=false`. The
+zips land on the draft here, with no `latest.json` and no bridge draft. A dry run
+cannot replace the zips of a signed draft. Rerun with `publish_update` or delete
+the draft.
 
 ```sh
-gh workflow run publish-full-release.yml --ref main -f ref=main -f publish_to_dist=false
+gh workflow run publish-full-release.yml --ref main -f ref=main -f publish_update=false
 ```
 
 Before a release, walk the [feature list](release-functional-test-plan.md) on
 macOS and Windows. It excludes app updating.
 
+## Dist bridge
+
+Apps from v0.3.0 and older check
+`snappyref-dist/releases/latest/download/latest.json` for updates. Their
+Semantic Search install downloads the model package from dist's
+`semantic-search` release. While `publish_update` is on, every release also
+drafts a dist release with the same tag that holds only the signed
+`latest.json`. Its zip URLs point here, so an older app updates once and then
+reads this repo's manifest.
+
+Retire the bridge in its own change once it has been stable for a while.
+Delete the bridge step and `DIST_REPO_TOKEN`, then archive `snappyref-dist` with
+a README pointing here. Archive it rather than deleting it. Installs that never
+updated still need the last bridge `latest.json` and the dist model package.
+
 ## Publish Semantic Search Asset
 
 Run `Publish Semantic Search` only when the local search assets change or need
-to be republished. Ordinary app releases reuse the existing standalone asset.
+to be republished. It uploads to the `semantic-search` prerelease here. Ordinary app releases reuse the existing standalone asset.
 [assets/semantic-search-descriptor.env](../assets/semantic-search-descriptor.env)
 is the canonical URL, SHA256 and size. Cargo and both build workflows read it.
 Workflow inputs and `SNAPPYREF_SEMANTIC_SEARCH_*` build variables override values
@@ -89,9 +116,12 @@ Build Windows App and Build macOS App attach their app archive and descriptor to
 `windows_build_tag` and `macos_build_tag` to reuse those builds without compiling.
 Blank build tags use the target `release_tag`. Every successful Package Release Zips
 run attaches its final zips to that release, creating a draft if the tag has no release.
-Existing releases keep their publication state. Full Release uses the same packaging action
-but attaches the zips only when `create_draft_release` is on. It then signs its manifest
-and removes its temporary build handoff assets.
+Both workflows upload through `scripts/upload-release-assets.sh`, which keeps a
+release's zips and signed `latest.json` matching. It refuses a published release,
+and it refuses new zips on a draft that holds a signed `latest.json` unless a new
+`latest.json` comes with them. Full Release uses the same packaging action,
+attaches the zips to its draft, signs its manifest, and removes its temporary build
+handoff assets.
 
 Local packaging verification needs no release or model download:
 
@@ -123,8 +153,8 @@ platform release, stage it, and trigger the normal update apply path.
 - Windows verifies the single-exe self-replace path and retained
   `snappyref.exe.old` backup.
 
-These scripts are networked, launch the GUI app, depend on `snappyref-dist`, and
-are not pre-push checks.
+These scripts are networked, launch the GUI app, depend on the published
+release, and are not pre-push checks.
 
 ## Install And Data Root Contract
 

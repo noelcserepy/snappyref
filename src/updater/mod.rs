@@ -39,10 +39,10 @@ use manifest::PlatformEntry;
 use platform::TargetPlatform;
 use state::{CheckOutcome, InstallProgress};
 
-/// URL of the signed manifest published by CI to the `snappyref-dist`
-/// release. The "latest" alias resolves to the most recent release asset.
+/// URL of the signed manifest published by CI to this repo's release. The
+/// "latest" alias resolves to the most recent published, non-prerelease release.
 pub(crate) const DEFAULT_MANIFEST_URL: &str =
-    "https://github.com/noelcserepy/snappyref-dist/releases/latest/download/latest.json";
+    "https://github.com/noelcserepy/snappyref/releases/latest/download/latest.json";
 
 /// Network/parse timeout for the fetch worker. Keep small so a hung TCP
 /// connection cannot keep a background thread alive past the next 6h tick.

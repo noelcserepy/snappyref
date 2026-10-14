@@ -92,7 +92,7 @@ first, and otherwise ask one question at a time.
 
 - Never run `scripts/update-smoke-macos.sh`, `scripts/update-smoke-windows.sh`,
   or the `semantic-search-real-install` scenario unless the user asks. They
-  are networked, launch the GUI, and depend on the public dist repo.
+  are networked, launch the GUI, and depend on the published release.
 - Never launch the GUI by hand when an inspect scenario covers the behavior.
   Add a scenario if none does.
 - Never commit `library/`, `models/`, downloaded model files, or perf corpora.

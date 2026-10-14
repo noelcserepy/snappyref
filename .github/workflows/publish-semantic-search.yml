@@ -9,7 +9,7 @@ on:
         default: main
         type: string
       release_tag:
-        description: snappyref-dist release tag for the long-lived Semantic Search asset
+        description: Release tag for the long-lived Semantic Search asset
         required: false
         default: semantic-search
         type: string
@@ -20,10 +20,9 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 env:
-  DIST_REPO: noelcserepy/snappyref-dist
   SEMANTIC_SEARCH_ASSET: snappyref-semantic-search.zip
 
 jobs:
@@ -48,36 +47,32 @@ jobs:
           echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
           echo "size=$size" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to snappyref-dist
+      - name: Publish release asset
         env:
-          GH_TOKEN: ${{ secrets.DIST_REPO_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag="${{ inputs.release_tag }}"
           zip_path="${{ steps.package.outputs.zip_path }}"
           replace_existing="${{ inputs.replace_existing }}"
 
-          if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "DIST_REPO_TOKEN secret is not configured" >&2
-            exit 1
-          fi
-
-          if ! gh release view "$tag" --repo "$DIST_REPO" >/dev/null 2>&1; then
+          # A prerelease never takes the releases/latest alias the updater reads.
+          if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" \
-              --repo "$DIST_REPO" \
               --title "SnappyRef Semantic Search" \
               --notes "Long-lived Semantic Search asset for SnappyRef." \
-              --prerelease
+              --prerelease \
+              --latest=false
           fi
 
-          upload_args=("$tag" --repo "$DIST_REPO" "$zip_path")
+          upload_args=("$tag" "$zip_path")
           if [[ "$replace_existing" == "true" ]]; then
             upload_args+=(--clobber)
-          elif gh release view "$tag" --repo "$DIST_REPO" \
+          elif gh release view "$tag" \
             --json assets \
             --jq ".assets[] | select(.name == \"${SEMANTIC_SEARCH_ASSET}\") | .name" \
             | grep -Fxq "$SEMANTIC_SEARCH_ASSET"; then
-            echo "${SEMANTIC_SEARCH_ASSET} already exists on ${DIST_REPO} release ${tag}." >&2
+            echo "${SEMANTIC_SEARCH_ASSET} already exists on release ${tag}." >&2
             echo "Use a new release_tag for changed assets, or set replace_existing=true for an intentional refresh." >&2
             exit 1
           fi
@@ -88,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ inputs.release_tag }}"
-          url="https://github.com/${DIST_REPO}/releases/download/${tag}/${SEMANTIC_SEARCH_ASSET}"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${SEMANTIC_SEARCH_ASSET}"
 
           {
             echo "## Semantic Search app descriptor"
