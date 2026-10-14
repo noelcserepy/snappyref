@@ -821,25 +821,6 @@ fn inspect_annotation_text_sessions_writes_artifact() {
         harness.step();
     }
     scenario.capture_screen("hello-editing", &mut harness);
-    shortcut(&mut harness, CMD, egui::Key::Z);
-    scenario.assertion(
-        "Undo while typing preserves the previous Coral style edit",
-        harness.state().canvas.annotation_for_id(id).unwrap().color
-            == crate::data::CanvasAnnotationColor::Coral,
-    );
-    scenario.assertion(
-        "the focused editor undoes its text",
-        harness.state().canvas.annotation_for_id(id).unwrap().text == "before",
-    );
-    shortcut(
-        &mut harness,
-        egui::Modifiers { shift: true, ..CMD },
-        egui::Key::Z,
-    );
-    scenario.assertion(
-        "the focused editor redoes hello",
-        harness.state().canvas.annotation_for_id(id).unwrap().text == "hello",
-    );
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Enter);
     scenario.assertion(
         "plain Enter commits hello",
@@ -956,6 +937,67 @@ fn inspect_annotation_text_sessions_writes_artifact() {
     shortcut(&mut restored, CMD, egui::Key::Z);
     scenario.assertion(
         "exit stores one Undo step back to hello",
+        restored.state().canvas.annotation_for_id(id).unwrap().text == "hello",
+    );
+    shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Num1);
+    shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Num2);
+    shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Enter);
+    restored.step();
+    shortcut(&mut restored, CMD, egui::Key::A);
+    for text in ["first", "second"] {
+        restored.event(egui::Event::Text(text.into()));
+        restored.step();
+    }
+    shortcut(&mut restored, CMD, egui::Key::Z);
+    scenario.assertion(
+        "Undo while typing preserves the previous Coral style edit",
+        restored.state().canvas.annotation_for_id(id).unwrap().color
+            == crate::data::CanvasAnnotationColor::Coral,
+    );
+    scenario.assertion(
+        "the focused editor undoes its text",
+        restored.state().canvas.annotation_for_id(id).unwrap().text == "hello",
+    );
+    shortcut(
+        &mut restored,
+        egui::Modifiers { shift: true, ..CMD },
+        egui::Key::Z,
+    );
+    scenario.assertion(
+        "the focused editor redoes its text",
+        restored.state().canvas.annotation_for_id(id).unwrap().text == "firstsecond",
+    );
+    shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Escape);
+    shortcut(&mut restored, CMD, egui::Key::Z);
+    scenario.assertion(
+        "committed focused-editor changes undo in one step",
+        restored.state().canvas.annotation_for_id(id).unwrap().text == "hello",
+    );
+    // A board Redo must not overwrite a newly typed draft.
+    shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Num1);
+    shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Num2);
+    shortcut(&mut restored, CMD, egui::Key::Z);
+    shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Enter);
+    restored.step();
+    shortcut(&mut restored, CMD, egui::Key::A);
+    for text in ["first", "second"] {
+        restored.event(egui::Event::Text(text.into()));
+        restored.step();
+    }
+    shortcut(
+        &mut restored,
+        egui::Modifiers { shift: true, ..CMD },
+        egui::Key::Z,
+    );
+    let draft = restored.state().canvas.annotation_for_id(id).unwrap();
+    scenario.assertion(
+        "Redo while typing preserves the new draft and Default style",
+        draft.text == "firstsecond" && draft.color == crate::data::CanvasAnnotationColor::Default,
+    );
+    shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Escape);
+    shortcut(&mut restored, CMD, egui::Key::Z);
+    scenario.assertion(
+        "the draft committed after stale Redo undoes to hello",
         restored.state().canvas.annotation_for_id(id).unwrap().text == "hello",
     );
     shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Enter);
