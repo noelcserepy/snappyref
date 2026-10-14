@@ -10,6 +10,9 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 # name: test filter, artifact scenario, network/ignored
 SCENARIOS = {
+    'rotated-corner-resize': ('inspect_rotated_corner_resize_outside_canvas_writes_artifact', 'rotated-corner-resize', False),
+    'snapped-drag-commit': ('inspect_snapped_drag_release_and_command_bypass_writes_artifact', 'snapped-drag-commit', False),
+    'marquee-clipped-group': ('inspect_marquee_clipped_group_and_shift_add_writes_artifact', 'marquee-clipped-group', False),
     'group-dock-narrow': ('inspect_group_dock_narrow_writes_artifact', 'group-dock-narrow', False),
     'group-dock': ('inspect_group_dock_writes_artifact', 'group-dock', False),
     'context-menu': ('inspect_context_menu_writes_artifact', 'context-menu', False),
