@@ -256,3 +256,43 @@ fn serve_connection(
     };
     let _ = writeln!(writer, "{result}");
 }
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::*;
+
+    #[test]
+    fn replacing_the_endpoint_publishes_the_new_credentials_and_withdraw_removes_it() {
+        let root = crate::test_support::TempRoot::new("control-endpoint");
+        let path = root.join("control.json");
+        for (port, token) in [(1234, "first"), (5678, "replacement")] {
+            write_endpoint(
+                &path,
+                &Endpoint {
+                    port,
+                    token: token.into(),
+                },
+            )
+            .unwrap();
+            let published: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(published, serde_json::json!({"port":port,"token":token}));
+            let read = read_endpoint(&root).unwrap();
+            assert_eq!((read.port, read.token.as_str()), (port, token));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                assert_eq!(
+                    std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+        }
+        withdraw(&root);
+        assert_eq!(
+            std::fs::read(&path).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        assert!(read_endpoint(&root).is_none());
+    }
+}
