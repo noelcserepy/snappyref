@@ -120,11 +120,12 @@ assertion checks acceptance or refusal. For `create_board`, `rename_board`,
 Read the other replies and effects in `events.ndjson`.
 
 Each MCP reply and final shutdown wait has a 60-second deadline, adjustable with
-`--timeout <seconds>`. A caught drive error adds a failed `the drive finishes`
-assertion. Process cleanup failures become failed assertions too, and do not prevent
-report writing. Call-file parsing happens before the protected drive and can
-exit without writing `report.json` or updating `latest.txt`. Do not treat an
-older latest artifact as evidence for a failed invocation.
+`--timeout <seconds>`. Use a positive finite number. Once the artifact directory
+is created, call-file parsing, setup, replay, and cleanup errors produce a
+failed `report.json` and refresh `latest.txt`. A caught drive error adds
+`the drive finishes` with the error; event-log failures cannot prevent the report.
+CLI usage errors and a missing executable fail before the artifact directory
+is created. Do not treat an older latest artifact as evidence for a failed invocation.
 
 The app opens behind the frontmost window and never takes focus. `screenshot`
 answers from there, and each image lands in `frames/`.
