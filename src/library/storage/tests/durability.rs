@@ -40,7 +40,7 @@ fn board_unit_persists_failed_resolution_state_with_matching_history() {
             &crate::library::storage::BoardDurabilityOperation::Document {
                 board_id: 1,
                 changes: crate::canvas::CanvasDocumentChanges {
-                    updated_placements: vec![failed],
+                    updated_placements: vec![failed.clone()],
                     ..Default::default()
                 },
             },
@@ -48,16 +48,60 @@ fn board_unit_persists_failed_resolution_state_with_matching_history() {
         )
         .unwrap();
 
-    let stored_history = library.load_document_history().unwrap();
-    assert!(matches!(
+    drop(library);
+    let reopened = Library::initialize(root.to_path_buf()).unwrap();
+    let mut stored_history = reopened.load_document_history().unwrap();
+    let expected_content = PlacementContent::Failed {
+        source: Some(ContentResolutionSource::ExternalPath {
+            path: "/tmp/missing.png".to_owned(),
+        }),
+        message: "decode failed".to_owned(),
+        recoverable: true,
+    };
+    assert_eq!(
+        reopened
+            .load_placements()
+            .unwrap()
+            .iter()
+            .map(placement_snapshot)
+            .collect::<Vec<_>>(),
+        vec![placement_snapshot(&failed)]
+    );
+    assert_eq!(failed.content, expected_content);
+    assert_eq!(
         stored_history
             .accepted_placement(1, loading.state.id)
-            .unwrap()
-            .content,
-        PlacementContent::Failed { .. }
-    ));
-    let stored = library.load_placements().unwrap();
-    assert!(matches!(stored[0].content, PlacementContent::Failed { .. }));
+            .as_ref()
+            .map(placement_snapshot),
+        Some(placement_snapshot(&failed))
+    );
+    let undo = stored_history.undo(1).unwrap();
+    assert_eq!(
+        undo.direction,
+        crate::active_board::history::HistoryDirection::Backward
+    );
+    let crate::active_board::history::HistoryAction::Document(action) = undo.action else {
+        panic!("expected document history")
+    };
+    assert_eq!(action.label, "Added image");
+    assert_eq!(action.placements.len(), 1);
+    assert!(action.placements[0].before.is_none());
+    assert_eq!(
+        action.placements[0].after.as_ref().map(placement_snapshot),
+        Some(placement_snapshot(&failed))
+    );
+    let redo = stored_history.redo(1).unwrap();
+    assert_eq!(
+        redo.direction,
+        crate::active_board::history::HistoryDirection::Forward
+    );
+    let crate::active_board::history::HistoryAction::Document(action) = redo.action else {
+        panic!("expected document history")
+    };
+    assert_eq!(
+        action.placements[0].target(redo.direction).unwrap().content,
+        expected_content
+    );
 }
 
 #[test]
@@ -104,7 +148,7 @@ fn board_unit_persists_undone_placement_state_with_redo_history() {
             &crate::library::storage::BoardDurabilityOperation::Document {
                 board_id: 1,
                 changes: crate::canvas::CanvasDocumentChanges {
-                    updated_placements: vec![moved],
+                    updated_placements: vec![moved.clone()],
                     ..Default::default()
                 },
             },
@@ -126,11 +170,54 @@ fn board_unit_persists_undone_placement_state_with_redo_history() {
         )
         .unwrap();
 
+    drop(library);
+    let reopened = Library::initialize(root.to_path_buf()).unwrap();
     assert_eq!(
-        library.load_placements().unwrap()[0].state.geometry.center,
-        original.state.geometry.center
+        reopened
+            .load_placements()
+            .unwrap()
+            .iter()
+            .map(placement_snapshot)
+            .collect::<Vec<_>>(),
+        vec![placement_snapshot(&original)]
     );
-    assert!(library.load_document_history().unwrap().redo(1).is_some());
+    let mut stored_history = reopened.load_document_history().unwrap();
+    let redo = stored_history.redo(1).unwrap();
+    assert_eq!(
+        redo.direction,
+        crate::active_board::history::HistoryDirection::Forward
+    );
+    let crate::active_board::history::HistoryAction::Document(action) = redo.action else {
+        panic!("expected document history")
+    };
+    assert_eq!(action.label, "Move image");
+    assert_eq!(action.placements.len(), 1);
+    assert_eq!(
+        action.placements[0].before.as_ref().map(placement_snapshot),
+        Some(placement_snapshot(&original.clone()))
+    );
+    assert_eq!(
+        action.placements[0].after.as_ref().map(placement_snapshot),
+        Some(placement_snapshot(&moved.clone()))
+    );
+    assert_eq!(
+        action.placements[0]
+            .target(redo.direction)
+            .as_ref()
+            .map(placement_snapshot),
+        Some(placement_snapshot(&moved))
+    );
+    let undo = stored_history.undo(1).unwrap();
+    let crate::active_board::history::HistoryAction::Document(action) = undo.action else {
+        panic!("expected document history")
+    };
+    assert_eq!(
+        action.placements[0]
+            .target(undo.direction)
+            .as_ref()
+            .map(placement_snapshot),
+        Some(placement_snapshot(&original))
+    );
 }
 
 #[test]
@@ -168,11 +255,13 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
             1_000,
         )
         .unwrap();
-    assert!(
+    assert_eq!(
         library
             .next_embedding_backfill_job_for_model("mobileclip_s0", 1_000)
             .unwrap()
-            .is_some()
+            .unwrap()
+            .asset_id,
+        placement.require_loaded_asset().id
     );
     assert_eq!(
         library.next_embedding_retry_at_for_model("mobileclip_s0"),
@@ -198,11 +287,13 @@ fn embedding_retryable_failures_get_one_immediate_and_one_delayed_retry() {
         library.next_embedding_retry_at_for_model("mobileclip_s0"),
         Ok(Some(1_310))
     );
-    assert!(
+    assert_eq!(
         library
             .next_embedding_backfill_job_for_model("mobileclip_s0", 1_310)
             .unwrap()
-            .is_some()
+            .unwrap()
+            .asset_id,
+        placement.require_loaded_asset().id
     );
 
     library
@@ -270,6 +361,8 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
             None,
         )
         .unwrap();
+    drop(library);
+    let library = Library::initialize(root.to_path_buf()).unwrap();
     library
         .record_retryable_asset_embedding_failure(
             placement.require_loaded_asset().id,
@@ -286,11 +379,13 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
             .unwrap()
             .is_none()
     );
-    assert!(
+    assert_eq!(
         library
             .next_embedding_backfill_job_for_model("mobileclip_s0", 1_310)
             .unwrap()
-            .is_some()
+            .unwrap()
+            .asset_id,
+        placement.require_loaded_asset().id
     );
 
     library
@@ -300,12 +395,39 @@ fn pending_retry_preserves_embedding_failure_count_until_success() {
             &[1.0, 0.0],
         )
         .unwrap();
+    drop(library);
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    assert_eq!(
+        library
+            .load_asset_embedding(placement.require_loaded_asset().id, "mobileclip_s0")
+            .unwrap(),
+        Some(vec![0, 0, 128, 63, 0, 0, 0, 0])
+    );
     assert!(
         library
             .next_embedding_backfill_job_for_model("mobileclip_s0", 2_000)
             .unwrap()
             .is_none()
     );
+    library
+        .record_retryable_asset_embedding_failure(
+            placement.require_loaded_asset().id,
+            "mobileclip_s0",
+            768,
+            "failure after successful embedding",
+            3_000,
+        )
+        .unwrap();
+    assert_eq!(
+        library.next_embedding_retry_at_for_model("mobileclip_s0"),
+        Ok(Some(3_000))
+    );
+    let job = library
+        .next_embedding_backfill_job_for_model("mobileclip_s0", 3_000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.asset_id, placement.require_loaded_asset().id);
+    assert_eq!(job.original_path, path);
 }
 
 #[test]
@@ -349,6 +471,18 @@ fn terminal_embedding_failures_are_not_automatic_retry_jobs() {
             .unwrap()
             .is_none()
     );
+    let fresh_path = library
+        .store_rgba_image("fresh", &[0, 0, 255, 255], 1, 1)
+        .unwrap();
+    let fresh = library
+        .register_original(&fresh_path, "image/png", 1, 1, 4, None)
+        .unwrap();
+    let job = library
+        .next_embedding_backfill_job_for_model("mobileclip_s0", 10_000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.asset_id, fresh.id);
+    assert_eq!(job.original_path, fresh_path);
 }
 
 #[test]

@@ -61,12 +61,10 @@ fn board_items_column_not_null(connection: &Connection, column: &str) -> bool {
 }
 
 #[test]
-fn update_preservation_smoke() {
-    let app_root = TempRoot::new("snappyref-update-preservation-test");
+fn library_reopen_preserves_boards_session_placements_and_originals() {
+    let app_root = TempRoot::new("snappyref-library-reopen-test");
     let library_root = app_root.join("library");
     fs::create_dir_all(&library_root).unwrap();
-    fs::write(app_root.join("SnappyRef.app"), b"old app bundle").unwrap();
-    fs::write(app_root.join("UPDATE.txt"), b"old update notes").unwrap();
 
     let original_bytes = [255, 0, 0, 255];
     let library = Library::initialize(library_root.clone()).unwrap();
@@ -119,11 +117,6 @@ fn update_preservation_smoke() {
     library.save_user_session(&session).unwrap();
     let stored_original_bytes = fs::read(&imported.require_loaded_asset().original_path).unwrap();
     drop(library);
-
-    fs::remove_file(app_root.join("SnappyRef.app")).unwrap();
-    fs::remove_file(app_root.join("UPDATE.txt")).unwrap();
-    fs::write(app_root.join("SnappyRef.app"), b"new app bundle").unwrap();
-    fs::write(app_root.join("UPDATE.txt"), b"new update notes").unwrap();
 
     let reopened = Library::initialize(library_root.clone()).unwrap();
     let boards = reopened.list_boards().unwrap();
@@ -391,3 +384,24 @@ mod assets;
 mod migrations;
 
 mod session;
+
+#[path = "tests/recovery.rs"]
+mod recovery;
+
+fn placement_snapshot(
+    placement: &crate::data::Placement,
+) -> (
+    i64,
+    crate::data::RectGeometry,
+    bool,
+    PlacementContent,
+    PlacementLifecycle,
+) {
+    (
+        placement.state.id,
+        placement.state.geometry,
+        placement.state.archived,
+        placement.content.clone(),
+        placement.lifecycle,
+    )
+}
