@@ -52,8 +52,15 @@ Preconditions:
   `run-scenario.sh group-picker-rename-create`. It drives a click-away rename
   of "Group name", G with "New references" and Escape, then
   `Create new "New references"`, Undo, and Redo. It also checks a narrow
-  window. It is the only group scenario that reads groups back from the
-  library: "create is one undoable durable edit".
+  window. It reads groups back from the library in
+  "create is one undoable durable edit".
+- **Picker admission and mixed selection.** Run `run-scenario.sh group-picker-selection`.
+  It drives G on an arrow-only selection, then G on arrow-plus-image selections
+  to choose an existing group and create a named group. It checks the status
+  message, unchanged arrow geometry, and durable image membership.
+- **Settings gap for new groups.** Run `run-scenario.sh group-settings-gap`.
+  It edits Settings Gap to 30 px, then creates groups through ⌘G and the picker.
+  It reads back the new groups' 30 px gaps and an existing group's 11 px gap.
 - **Dock controls.** Run `run-scenario.sh group-dock`, `group-dock-narrow`,
   and `member-dock`. These start from a seeded "Faces" group. They drive the
   numeric fields, "Align bottom" on the align pad, spread "Between", Free

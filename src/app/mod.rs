@@ -974,8 +974,12 @@ impl SnappyRefApp {
     fn open_group_picker(&mut self) {
         // Content only reaches the canvas through a library, so without one there is nothing to group.
         if let Some(library) = &self.library {
-            self.canvas
+            let opened = self
+                .canvas
                 .open_group_picker(library.allocate_document_id());
+            if !opened && self.canvas.has_selection() {
+                self.status = "Only images, labels, and rectangles can join groups".into();
+            }
         }
     }
 

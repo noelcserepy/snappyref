@@ -7,6 +7,9 @@ mod release_content;
 #[path = "inspect_annotations.rs"]
 mod inspect_annotations;
 
+#[path = "groups_qa.rs"]
+mod groups_qa;
+
 const CMD: egui::Modifiers = egui::Modifiers {
     command: true,
     ..egui::Modifiers::NONE
