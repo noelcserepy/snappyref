@@ -37,19 +37,21 @@ try {
     Transfer @('Cargo.toml', 'src/main.rs', 'next.rs')
     Require (-not (Test-Path (Join-Path $destination 'new.rs'))) 'managed unstaged rename survived'
     Require (-not (Test-Path (Join-Path $destination 'modified.rs'))) 'managed unstaged deletion survived'
-    Require (Test-Path (Join-Path $destination 'next.rs')) 'new source missing'
-    foreach ($name in @('.git', '.env.local', 'unrelated.txt', 'target/cache')) {
-        Require (Test-Path (Join-Path $destination $name)) "unrelated file lost: $name"
+    Require ((Get-Content (Join-Path $destination 'next.rs')) -eq 'current next.rs') 'new source missing'
+    Require ((git -C $destination remote get-url origin) -eq $origin) 'git metadata changed'
+    Require ((git -C $destination log -1 --format=%s) -eq 'fixture') 'git history changed'
+    foreach ($entry in @(@('.env.local', 'private'), @('unrelated.txt', 'unrelated'), @('target/cache', 'cache'))) {
+        Require ((Get-Content (Join-Path $destination $entry[0])) -eq $entry[1]) "unrelated contents changed: $($entry[0])"
     }
     $rejected = $false
     try { Transfer @('Cargo.toml', 'src/main.rs') 'https://github.com/other/repo.git' } catch { $rejected = $true }
     Require $rejected 'wrong repository accepted'
-    Require (Test-Path (Join-Path $destination 'next.rs')) 'wrong repository mutated source'
+    Require ((Get-Content (Join-Path $destination 'next.rs')) -eq 'current next.rs') 'wrong repository mutated source'
     @{origin=$origin; files=@('Cargo.toml', 'src/main.rs', '../outside')} | ConvertTo-Json | Set-Content (Join-Path $transfer 'manifest.json')
     $rejected = $false
     try { & $apply -Source $transfer -Destination $destination } catch { $rejected = $true }
     Require $rejected 'unsafe path accepted'
-    Require (Test-Path (Join-Path $destination 'next.rs')) 'unsafe inventory mutated source'
+    Require ((Get-Content (Join-Path $destination 'next.rs')) -eq 'current next.rs') 'unsafe inventory mutated source'
     Write-Output 'Windows source synchronization checks passed.'
 } finally {
     Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
