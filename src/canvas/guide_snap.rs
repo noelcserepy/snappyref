@@ -1008,6 +1008,20 @@ mod tests {
         });
 
         assert!(result.is_none());
+        let accepted = snap_uniform_scale(GuideUniformScaleSnapRequest {
+            origin: egui::Pos2::ZERO,
+            start_rect,
+            desired_factor: 0.24,
+            min_factor: 0.1,
+            candidates: &candidates,
+            gap: 24.0,
+            threshold: 8.0,
+        })
+        .expect("same target is valid above the minimum");
+        assert_eq!(
+            accepted.rect,
+            egui::Rect::from_center_size(egui::Pos2::ZERO, egui::vec2(20.0, 20.0))
+        );
     }
 
     #[test]
@@ -1126,5 +1140,23 @@ mod tests {
         });
 
         assert!(result.is_none());
+        let nearby = [GuideSnapCandidate::new(egui::Rect::from_min_size(
+            egui::pos2(124.0, 0.0),
+            egui::vec2(100.0, 100.0),
+        ))];
+        let accepted = snap_resize(GuideResizeSnapRequest {
+            desired_rect,
+            anchor: desired_rect.left_top(),
+            base_display_size: egui::vec2(100.0, 100.0),
+            min_scale: 0.1,
+            candidates: &nearby,
+            gap: 24.0,
+            threshold: 8.0,
+        })
+        .expect("same-axis target must snap");
+        assert_eq!(
+            accepted.rect,
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0))
+        );
     }
 }

@@ -442,14 +442,16 @@ mod tests {
 
     #[test]
     fn numeric_settings_clamp_bounds_and_restore_invalid_text_on_blur() {
-        for spec in [Number::ROTATION_SNAP, Number::PLACEMENT_GAP] {
-            let upper = spec.max;
-            for (text, expected) in [
-                ("0", 0.0),
-                ("999", upper),
-                ("-4", 0.0),
-                ("", 15.0),
-                ("abc", 15.0),
+        for (spec, upper, upper_text) in [
+            (Number::ROTATION_SNAP, 180.0, "180"),
+            (Number::PLACEMENT_GAP, 128.0, "128"),
+        ] {
+            for (text, expected, displayed) in [
+                ("0", 0.0, "0"),
+                ("999", upper, upper_text),
+                ("-4", 0.0, "0"),
+                ("", 15.0, "15"),
+                ("abc", 15.0, "15"),
             ] {
                 let mut harness = Harness::builder()
                     .with_size(egui::vec2(400.0, 100.0))
@@ -480,6 +482,13 @@ mod tests {
                     "input {text:?}, maximum {upper}"
                 );
                 assert!(!harness.ctx.egui_wants_keyboard_input());
+                harness.step();
+                assert_eq!(
+                    harness
+                        .get_by_role(egui::accesskit::Role::TextInput)
+                        .value(),
+                    Some(displayed.to_owned())
+                );
             }
         }
     }

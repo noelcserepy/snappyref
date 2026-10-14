@@ -248,13 +248,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn double_clicking_a_board_name_focuses_its_rename_field() {
+    fn double_clicking_a_board_name_submits_the_typed_rename() {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(264.0, 200.0))
             .with_step_dt(1.0 / 60.0)
-            .build_ui(|ui| {
-                board_row(ui, 1, "My Board", 0, true, Some(BOARD_DIGITS[0]));
-            });
+            .build_ui_state(
+                |ui, action| {
+                    if let Some(submitted) =
+                        board_row(ui, 1, "My Board", 0, true, Some(BOARD_DIGITS[0]))
+                    {
+                        *action = Some(submitted);
+                    }
+                },
+                None,
+            );
         let pos = harness.get_by_label("Board My Board").rect().center();
         harness.hover_at(pos);
         for _ in 0..2 {
@@ -274,5 +281,15 @@ mod tests {
             "double-click must focus the rename field"
         );
         harness.get_by_label(RENAME_FIELD);
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness.step();
+        harness.event(egui::Event::Text("References".to_owned()));
+        harness.step();
+        harness.key_press(egui::Key::Enter);
+        harness.step();
+        assert_eq!(
+            *harness.state(),
+            Some(SidebarBoardAction::Rename(1, "References".to_owned()))
+        );
     }
 }
