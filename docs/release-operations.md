@@ -85,12 +85,14 @@ deleted, for installs that have not updated yet.
 
 ## Publish Semantic Search Asset
 
-Run `Publish Semantic Search` only when the local search assets change or need
-to be republished. It uploads to the `semantic-search` prerelease here. Ordinary app releases reuse the existing standalone asset.
+The [model-packaging skill](skills/model-packaging/SKILL.md) owns building and
+publishing the model package and updating the descriptor. The workflow uploads
+to this repo's `semantic-search` prerelease. Ordinary app releases reuse the
+existing standalone asset.
 [assets/semantic-search-descriptor.env](../assets/semantic-search-descriptor.env)
 is the canonical URL, SHA256 and size. Cargo and both build workflows read it.
 Workflow inputs and `SNAPPYREF_SEMANTIC_SEARCH_*` build variables override values
-when needed. Update the descriptor after publishing a replacement model package.
+when needed.
 `MODEL_BUNDLE.txt` records the model key and hashes of the tokenizer and both
 ONNX files for manual package provenance. Keep it in model packages.
 `scripts/semantic_model.py` downloads a pinned Hugging Face revision and adds
