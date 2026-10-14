@@ -1,12 +1,15 @@
 //! Availability in the Local Model Store. Startup recovers interrupted promotions; checks are read-only.
-//! Recovery prefers the old `.previous`, then the ready `.installing`, then final.
+//! Recovery prefers `.previous`, then marked ready `.installing`, then final.
 //! New incoming copies use `.preparing` and become `.installing` atomically only
-//! after copying completes. Legacy `.installing` directories were copied in place;
-//! their required-file presence cannot prove that every byte is complete.
+//! after copying completes; the readiness marker is written before final replacement.
+//! Legacy unmarked `.installing` is only a fallback when final is incomplete;
+//! required-file presence cannot prove that every legacy byte is complete.
 
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+
+pub(crate) const PROMOTION_READY_FILE: &str = ".promotion-ready";
 
 pub(crate) fn model_store_root(data_root: &Path) -> PathBuf {
     data_root.join("models")
@@ -55,11 +58,17 @@ pub(crate) fn recover_interrupted_model_promotion(
 ) -> std::io::Result<()> {
     let store = model_store_root(data_root);
     let final_model = store.join(model_key);
-    for name in [
-        format!("{model_key}.previous"),
-        format!("{model_key}.installing"),
-        model_key.to_owned(),
+    let installing = store.join(format!("{model_key}.installing"));
+    let marked_installing = installing.join(PROMOTION_READY_FILE).is_file();
+    for (name, eligible) in [
+        (format!("{model_key}.previous"), true),
+        (format!("{model_key}.installing"), marked_installing),
+        (model_key.to_owned(), true),
+        (format!("{model_key}.installing"), !marked_installing),
     ] {
+        if !eligible {
+            continue;
+        }
         let recovery = store.join(name);
         if model_files_complete(&recovery, required_files) {
             if recovery == final_model {

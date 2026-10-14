@@ -8,7 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::zip_extraction::{self, ExtractError};
 
-use super::model_store::{model_store_root, recover_interrupted_model_promotion, remove_path_any};
+use super::model_store::{
+    PROMOTION_READY_FILE, model_store_root, recover_interrupted_model_promotion, remove_path_any,
+};
 use crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
 use crate::updater::{download, install_paths};
 
@@ -288,6 +290,8 @@ fn promote_staged_model_with_hooks(
         fs::rename(&preparing_model_root, &installing_model_root)?;
         fs::remove_dir_all(staged_model_root)
     })?;
+
+    fs::write(installing_model_root.join(PROMOTION_READY_FILE), b"ready")?;
 
     let had_existing_model = final_model_root.exists();
     if final_model_root.exists() {
@@ -807,50 +811,70 @@ mod tests {
     }
 
     #[test]
-    fn first_install_recovers_ready_model_over_nonempty_partial_final() {
+    fn recovery_preserves_legacy_final_and_promotes_marked_ready_model() {
         use super::super::model_store::{
             LocalModelStoreStatus, initialize_local_model_store_status,
         };
-        let root = TempRoot::new("first-install-copy");
-        let descriptor = descriptor_for_bytes(b"unused");
-        let model = root.join("models").join(&descriptor.model_key);
-        let installing = root
-            .join("models")
-            .join(format!("{}.installing", descriptor.model_key));
-        for (directory, tokenizer, text, vision) in [
-            (&model, &b"n"[..], &b"n"[..], &b"n"[..]),
-            (
-                &installing,
-                &b"new-tokenizer"[..],
-                &b"new-text"[..],
-                &b"new-vision"[..],
-            ),
-        ] {
-            fs::create_dir_all(directory.join("onnx")).unwrap();
-            fs::write(directory.join("tokenizer.json"), tokenizer).unwrap();
-            fs::write(directory.join("onnx/text_model_int8.onnx"), text).unwrap();
-            fs::write(directory.join("onnx/vision_model_int8.onnx"), vision).unwrap();
+        for marked in [false, true] {
+            let root = TempRoot::new("incoming-readiness");
+            let descriptor = descriptor_for_bytes(b"unused");
+            let model = root.join("models").join(&descriptor.model_key);
+            let installing = root
+                .join("models")
+                .join(format!("{}.installing", descriptor.model_key));
+            for (directory, tokenizer, text, vision) in [
+                (
+                    &model,
+                    &b"old-tokenizer"[..],
+                    &b"old-text"[..],
+                    &b"old-vision"[..],
+                ),
+                (
+                    &installing,
+                    &b"new-tokenizer"[..],
+                    &b"new-text"[..],
+                    &b"new-vision"[..],
+                ),
+            ] {
+                fs::create_dir_all(directory.join("onnx")).unwrap();
+                fs::write(directory.join("tokenizer.json"), tokenizer).unwrap();
+                fs::write(directory.join("onnx/text_model_int8.onnx"), text).unwrap();
+                fs::write(directory.join("onnx/vision_model_int8.onnx"), vision).unwrap();
+            }
+            if marked {
+                fs::write(installing.join(".promotion-ready"), b"ready").unwrap();
+                fs::write(model.join("tokenizer.json"), b"n").unwrap();
+                fs::write(model.join("onnx/text_model_int8.onnx"), b"n").unwrap();
+                fs::write(model.join("onnx/vision_model_int8.onnx"), b"n").unwrap();
+            } else {
+                fs::write(installing.join("tokenizer.json"), b"n").unwrap();
+                fs::write(installing.join("onnx/text_model_int8.onnx"), b"n").unwrap();
+                fs::write(installing.join("onnx/vision_model_int8.onnx"), b"n").unwrap();
+            }
+            assert_eq!(
+                initialize_local_model_store_status(
+                    &root,
+                    &descriptor.model_key,
+                    &DEFAULT_SEMANTIC_SEARCH_MODEL.required_model_files()
+                ),
+                LocalModelStoreStatus::Installed
+            );
+            let expected: [&[u8]; 3] = if marked {
+                [b"new-tokenizer", b"new-text", b"new-vision"]
+            } else {
+                [b"old-tokenizer", b"old-text", b"old-vision"]
+            };
+            for (relative, bytes) in [
+                "tokenizer.json",
+                "onnx/text_model_int8.onnx",
+                "onnx/vision_model_int8.onnx",
+            ]
+            .into_iter()
+            .zip(expected)
+            {
+                assert_eq!(fs::read(model.join(relative)).unwrap(), bytes);
+            }
         }
-        assert_eq!(
-            initialize_local_model_store_status(
-                &root,
-                &descriptor.model_key,
-                &DEFAULT_SEMANTIC_SEARCH_MODEL.required_model_files()
-            ),
-            LocalModelStoreStatus::Installed
-        );
-        assert_eq!(
-            fs::read(model.join("tokenizer.json")).unwrap(),
-            b"new-tokenizer"
-        );
-        assert_eq!(
-            fs::read(model.join("onnx/text_model_int8.onnx")).unwrap(),
-            b"new-text"
-        );
-        assert_eq!(
-            fs::read(model.join("onnx/vision_model_int8.onnx")).unwrap(),
-            b"new-vision"
-        );
     }
 
     #[test]
@@ -895,6 +919,10 @@ mod tests {
             &staged,
             |_, _| Err(io::Error::other("move unavailable")),
             || {
+                assert_eq!(
+                    fs::read(installing.join(".promotion-ready")).unwrap(),
+                    b"ready"
+                );
                 assert_eq!(
                     fs::read(installing.join("tokenizer.json")).unwrap(),
                     b"new-tokenizer"
