@@ -166,9 +166,12 @@ def expected_result(tool, arguments, reply):
     if tool == 'create_board' and arguments.get('name') is not None:
         return isinstance(reply, dict) and reply.get('board', {}).get('name') == trim_board_name(arguments['name'])
     if tool == 'rename_board':
-        return reply == {'board': {'id': arguments['board'], 'name': trim_board_name(arguments['name'])}}
+        board = reply.get('board') if isinstance(reply, dict) else None
+        return (isinstance(board, dict) and type(board.get('id')) is int
+                and reply == {'board': {'id': arguments['board'], 'name': trim_board_name(arguments['name'])}})
     if tool == 'delete_board':
-        return isinstance(reply, dict) and reply.get('deleted') == arguments['board']
+        return (isinstance(reply, dict) and type(reply.get('deleted')) is int
+                and reply['deleted'] == arguments['board'])
     if tool == 'set_settings':
         if not isinstance(reply, dict):
             return False
