@@ -1380,6 +1380,7 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
         (90, 90),
         egui::pos2(650.0, 250.0),
     );
+    harness.state_mut().settings.placement_target_area = 90_000.0;
     let ids = [a.id(), b.id()];
     let snapshot = |h: &Harness<'_, SnappyRefApp>| {
         ids.map(|id| {
@@ -1619,15 +1620,7 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
     for modifiers in [CMD, egui::Modifiers { shift: true, ..CMD }] {
         harness.state_mut().canvas.select_placements(&ids);
         let original = snapshot(&harness);
-        let target = if modifiers.shift {
-            original
-                .iter()
-                .map(|g| g.size.x * g.size.y * g.scale * g.scale)
-                .sum::<f32>()
-                / 2.0
-        } else {
-            crate::placement::DEFAULT_PLACEMENT_TARGET_AREA
-        };
+        let target = if modifiers.shift { 13_400.0 } else { 90_000.0 };
         shortcut(&mut harness, modifiers, egui::Key::L);
         for (after, before) in snapshot(&harness).iter().zip(original) {
             scenario.assertion(
