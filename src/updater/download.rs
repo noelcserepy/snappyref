@@ -270,42 +270,28 @@ mod tests {
 
     #[test]
     fn download_from_reader_emits_progress_during_download() {
+        struct Chunks(std::io::Cursor<&'static [u8]>);
+        impl std::io::Read for Chunks {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                let size = buffer.len().min(1);
+                std::io::Read::read(&mut self.0, &mut buffer[..size])
+            }
+        }
         let dir = TempRoot::new("progress");
-        // Big enough to span multiple READ_CHUNK reads.
-        let payload = vec![0u8; READ_CHUNK * 3 + 7];
-        let expected = sha256_hex(&payload);
         let destination = dir.join("progress.zip");
-
-        let mut source = &payload[..];
-        let mut ticks: Vec<(u64, u64)> = Vec::new();
-        let mut progress = |done, total| ticks.push((done, total));
+        let mut source = Chunks(std::io::Cursor::new(b"abc"));
+        let mut ticks = Vec::new();
         download_from_reader_cancellable(
             &mut source,
             &destination,
-            payload.len() as u64,
-            &expected,
-            &mut progress,
+            3,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            &mut |done, total| ticks.push((done, total)),
             &|| false,
         )
         .unwrap();
-
-        // At least: initial 0-tick + one per chunk + final equality.
-        assert!(
-            ticks.len() >= 3,
-            "expected multiple progress ticks, got {ticks:?}",
-        );
-        assert_eq!(ticks.first(), Some(&(0, payload.len() as u64)));
-        assert_eq!(
-            ticks.last(),
-            Some(&(payload.len() as u64, payload.len() as u64)),
-        );
-        // Progress must be monotonically non-decreasing.
-        for window in ticks.windows(2) {
-            assert!(
-                window[1].0 >= window[0].0,
-                "progress went backwards: {ticks:?}",
-            );
-        }
+        assert_eq!(fs::read(destination).unwrap(), b"abc");
+        assert_eq!(ticks, [(0, 3), (1, 3), (2, 3), (3, 3)]);
     }
 
     #[test]
@@ -394,8 +380,7 @@ mod tests {
     #[test]
     fn hash_compare_is_case_insensitive() {
         let bytes = b"abc";
-        let lower = sha256_hex(bytes);
-        let upper = lower.to_uppercase();
+        let upper = "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD";
         let dir = TempRoot::new("case");
         let dest = dir.join("case.zip");
         let mut source = &bytes[..];
@@ -404,7 +389,7 @@ mod tests {
             &mut source,
             &dest,
             bytes.len() as u64,
-            &upper,
+            upper,
             &mut progress,
             &|| false,
         )

@@ -177,6 +177,16 @@ fn helper_swaps_bundle_and_relaunches_after_parent_exits() {
     // Give the helper a moment to start polling, then kill the fake parent
     // so the wait-loop sees the PID go away.
     std::thread::sleep(Duration::from_millis(200));
+    assert!(parent.try_wait().unwrap().is_none());
+    assert!(helper.try_wait().unwrap().is_none());
+    assert_eq!(
+        fs::read(fixture.current_bundle.join("Contents/MacOS/snappyref")).unwrap(),
+        b"old-binary"
+    );
+    assert_eq!(
+        fs::read(fixture.staged_bundle.join("Contents/MacOS/snappyref")).unwrap(),
+        b"new-binary"
+    );
     let _ = parent.kill();
     let _ = parent.wait();
 
