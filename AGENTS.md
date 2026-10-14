@@ -29,16 +29,18 @@ another and corrupts test results.
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
+python3 -m unittest discover -s scripts -p 'test_*.py'
 docs/skills/inspect/scripts/run-scenario.sh --list
 docs/skills/inspect/scripts/run-scenario.sh <scenario>
 ```
 
-The [pre-push hook](.githooks/pre-push) runs fmt and clippy. Before you push, run
-`cargo test --locked` (every non-ignored inspect scenario and the helper subprocess tests) and the
-`scripts/test_*.py` suite with `python3 -m unittest discover -s scripts -p 'test_*.py'`. Hook setup is in the
+The [pre-push hook](.githooks/pre-push) runs fmt, clippy, Rust tests, and Python
+script tests in that order and stops at the first failure. Rust tests include
+every non-ignored inspect scenario and the helper subprocess tests. Ref-deletion
+pushes and branches without Cargo.toml skip the checks. Hook setup is in the
 [README](README.md#development-checks).
 
-[CI](.github/workflows/ci.yml) runs the same checks on macOS for every pull request in about 90 seconds.
+[CI](.github/workflows/ci.yml) runs the same checks on macOS for every pull request in about 2-3 minutes.
 Windows CI takes about 10 minutes, so it runs on `main` after the merge and opens an issue when it fails.
 Merge without waiting for it. `gh workflow run ci.yml --ref <branch>` runs both jobs on a branch.
 
@@ -46,6 +48,16 @@ When the user wants to test a build by hand, stop the previous instance and run
 `SNAPPYREF_DATA_ROOT="$HOME/dev/snappyref-dev-data" cargo run --locked --release --bin snappyref`
 in the background with a timeout of at least two hours. The shared root keeps
 their imported images and the downloaded model.
+
+## Testing
+
+Test behavior at the boundary users or processes cross, with concrete inputs
+and literal expected outputs or effects. Never compute expectations with the
+code under test. Pair absence assertions with a positive case. Reject tests
+that check only `is_some`, `is_ok`, counts, or restated constants. Keep useful
+relations across catalogues. Delete or merge duplicate tests and checks of
+incidental implementation details. Give bug fixes a regression that fails
+before the fix and passes after it.
 
 ## Module map
 

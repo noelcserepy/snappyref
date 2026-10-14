@@ -135,14 +135,9 @@ Point git at the repo hooks once per clone:
 git config core.hooksPath .githooks
 ```
 
-The [pre-push hook](.githooks/pre-push) runs `cargo fmt --check` and clippy
-with warnings denied. Run `cargo test --locked` and
-`python3 -m unittest discover -s scripts -p 'test_*.py'` before you push. CI
-runs all four on macOS for every pull request, and clippy and the Rust tests
-on Windows after the merge to `main`. `cargo test` covers
-every non-ignored inspect scenario; list them with
-`docs/skills/inspect/scripts/run-scenario.sh --list`. Run Windows checks with
-the [use-windows](docs/skills/use-windows/SKILL.md) skill.
+The [check policy](AGENTS.md#build-check-test) owns the commands run by the
+[pre-push hook](.githooks/pre-push) and CI. It also explains inspect scenarios
+and Windows checks.
 
 ## Code map
 
