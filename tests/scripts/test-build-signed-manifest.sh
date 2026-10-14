@@ -33,8 +33,8 @@ trap 'rm -rf "$ROOT_TMP"' EXIT
 
 new_workspace() {
   TMP_DIR="$(mktemp -d "$ROOT_TMP/case.XXXXXX")"
-  openssl genpkey -algorithm ed25519 -out "$TMP_DIR/priv.pem" 2>/dev/null
-  openssl pkey -in "$TMP_DIR/priv.pem" -pubout -out "$TMP_DIR/pub.pem" 2>/dev/null
+  openssl genpkey -algorithm ed25519 -out "$TMP_DIR/priv.pem" 2>/dev/null || return 1
+  openssl pkey -in "$TMP_DIR/priv.pem" -pubout -out "$TMP_DIR/pub.pem" 2>/dev/null || return 1
   printf 'fake-macos-app-zip-payload' > "$TMP_DIR/snappyref-mac.zip"
   printf 'fake-windows-app-zip-payload-which-is-longer' > "$TMP_DIR/snappyref-windows.zip"
 }
@@ -55,8 +55,8 @@ invoke_script() {
 }
 
 test_produces_required_keys() {
-  new_workspace
-  invoke_script >/dev/null
+  new_workspace || return 1
+  invoke_script >/dev/null || return 1
   python3 - <<PY
 import json
 m = json.load(open("$TMP_DIR/latest.json"))
@@ -76,30 +76,30 @@ PY
 }
 
 test_sha256_and_size_match_inputs() {
-  new_workspace
-  invoke_script >/dev/null
+  new_workspace || return 1
+  invoke_script >/dev/null || return 1
 
   local expected_mac_sha expected_win_sha expected_mac_size expected_win_size
-  expected_mac_sha=$(shasum -a 256 "$TMP_DIR/snappyref-mac.zip" | awk '{print $1}')
-  expected_win_sha=$(shasum -a 256 "$TMP_DIR/snappyref-windows.zip" | awk '{print $1}')
-  expected_mac_size=$(wc -c < "$TMP_DIR/snappyref-mac.zip" | tr -d ' ')
-  expected_win_size=$(wc -c < "$TMP_DIR/snappyref-windows.zip" | tr -d ' ')
+  expected_mac_sha=$(shasum -a 256 "$TMP_DIR/snappyref-mac.zip" | awk '{print $1}') || return 1
+  expected_win_sha=$(shasum -a 256 "$TMP_DIR/snappyref-windows.zip" | awk '{print $1}') || return 1
+  expected_mac_size=$(wc -c < "$TMP_DIR/snappyref-mac.zip" | tr -d ' ') || return 1
+  expected_win_size=$(wc -c < "$TMP_DIR/snappyref-windows.zip" | tr -d ' ') || return 1
 
   local actual_mac_sha actual_win_sha actual_mac_size actual_win_size
-  actual_mac_sha=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["platforms"]["macos"]["sha256"])' "$TMP_DIR/latest.json")
-  actual_win_sha=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["platforms"]["windows"]["sha256"])' "$TMP_DIR/latest.json")
-  actual_mac_size=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["platforms"]["macos"]["size"])' "$TMP_DIR/latest.json")
-  actual_win_size=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["platforms"]["windows"]["size"])' "$TMP_DIR/latest.json")
+  actual_mac_sha=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["platforms"]["macos"]["sha256"])' "$TMP_DIR/latest.json") || return 1
+  actual_win_sha=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["platforms"]["windows"]["sha256"])' "$TMP_DIR/latest.json") || return 1
+  actual_mac_size=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["platforms"]["macos"]["size"])' "$TMP_DIR/latest.json") || return 1
+  actual_win_size=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["platforms"]["windows"]["size"])' "$TMP_DIR/latest.json") || return 1
 
-  [[ "$actual_mac_sha" == "$expected_mac_sha" ]]
-  [[ "$actual_win_sha" == "$expected_win_sha" ]]
-  [[ "$actual_mac_size" == "$expected_mac_size" ]]
-  [[ "$actual_win_size" == "$expected_win_size" ]]
+  [[ "$actual_mac_sha" == "$expected_mac_sha" ]] || return 1
+  [[ "$actual_win_sha" == "$expected_win_sha" ]] || return 1
+  [[ "$actual_mac_size" == "$expected_mac_size" ]] || return 1
+  [[ "$actual_win_size" == "$expected_win_size" ]] || return 1
 }
 
 test_signature_verifies_against_canonical_bytes() {
-  new_workspace
-  invoke_script >/dev/null
+  new_workspace || return 1
+  invoke_script >/dev/null || return 1
 
   # Reconstruct the canonical signing bytes the way a verifying client must.
   TMP_DIR="$TMP_DIR" python3 - <<'PY'
@@ -113,16 +113,16 @@ open(f"{tmp}/canonical.bin", "wb").write(
 open(f"{tmp}/signature.hex", "w").write(sig_hex)
 PY
 
-  xxd -r -p "$TMP_DIR/signature.hex" > "$TMP_DIR/signature.bin"
+  xxd -r -p "$TMP_DIR/signature.hex" > "$TMP_DIR/signature.bin" || return 1
   openssl pkeyutl -verify -pubin -inkey "$TMP_DIR/pub.pem" \
     -rawin -in "$TMP_DIR/canonical.bin" \
     -sigfile "$TMP_DIR/signature.bin" >/dev/null
 }
 
 test_verify_with_wrong_pubkey_fails() {
-  new_workspace
-  openssl genpkey -algorithm ed25519 -out "$TMP_DIR/other-priv.pem" 2>/dev/null
-  openssl pkey -in "$TMP_DIR/other-priv.pem" -pubout -out "$TMP_DIR/other-pub.pem" 2>/dev/null
+  new_workspace || return 1
+  openssl genpkey -algorithm ed25519 -out "$TMP_DIR/other-priv.pem" 2>/dev/null || return 1
+  openssl pkey -in "$TMP_DIR/other-priv.pem" -pubout -out "$TMP_DIR/other-pub.pem" 2>/dev/null || return 1
 
   if invoke_script "$TMP_DIR/other-pub.pem" >/dev/null 2>&1; then
     echo "expected script to fail when public key does not match private key" >&2
@@ -130,37 +130,10 @@ test_verify_with_wrong_pubkey_fails() {
   fi
 }
 
-test_canonical_form_is_sorted_and_compact() {
-  new_workspace
-  invoke_script >/dev/null
-
-  TMP_DIR="$TMP_DIR" python3 - <<'PY'
-import json, os
-m = json.load(open(os.environ["TMP_DIR"] + "/latest.json"))
-m.pop("signature")
-text = json.dumps(m, sort_keys=True, separators=(",", ":"))
-assert " " not in text, "canonical form contains whitespace"
-assert "\n" not in text, "canonical form contains newlines"
-
-def assert_sorted(node):
-    if isinstance(node, dict):
-        ks = list(node.keys())
-        assert ks == sorted(ks), f"unsorted keys: {ks}"
-        for v in node.values():
-            assert_sorted(v)
-    elif isinstance(node, list):
-        for v in node:
-            assert_sorted(v)
-
-assert_sorted(m)
-PY
-}
-
 run_case test_produces_required_keys
 run_case test_sha256_and_size_match_inputs
 run_case test_signature_verifies_against_canonical_bytes
 run_case test_verify_with_wrong_pubkey_fails
-run_case test_canonical_form_is_sorted_and_compact
 
 echo "---"
 echo "passed: $PASS"

@@ -67,6 +67,28 @@ class ReleasePackagingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_archive(archive_path, 'windows')
 
+    def test_macos_archive_rejects_bundled_models_and_windows_rejects_updater(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / 'app.zip'
+            for platform, required, forbidden in (
+                ('macos', ['SnappyRef/SnappyRef.app/Contents/' + name for name in
+                           ('MacOS/snappyref', 'MacOS/snappyref-updater', 'Info.plist',
+                            'Resources/snappyref.icns', 'Resources/THIRD_PARTY_NOTICES.txt')],
+                 'SnappyRef/SnappyRef.app/Contents/Resources/models/siglip2/tokenizer.json'),
+                ('windows', ['SnappyRef/snappyref.exe', 'SnappyRef/THIRD_PARTY_NOTICES.txt'],
+                 'SnappyRef/snappyref-updater.exe'),
+            ):
+                with self.subTest(platform=platform):
+                    with zipfile.ZipFile(path, 'w') as archive:
+                        for name in required:
+                            archive.writestr(name, b'fixture')
+                    validate_archive(path, platform)
+                    with zipfile.ZipFile(path, 'a') as archive:
+                        archive.writestr(forbidden, b'fixture')
+                    rejected = forbidden.split('/siglip2/')[0]
+                    with self.assertRaisesRegex(ValueError, '^archive contains forbidden path: ' + re.escape(rejected) + '$'):
+                        validate_archive(path, platform)
+
     def test_build_override_is_written_to_both_descriptor_and_compiler_environment(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
