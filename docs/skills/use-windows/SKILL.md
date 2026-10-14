@@ -38,13 +38,11 @@ If the PC is asleep, run:
 scripts/windows-wake.sh
 ```
 
-Set `SNAPPYREF_WINDOWS_WAKE_RELAY` and `SNAPPYREF_WINDOWS_MAC` in the private
-`.env.windows` first. The relay must stay awake, accept key-based SSH, have
-`python3`, and reach the PC's broadcast domain. It sends a Wake-on-LAN magic
-packet over UDP port 9. `SNAPPYREF_WINDOWS_WAKE_BROADCAST` optionally selects
-the subnet broadcast address. The script waits up to
-`SNAPPYREF_WINDOWS_WAKE_TIMEOUT_SECONDS`, default 120 seconds, for Windows SSH
-with bounded connection attempts. A missing wake value or unreachable PC fails.
+It runs `SNAPPYREF_WINDOWS_WAKE_CMD` from the private `.env.windows`, then waits
+up to `SNAPPYREF_WINDOWS_WAKE_TIMEOUT_SECONDS`, default 120 seconds, for Windows
+SSH with bounded connection attempts. How the PC wakes is machine-specific, so
+the command lives only in `.env.windows`. A missing command, a failing command,
+or an unreachable PC fails.
 Keep real hosts, network addresses, MACs and account names in `.env.windows`.
 The tracked example contains placeholders only.
 
@@ -101,7 +99,7 @@ python3 -m unittest scripts.test_windows_helpers
 
 The session/launch test executes PowerShell with stubbed OS adapters. It uses
 `pwsh` on PATH, or the executable path in `SNAPPYREF_TEST_PWSH`; without that
-runtime it reports a skip. Wake tests need only Python and stub SSH.
+runtime it reports a skip. Wake tests need only Python, bash and stub SSH.
 
 ## Native file and URL drops
 

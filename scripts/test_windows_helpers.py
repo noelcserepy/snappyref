@@ -19,30 +19,12 @@ class WindowsHelperTests(unittest.TestCase):
         self.env = dict(os.environ, SNAPPYREF_WINDOWS_ENV=str(self.root / 'env'),
                         SNAPPYREF_WINDOWS_HOST='windows-host-placeholder',
                         SNAPPYREF_WINDOWS_REPO=r'C:\checkout-placeholder',
-                        SNAPPYREF_WINDOWS_WAKE_RELAY='wake-relay-placeholder',
-                        SNAPPYREF_WINDOWS_MAC='02:00:00:00:00:01',
                         SNAPPYREF_WINDOWS_WAKE_TIMEOUT_SECONDS='1',
                         SSH_LOG=str(self.log), PATH=f'{self.root}:{os.environ["PATH"]}')
-        (self.root / 'socket.py').write_text('''import json, os
-from pathlib import Path
-AF_INET, SOCK_DGRAM, SOL_SOCKET, SO_BROADCAST = 2, 2, 1, 6
-class socket:
-    def __enter__(self): return self
-    def __exit__(self, *args): pass
-    def __init__(self, *args): pass
-    def setsockopt(self, *args):
-        assert args == (SOL_SOCKET, SO_BROADCAST, 1)
-    def sendto(self, packet, address):
-        Path(os.environ['PACKET_LOG']).write_text(json.dumps([packet.hex(), address]))
-''')
-        self.env['PACKET_LOG'] = str(self.root / 'packet.json')
-        self.env['PYTHONPATH'] = str(self.root)
         (self.root / 'ssh').write_text('''#!/usr/bin/env python3
-import json, os, shlex, subprocess, sys, time
+import json, os, sys, time
 args = sys.argv[1:]
 with open(os.environ['SSH_LOG'], 'a') as log: log.write(json.dumps(args) + '\\n')
-if 'wake-relay-placeholder' in args:
-    sys.exit(subprocess.run(shlex.split(args[-1]), input=sys.stdin.read(), text=True).returncode)
 if os.environ.get('SSH_HANG'): time.sleep(30)
 sys.exit(int(os.environ.get('SSH_RESULT', '0')))
 ''')
@@ -140,24 +122,30 @@ sys.exit(subprocess.run(shlex.split(sys.argv[-1])).returncode)
             'directory': r'C:\checkout-placeholder',
         })
 
-    def test_wake_relay_sends_magic_packet_then_waits_for_ssh(self):
+    def test_wake_runs_the_private_command_then_waits_for_ssh(self):
         del self.env['SNAPPYREF_WINDOWS_REPO']
+        marker = self.root / 'woke'
+        self.env['SNAPPYREF_WINDOWS_WAKE_CMD'] = f"echo 'wake args' > '{marker}'"
         result = self.run_script('windows-wake.sh')
         self.assertEqual(result.returncode, 0, result.stderr)
-        packet, address = json.loads((self.root / 'packet.json').read_text())
-        self.assertEqual(bytes.fromhex(packet), b'\xff' * 6 + b'\x02\x00\x00\x00\x00\x01' * 16)
-        self.assertEqual(address, ['255.255.255.255', 9])
-        self.assertEqual(len(self.calls()), 2)
-        self.assertIn('wake-relay-placeholder', self.calls()[0])
-        self.assertIn('windows-host-placeholder', self.calls()[1])
+        self.assertEqual(marker.read_text(), 'wake args\n')
+        self.assertEqual(self.calls(), [['-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+                                         '-o', 'ConnectionAttempts=1', '--',
+                                         'windows-host-placeholder', 'exit']])
+        self.assertIn('Windows SSH is reachable.', result.stdout)
 
-    def test_wake_requires_private_config_and_bounds_unreachable_ssh(self):
-        self.env['SNAPPYREF_WINDOWS_MAC'] = ''
+    def test_wake_requires_a_command_and_bounds_unreachable_ssh(self):
         result = self.run_script('windows-wake.sh')
         self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn('Set SNAPPYREF_WINDOWS_WAKE_RELAY and SNAPPYREF_WINDOWS_MAC', result.stderr)
+        self.assertIn('Set SNAPPYREF_WINDOWS_WAKE_CMD in .env.windows', result.stderr)
         self.assertFalse(self.log.exists())
-        self.env['SNAPPYREF_WINDOWS_MAC'] = '02:00:00:00:00:01'
+        # A failing command's own status, even 2, must not read as missing config.
+        self.env['SNAPPYREF_WINDOWS_WAKE_CMD'] = 'exit 2'
+        result = self.run_script('windows-wake.sh')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('The wake command failed.', result.stderr)
+        self.assertFalse(self.log.exists())
+        self.env['SNAPPYREF_WINDOWS_WAKE_CMD'] = 'true'
         self.env['SSH_RESULT'] = '255'
         self.env['SSH_HANG'] = '1'
         result = self.run_script('windows-wake.sh')
