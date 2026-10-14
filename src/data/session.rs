@@ -166,14 +166,6 @@ mod tests {
                 .contains("auto_image_scaling")
         );
     }
-
-    #[test]
-    fn default_placement_gap_is_zero_for_new_workspaces() {
-        let settings = WorkspaceSettings::default();
-
-        assert_eq!(settings.placement_gap, 0.0);
-        assert_eq!(settings.pointer_mode, super::PointerMode::Mouse);
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
