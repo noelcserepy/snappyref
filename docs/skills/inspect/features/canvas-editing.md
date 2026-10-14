@@ -54,8 +54,9 @@ Preconditions:
   `run-scenario.sh multi-transform-layout-contracts`. It covers multi-drag,
   multi-scale, rotation snapping with the Alt bypass, a scale released outside
   the canvas, W and E at gaps 0 and 24, the four arrow settles, ⌘L, and ⇧⌘L.
-  The selection, the 15° snap setting, and each gap are set in code. The real
-  checks are plain asserts that run before the summary assertions.
+  The selection, the 15° snap setting, and each gap are set in code. The
+  arrow cases start overlapping and assert literal centers for each direction.
+  Every check records its result, so a failure keeps its report and frames.
 - **Corner resize and drag snapping.** Run `run-scenario.sh rotated-corner-resize`
   for a rotated image at non-default pan/zoom, release outside the canvas,
   persisted geometry, and one Undo. Run `run-scenario.sh snapped-drag-commit`
