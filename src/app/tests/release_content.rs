@@ -762,6 +762,34 @@ fn group_picker_arrows_remember_destination_and_cancel_typed_shortcuts() {
 
 #[test]
 fn inspect_annotation_text_sessions_writes_artifact() {
+    fn reopen(path: PathBuf) -> Harness<'static, SnappyRefApp> {
+        Harness::builder()
+            .with_size(egui::vec2(1200., 800.))
+            .with_pixels_per_point(1.)
+            .with_os(egui::os::OperatingSystem::Nix)
+            .with_theme(egui::Theme::Dark)
+            .with_max_steps(4)
+            .with_step_dt(1. / 60.)
+            .build_eframe(move |cc| {
+                crate::ui::theme::configure_theme(&cc.egui_ctx);
+                let config = AppConfig {
+                    library_root: Ok(path),
+                    no_startup_focus: true,
+                    perf_log: false,
+                    perf_decode_path: None,
+                    perf_scenario: None,
+                    perf_corpus: None,
+                    perf_run_dir: None,
+                    update_smoke_install: false,
+                    update_smoke_status_path: None,
+                };
+                let startup = config.prepare_startup();
+                let mut app = SnappyRefApp::new(cc, config, startup);
+                app.update_service =
+                    crate::updater::UpdateService::new(crate::updater::UpdateConfig::for_tests());
+                app
+            })
+    }
     let mut scenario = InspectScenario::new("annotation-text-sessions");
     let root = TempRoot::new("snappyref-text-sessions");
     let library = Library::initialize(root.to_path_buf()).unwrap();
@@ -779,10 +807,12 @@ fn inspect_annotation_text_sessions_writes_artifact() {
     let id = annotation.id;
     let mut app = test_app(Some(library.clone()));
     app.canvas.add_annotation(annotation);
+    app.settings.semantic_search_first_launch_prompt_seen = true;
     let mut harness = app_full_harness_with_step_dt(app, 1. / 60.);
     harness.hover_at(test_screen_rect().center() + egui::vec2(300., 200.));
     harness.step();
     scenario.capture_screen("before-edit", &mut harness);
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Num2);
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Enter);
     harness.step();
     shortcut(&mut harness, CMD, egui::Key::A);
@@ -791,6 +821,25 @@ fn inspect_annotation_text_sessions_writes_artifact() {
         harness.step();
     }
     scenario.capture_screen("hello-editing", &mut harness);
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    scenario.assertion(
+        "Undo while typing preserves the previous Coral style edit",
+        harness.state().canvas.annotation_for_id(id).unwrap().color
+            == crate::data::CanvasAnnotationColor::Coral,
+    );
+    scenario.assertion(
+        "the focused editor undoes its text",
+        harness.state().canvas.annotation_for_id(id).unwrap().text == "before",
+    );
+    shortcut(
+        &mut harness,
+        egui::Modifiers { shift: true, ..CMD },
+        egui::Key::Z,
+    );
+    scenario.assertion(
+        "the focused editor redoes hello",
+        harness.state().canvas.annotation_for_id(id).unwrap().text == "hello",
+    );
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Enter);
     scenario.assertion(
         "plain Enter commits hello",
@@ -816,18 +865,7 @@ fn inspect_annotation_text_sessions_writes_artifact() {
     );
     harness.state_mut().persist_canvas_changes();
     harness.state_mut().flush_persistence();
-    let reopened = Library::initialize(root.to_path_buf()).unwrap();
-    let mut restored = test_app(Some(reopened.clone()));
-    restored.board_editing.history = reopened.load_document_history().unwrap();
-    restored.canvas.add_annotation(
-        reopened
-            .load_canvas_annotations()
-            .unwrap()
-            .into_iter()
-            .find(|a| a.id == id)
-            .unwrap(),
-    );
-    let mut restored = app_full_harness_with_step_dt(restored, 1. / 60.);
+    let mut restored = reopen(root.to_path_buf());
     restored.hover_at(test_screen_rect().center() + egui::vec2(300., 200.));
     restored.step();
     shortcut(&mut restored, CMD, egui::Key::Z);
@@ -912,17 +950,14 @@ fn inspect_annotation_text_sessions_writes_artifact() {
         "exit saves the unfinished typing session",
         stored.text == "saved on exit",
     );
-    let mut restored = test_app(Some(reopened.clone()));
-    restored.canvas.add_annotation(stored);
-    restored.board_editing.history = reopened.load_document_history().unwrap();
-    restored.undo_document_history(&egui::Context::default());
-    scenario.assertion(
-        "exit stores one Undo step back to hello",
-        restored.canvas.annotation_for_id(id).unwrap().text == "hello",
-    );
-    let mut restored = app_full_harness_with_step_dt(restored, 1. / 60.);
+    let mut restored = reopen(root.to_path_buf());
     restored.hover_at(test_screen_rect().center() + egui::vec2(300., 200.));
     restored.step();
+    shortcut(&mut restored, CMD, egui::Key::Z);
+    scenario.assertion(
+        "exit stores one Undo step back to hello",
+        restored.state().canvas.annotation_for_id(id).unwrap().text == "hello",
+    );
     shortcut(&mut restored, egui::Modifiers::NONE, egui::Key::Enter);
     restored.step();
     shortcut(&mut restored, CMD, egui::Key::A);

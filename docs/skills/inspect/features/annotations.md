@@ -62,8 +62,9 @@ Preconditions:
   later observations and frames, then marks the report as failed.
 - **Text sessions and newlines.** Run `run-scenario.sh annotation-text-sessions`.
   It edits a seeded label from "before" to "hello" in five typing frames,
-  commits with Enter, and drives one Undo and Redo, including after reopening
-  the library. It types "first", Shift+Enter, and "second", commits with Enter,
+  checks that focused-editor Undo/Redo preserves an earlier color edit,
+  commits with Enter, and drives one board Undo and Redo, including after
+  reopening through production startup. It types "first", Shift+Enter, and "second", commits with Enter,
   reads "first\nsecond" back after a flush, and undoes the whole session.
   Finally it exits with an unfinished edit and checks the saved text and
   batched history after reopening. Clearing a label and committing removes
