@@ -13,7 +13,7 @@
 //!    popup. Hidden becomes Failed; known available, downloading, and ready
 //!    updates retain their state.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
