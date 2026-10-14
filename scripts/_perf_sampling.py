@@ -160,8 +160,6 @@ _PHASE_MARKERS = [
     "first_import_embedding_started",
     "first_import_embedding_done",
     "all_import_embeddings_done",
-    "semantic_model_unload_requested",
-    "semantic_model_unloaded",
     "settled_idle",
 ]
 
@@ -226,9 +224,6 @@ def phase_summary_from_events(events: list[dict[str, Any]]) -> dict[str, Any]:
     )
     durations["embedding_drain_ms"] = _delta(
         "first_import_embedding_started", "all_import_embeddings_done"
-    )
-    durations["model_unload_ms"] = _delta(
-        "semantic_model_unload_requested", "semantic_model_unloaded"
     )
     durations["all_placements_to_settled_idle_ms"] = _delta(
         "all_placements_visible", "settled_idle"

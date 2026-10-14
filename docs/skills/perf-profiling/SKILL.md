@@ -114,8 +114,8 @@ installation/update speed, cold-disk startup, or Windows performance.
   assets to its own data directory before trial timing. Setup counts in command
   runtime. No downloads or personal
   app data. Update discovery uses a closed loopback port.
-- Shipping helper grace and model retention policies. No forced unload or
-  helper-disable flags. Inherited `SNAPPYREF_*` overrides are cleared.
+- Shipping helper grace and model retention policies. Inherited `SNAPPYREF_*`
+  overrides are cleared.
 - Nonactivating window. Avoid interacting with measured windows or changing
   display/power settings during a suite.
 - OS filesystem cache is uncontrolled, usually warm. Do not call this a

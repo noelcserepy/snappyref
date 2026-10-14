@@ -1790,10 +1790,7 @@ mod tests {
 
     #[test]
     fn decode_image_file_decodes_jxl_with_dedicated_decoder_when_cjxl_is_available() {
-        let Some(cjxl) = std::env::var_os("SNAPPYREF_CJXL")
-            .map(std::path::PathBuf::from)
-            .or_else(|| find_command_in_path("cjxl"))
-        else {
+        let Some(cjxl) = find_command_in_path("cjxl") else {
             eprintln!("skipping JPEG XL decode smoke test: cjxl not found");
             return;
         };

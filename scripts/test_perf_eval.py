@@ -392,8 +392,6 @@ class SamplingTests(unittest.TestCase):
                 "asset_id": 2,
             },
             {"event": "all_import_embeddings_done", "elapsed_ms": 700.0},
-            {"event": "semantic_model_unload_requested", "elapsed_ms": 705.0},
-            {"event": "semantic_model_unloaded", "elapsed_ms": 720.0},
             {"event": "settled_idle", "elapsed_ms": 730.0},
         ]
 
@@ -410,7 +408,6 @@ class SamplingTests(unittest.TestCase):
         self.assertAlmostEqual(durations["model_load_ms"], 300.0)
         self.assertAlmostEqual(durations["first_embedding_ms"], 235.0)
         self.assertAlmostEqual(durations["embedding_drain_ms"], 335.0)
-        self.assertAlmostEqual(durations["model_unload_ms"], 15.0)
         self.assertAlmostEqual(durations["all_placements_to_settled_idle_ms"], 500.0)
 
     def test_phase_summary_missing_markers_yield_none(self) -> None:

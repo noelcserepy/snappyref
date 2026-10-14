@@ -61,7 +61,6 @@ pub(crate) struct PerfScenarioState {
     pub(crate) embedding_phases: EmbeddingPhaseMarkers,
     pub(crate) idle_since: Option<Instant>,
     pub(crate) settled_idle_at: Option<Instant>,
-    pub(crate) model_unload_logged: bool,
     /// Per-asset corpus metadata indexed by import queue id, so events
     /// emitted after `import_queued` can still report `format`.
     pub(crate) asset_by_queue_id: std::collections::HashMap<u64, PerfCorpusAsset>,
@@ -99,8 +98,6 @@ pub(crate) struct EmbeddingPhaseMarkers {
     pub(crate) first_embedding_started_ms: Option<f64>,
     pub(crate) first_embedding_done_ms: Option<f64>,
     pub(crate) all_embeddings_done_ms: Option<f64>,
-    pub(crate) semantic_model_unload_requested_ms: Option<f64>,
-    pub(crate) semantic_model_unloaded_ms: Option<f64>,
     pub(crate) model_load_timing: Option<ModelLoadTimingSummary>,
 }
 
@@ -112,7 +109,6 @@ pub(crate) struct EmbeddingPhaseSummary {
     pub(crate) first_embedding_after_model_ready_ms: Option<f64>,
     pub(crate) first_embedding_run_ms: Option<f64>,
     pub(crate) total_import_embedding_drain_ms: Option<f64>,
-    pub(crate) model_unload_ms: Option<f64>,
     pub(crate) model_load_timing: Option<ModelLoadTimingSummary>,
 }
 
@@ -184,7 +180,6 @@ impl PerfScenarioState {
             embedding_phases: EmbeddingPhaseMarkers::default(),
             idle_since: None,
             settled_idle_at: None,
-            model_unload_logged: false,
             asset_by_queue_id: std::collections::HashMap::new(),
             asset_by_asset_id: std::collections::HashMap::new(),
             pending_trickle_imports: Vec::new(),
@@ -372,13 +367,6 @@ impl EmbeddingPhaseMarkers {
             "all_import_embeddings_done" => {
                 self.all_embeddings_done_ms.get_or_insert(elapsed_ms);
             }
-            "semantic_model_unload_requested" => {
-                self.semantic_model_unload_requested_ms
-                    .get_or_insert(elapsed_ms);
-            }
-            "semantic_model_unloaded" => {
-                self.semantic_model_unloaded_ms.get_or_insert(elapsed_ms);
-            }
             _ => {}
         }
     }
@@ -420,10 +408,6 @@ impl EmbeddingPhaseMarkers {
             total_import_embedding_drain_ms: duration_between(
                 self.first_embedding_queued_ms,
                 self.all_embeddings_done_ms,
-            ),
-            model_unload_ms: duration_between(
-                self.semantic_model_unload_requested_ms,
-                self.semantic_model_unloaded_ms,
             ),
             model_load_timing: self.model_load_timing,
         })
@@ -805,25 +789,7 @@ impl SnappyRefApp {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     return true;
                 }
-                let mut next_repaint_after = idle_hold.saturating_sub(settled_idle_at.elapsed());
-                if let Some(unload_after) =
-                    std::env::var("SNAPPYREF_PERF_MODEL_UNLOAD_AFTER_IDLE_MS")
-                        .ok()
-                        .and_then(|value| value.parse::<u64>().ok())
-                        .map(Duration::from_millis)
-                    && !scenario.model_unload_logged
-                {
-                    if idle_since.elapsed() >= unload_after {
-                        if self.search.unload_model_for_perf() {
-                            scenario.model_unload_logged = true;
-                            scenario.emit("semantic_model_unload_requested", serde_json::json!({}));
-                            scenario.emit("semantic_model_unloaded", serde_json::json!({}));
-                        }
-                    } else {
-                        next_repaint_after =
-                            next_repaint_after.min(unload_after - idle_since.elapsed());
-                    }
-                }
+                let next_repaint_after = idle_hold.saturating_sub(settled_idle_at.elapsed());
                 ctx.request_repaint_after(next_repaint_after.max(Duration::from_millis(250)));
                 return false;
             }
