@@ -289,15 +289,26 @@ mod tests {
     }
 
     #[test]
-    fn cancel_removes_pending_resolution() {
+    fn cancel_preserves_other_pending_resolution() {
         let mut runtime = super::PlacementCreation::new();
         let reservation = runtime.reserve_placement(1, 7, eframe::egui::Pos2::ZERO);
+
+        let retained = runtime.reserve_placement(3, 9, eframe::egui::pos2(10.0, 20.0));
 
         runtime.cancel(reservation);
 
         let completion = runtime.resolve_completion(Some(reservation.queue_id), None, None);
         assert_eq!(completion.placement_id, None);
         assert_eq!(completion.target_board_id, None);
+        assert_eq!(completion.queue_id, Some(1));
+        let completion = runtime.resolve_completion(Some(retained.queue_id), None, None);
+        assert_eq!(completion.target_board_id, Some(3));
+        assert_eq!(completion.queue_id, Some(2));
+        assert_eq!(completion.placement_id, Some(9));
+        let repeated = runtime.resolve_completion(Some(retained.queue_id), None, None);
+        assert_eq!(repeated.queue_id, Some(2));
+        assert_eq!(repeated.target_board_id, None);
+        assert_eq!(repeated.placement_id, None);
     }
 
     #[test]

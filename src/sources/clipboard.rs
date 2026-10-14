@@ -188,6 +188,7 @@ mod tests {
             )
             .unwrap();
         let placement_id = placement.state.id;
+        let asset_id = placement.loaded_asset().unwrap().id;
         let mut canvas = crate::canvas::CanvasState::default();
         canvas.add_prepared_placement_image(&ctx, loaded_item(placement, rgba.clone(), 2, 1));
         canvas.select_placements(&[placement_id]);
@@ -197,11 +198,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(payload.item_count, 1);
-        assert!(
-            payload
-                .internal_json
-                .contains(crate::sources::clipboard::COPY_PAYLOAD_KIND)
+        let copied: serde_json::Value = serde_json::from_str(&payload.internal_json).unwrap();
+        assert_eq!(copied["kind"], "snappyref-board-items");
+        assert_eq!(
+            copied["items"],
+            serde_json::json!([{
+                "asset_id": asset_id,
+                "center_x": 0.0, "center_y": 0.0, "scale": 1.0,
+                "rotation": 0.0, "z_index": 0, "width": 2.0, "height": 1.0
+            }])
         );
+        assert_eq!(copied["annotations"], serde_json::json!([]));
         assert_eq!(
             payload.external_image,
             Some(super::ExternalClipboardImage {
@@ -219,6 +226,10 @@ mod tests {
         canvas.add_prepared_placement_image(
             &ctx,
             loaded_item(test_record(1, 1), vec![255, 255, 255, 255], 1, 1),
+        );
+        canvas.add_prepared_placement_image(
+            &ctx,
+            loaded_item(test_record(2, 2), vec![0, 0, 0, 255], 1, 1),
         );
         canvas.add_annotation(crate::data::CanvasAnnotation::new(
             20,
@@ -239,6 +250,23 @@ mod tests {
 
         assert_eq!(payload.item_count, 2);
         assert!(payload.external_image.is_none());
+        assert_copied_placement(&payload.internal_json, 1.0, 1.0);
+        let copied: serde_json::Value = serde_json::from_str(&payload.internal_json).unwrap();
+        assert_eq!(copied["annotations"].as_array().unwrap().len(), 1);
+        let annotation = &copied["annotations"][0];
+        assert_eq!(annotation["kind"], "textbox");
+        assert_eq!(annotation["text"], "caption");
+        assert_eq!(
+            (
+                annotation["start_x"].as_f64(),
+                annotation["start_y"].as_f64()
+            ),
+            (Some(10.0), Some(10.0))
+        );
+        assert_eq!(
+            (annotation["end_x"].as_f64(), annotation["end_y"].as_f64()),
+            (Some(70.0), Some(40.0))
+        );
     }
 
     #[test]
@@ -264,11 +292,7 @@ mod tests {
 
             assert_eq!(payload.item_count, 1);
             assert!(payload.external_image.is_none());
-            assert!(
-                super::decode_board_selection(&payload.internal_json)
-                    .unwrap()
-                    .is_some()
-            );
+            assert_copied_placement(&payload.internal_json, side as f32, side as f32);
         }
     }
 
@@ -293,6 +317,31 @@ mod tests {
 
         assert_eq!(payload.item_count, 1);
         assert!(payload.external_image.is_none());
+        assert_copied_placement(&payload.internal_json, 1.0, 1.0);
+    }
+
+    fn assert_copied_placement(json: &str, width: f32, height: f32) {
+        let copied: super::ClipboardBoardSelection = serde_json::from_str(json).unwrap();
+        let placements = copied
+            .placements
+            .iter()
+            .map(|item| {
+                (
+                    item.asset_id,
+                    item.center_x,
+                    item.center_y,
+                    item.scale,
+                    item.rotation,
+                    item.z_index,
+                    item.width,
+                    item.height,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            placements,
+            vec![(1, 30.0, 40.0, 1.5, 0.25, 7, width, height)]
+        );
     }
 
     fn loaded_item(
@@ -322,11 +371,11 @@ mod tests {
             PlacementState {
                 id: placement_id,
                 geometry: crate::data::RectGeometry::new(
-                    eframe::egui::Pos2::ZERO,
-                    eframe::egui::Vec2::ZERO,
-                    1.0,
-                    0.0,
-                    0,
+                    eframe::egui::pos2(30.0, 40.0),
+                    eframe::egui::vec2(1.0, 1.0),
+                    1.5,
+                    0.25,
+                    7,
                 ),
                 archived: false,
             },
