@@ -1961,3 +1961,88 @@ fn inspect_library_dedupe_shortcut_writes_artifact() {
     scenario.capture_screen("screen-002-repeated", &mut harness);
     finish(scenario);
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn inspect_browser_url_drop_writes_artifact() {
+    use std::io::{Read, Write};
+    let mut scenario = InspectScenario::new("browser-url-drop");
+    let root = TempRoot::new("snappyref-browser-url-drop");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_pixel(80, 50, image::Rgba([55, 120, 200, 255]))
+        .write_to(&mut bytes, image::ImageFormat::WebP)
+        .unwrap();
+    let bytes = bytes.into_inner();
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}/image?width=800", listener.local_addr().unwrap());
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        loop {
+            if stop_rx.try_recv().is_ok() {
+                break;
+            }
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
+                    let mut request = Vec::new();
+                    while !request.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        stream.read_exact(&mut byte).unwrap();
+                        request.push(byte[0]);
+                    }
+                    write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", bytes.len()).unwrap();
+                    stream.write_all(&bytes).unwrap();
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5))
+                }
+                Err(error) => panic!("{error}"),
+            }
+        }
+    });
+    let mut app = test_app(Some(library));
+    app.import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
+        app.library.as_ref().unwrap().clone(),
+        egui::Context::default(),
+        None,
+    ));
+    let mut harness = app_full_harness(app);
+    scenario.capture_screen("screen-000-before-browser-drop", &mut harness);
+    let payload = crate::platform::native_drop::browser_drop_probe(&url);
+    scenario.event("native-negotiation", serde_json::json!({"payload": "public.url only", "accepted_urls": payload.urls, "limitation": "Cocoa pasteboard negotiation; no live browser or OS drag session"}));
+    harness.hover_at(egui::pos2(900.0, 600.0));
+    for url in payload.urls {
+        harness
+            .input_mut()
+            .dropped_files
+            .push(dropped_file(std::path::Path::new(&url)));
+    }
+    harness.step();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while harness.state().placement_creation.pending_len() != 0 && Instant::now() < deadline {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    scenario.capture_screen("screen-001-after-browser-drop", &mut harness);
+    let ids = harness.state().canvas.all_placement_ids();
+    let placements = ids
+        .iter()
+        .map(|id| harness.state().canvas.placement_for_id(*id).unwrap())
+        .collect::<Vec<_>>();
+    scenario.assertion(
+        "browser drop imports one 80x50 WebP",
+        placements.len() == 1
+            && placements[0].is_loaded()
+            && placements[0].require_loaded_asset().width == 80
+            && placements[0].require_loaded_asset().height == 50
+            && placements[0].require_loaded_asset().mime_type == "image/webp",
+    );
+    let _ = stop_tx.send(());
+    server.join().unwrap();
+    finish(scenario);
+}

@@ -10,12 +10,14 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Imp, Method, NSObject, Sel};
 use objc2::{msg_send, msg_send_id, sel};
 use objc2_app_kit::{
-    NSDragOperation, NSFilenamesPboardType, NSPasteboard, NSPasteboardTypeHTML,
-    NSPasteboardTypeString, NSPasteboardTypeURL,
+    NSDragOperation, NSFilenamesPboardType, NSPasteboard, NSPasteboardTypeFileURL,
+    NSPasteboardTypeHTML, NSPasteboardTypeString, NSPasteboardTypeURL,
 };
-use objc2_foundation::{NSPoint, NSRect};
+use objc2_foundation::{NSArray, NSCopying, NSPoint, NSRect, NSString};
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 static INSTALL: Once = Once::new();
+static EGUI_CONTEXT: OnceLock<egui::Context> = OnceLock::new();
 static STATE: OnceLock<Mutex<super::payload::NativeDropState>> = OnceLock::new();
 static ORIGINAL_DRAGGING_ENTERED: OnceLock<Imp> = OnceLock::new();
 static ORIGINAL_DRAGGING_UPDATED: OnceLock<Imp> = OnceLock::new();
@@ -26,7 +28,54 @@ type DragOperationMethod = unsafe extern "C" fn(&AnyObject, Sel, &NSObject) -> N
 type DragBoolMethod = unsafe extern "C" fn(&AnyObject, Sel, &NSObject) -> bool;
 type DragVoidMethod = unsafe extern "C" fn(&AnyObject, Sel, Option<&NSObject>);
 
-pub(super) fn install(_cc: &eframe::CreationContext<'_>) {
+// Winit initially registers only filename drops. This list is also used by
+// the Cocoa negotiation probe so browser-only payloads exercise that boundary.
+fn registered_drag_types() -> Retained<NSArray<NSString>> {
+    unsafe {
+        NSArray::from_id_slice(&[
+            NSFilenamesPboardType.copy(),
+            NSPasteboardTypeFileURL.copy(),
+            NSPasteboardTypeURL.copy(),
+            NSPasteboardTypeHTML.copy(),
+            NSPasteboardTypeString.copy(),
+        ])
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn browser_drop_probe(url: &str) -> super::NativeDropPayload {
+    let pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName() };
+    unsafe {
+        pasteboard.clearContents();
+        pasteboard.setString_forType(&NSString::from_str(url), NSPasteboardTypeURL);
+    }
+    let accepted = unsafe { pasteboard.availableTypeFromArray(&registered_drag_types()) };
+    let payload = if accepted.is_some() {
+        extract_pasteboard_payload(&pasteboard).0
+    } else {
+        super::NativeDropPayload::default()
+    };
+    unsafe { pasteboard.clearContents() };
+    payload
+}
+
+pub(super) fn install(cc: &eframe::CreationContext<'_>) {
+    let Ok(handle) = cc.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return;
+    };
+    // SAFETY: eframe keeps the content view and its window alive for this call.
+    let view = unsafe { &*handle.ns_view.as_ptr().cast::<AnyObject>() };
+    let window: Option<Retained<NSObject>> = unsafe { msg_send_id![view, window] };
+    let Some(window) = window else {
+        return;
+    };
+    unsafe {
+        let _: () = msg_send![&*window, registerForDraggedTypes: &*registered_drag_types()];
+    }
+    let _ = EGUI_CONTEXT.set(cc.egui_ctx.clone());
     INSTALL.call_once(|| {
         let Some(class) = AnyClass::get("WinitWindowDelegate") else {
             return;
@@ -116,6 +165,12 @@ pub(super) fn take_drop() -> super::NativeDropPayload {
     )
 }
 
+fn request_repaint() {
+    if let Some(ctx) = EGUI_CONTEXT.get() {
+        ctx.request_repaint();
+    }
+}
+
 fn state() -> &'static Mutex<super::payload::NativeDropState> {
     STATE.get_or_init(|| Mutex::new(super::payload::NativeDropState::default()))
 }
@@ -178,6 +233,7 @@ unsafe extern "C" fn dragging_entered_swizzled(
     cmd: Sel,
     sender: &NSObject,
 ) -> NSDragOperation {
+    request_repaint();
     let (payload, should_claim_drag) = extract_drag_payload(sender);
     let pos = dragging_screen_pos(sender);
     if !payload.is_empty() {
@@ -207,6 +263,7 @@ unsafe extern "C" fn dragging_updated_swizzled(
     cmd: Sel,
     sender: &NSObject,
 ) -> NSDragOperation {
+    request_repaint();
     let (payload, should_claim_drag) = extract_drag_payload(sender);
     let pos = dragging_screen_pos(sender);
     if !payload.is_empty() {
@@ -236,6 +293,7 @@ unsafe extern "C" fn dragging_updated_added(
     _cmd: Sel,
     sender: &NSObject,
 ) -> NSDragOperation {
+    request_repaint();
     let accepts_file_payload = has_file_payload(sender);
     let (payload, should_claim_drag) = extract_drag_payload(sender);
     let pos = dragging_screen_pos(sender);
@@ -263,6 +321,7 @@ unsafe extern "C" fn perform_drag_operation_swizzled(
     cmd: Sel,
     sender: &NSObject,
 ) -> bool {
+    request_repaint();
     let (payload, should_claim_drag) = extract_drag_payload(sender);
     let pos = dragging_screen_pos(sender);
     if !payload.is_empty() {
@@ -291,6 +350,7 @@ unsafe extern "C" fn dragging_exited_swizzled(
     cmd: Sel,
     sender: Option<&NSObject>,
 ) {
+    request_repaint();
     state()
         .lock()
         .expect("native drop state mutex poisoned")
@@ -368,8 +428,12 @@ fn call_original_drag_void(
 
 fn extract_drag_payload(sender: &NSObject) -> (super::NativeDropPayload, bool) {
     let pasteboard: Retained<NSPasteboard> = unsafe { msg_send_id![sender, draggingPasteboard] };
+    extract_pasteboard_payload(&pasteboard)
+}
+
+fn extract_pasteboard_payload(pasteboard: &NSPasteboard) -> (super::NativeDropPayload, bool) {
     let mut payload = super::NativeDropPayload::default();
-    append_file_paths_from_pasteboard(&pasteboard, &mut payload.paths);
+    append_file_paths_from_pasteboard(pasteboard, &mut payload.paths);
     if !payload.paths.is_empty() {
         return (payload, true);
     }
@@ -524,6 +588,56 @@ fn is_text_pasteboard_type(pasteboard_type: &objc2_app_kit::NSPasteboardType) ->
 #[cfg(test)]
 mod tests {
     use super::view_point_to_egui_pos;
+
+    #[test]
+    fn browser_payloads_and_finder_file_urls_negotiate_and_extract() {
+        use objc2_app_kit::{
+            NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardTypeHTML, NSPasteboardTypeString,
+            NSPasteboardTypeURL,
+        };
+        use objc2_foundation::NSString;
+        let pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName() };
+        for (kind, text) in unsafe {
+            [
+                (
+                    NSPasteboardTypeURL,
+                    "https://cdn.example.com/image?width=800",
+                ),
+                (
+                    NSPasteboardTypeHTML,
+                    r#"<a href="https://example.com/page"><img src="https://cdn.example.com/image.webp?width=800"></a>"#,
+                ),
+                (
+                    NSPasteboardTypeString,
+                    "https://cdn.example.com/image.webp?width=800",
+                ),
+                (NSPasteboardTypeFileURL, "file:///tmp/reference.png"),
+            ]
+        } {
+            unsafe {
+                pasteboard.clearContents();
+                assert!(pasteboard.setString_forType(&NSString::from_str(text), kind));
+                pasteboard
+                    .availableTypeFromArray(&super::registered_drag_types())
+                    .expect("offered payload must negotiate with the destination");
+            }
+            let payload = super::extract_pasteboard_payload(&pasteboard).0;
+            if kind == unsafe { NSPasteboardTypeFileURL } {
+                assert_eq!(
+                    payload.paths,
+                    [std::path::PathBuf::from("/tmp/reference.png")]
+                );
+            } else {
+                let expected = if kind == unsafe { NSPasteboardTypeURL } {
+                    "https://cdn.example.com/image?width=800"
+                } else {
+                    "https://cdn.example.com/image.webp?width=800"
+                };
+                assert_eq!(payload.urls, [expected]);
+            }
+        }
+        unsafe { pasteboard.clearContents() };
+    }
 
     #[test]
     fn flipped_winit_view_points_are_already_top_left_origin() {

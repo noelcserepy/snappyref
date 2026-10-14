@@ -33,3 +33,6 @@ pub fn take_drop() -> NativeDropPayload {
 pub fn cursor_screen_pos() -> Option<eframe::egui::Pos2> {
     platform::cursor_screen_pos()
 }
+
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use macos::browser_drop_probe;

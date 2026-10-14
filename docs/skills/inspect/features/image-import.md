@@ -45,6 +45,13 @@ Preconditions:
   restoring the undone batch", and "the undone batch stays absent from durable
   Board state". The frames run from
   `screen-000-before-drop` to `screen-004-late-results-discarded`.
+- **Browser URL drop on macOS.** Run `run-scenario.sh browser-url-drop`.
+  It negotiates a real Cocoa pasteboard containing only `public.url`, extracts
+  the native payload, and feeds the accepted URL into the app's drop intake.
+  A loopback server serves an extensionless WebP URL with a query string and
+  `application/octet-stream`. The frames show the empty board and one loaded
+  80x50 image. This covers pasteboard negotiation and app intake, not a live
+  browser drag session or the window's native callback delivery.
 - **Pasted URL, mixed batch, inactive board.** Run `run-scenario.sh slow-url-inactive-mixed-batch`.
   It serves a slow PNG from a local HTTP server, pastes its URL, then drops a
   valid file, a corrupt file, and a failing URL. ⌘N switches boards while the
@@ -75,7 +82,7 @@ Preconditions:
 ## Gotchas
 
 - Clipboard image paste, clipboard file paths, the context-menu "Paste" row,
-  browser drag, and PureRef have no scenario. A kittest key press of V reads
+  live browser drag delivery, and PureRef have no scenario. A kittest key press of V reads
   the real system clipboard, so it is not hermetic. Drive paste with
   `harness.event(Event::Paste(..))`. Only board-selection JSON and an http(s)
   URL are taken from the event text. File paths, PureRef data, and raster

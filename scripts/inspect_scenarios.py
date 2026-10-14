@@ -55,6 +55,7 @@ SCENARIOS = {
     'canvas-navigation-boards': ('inspect_canvas_navigation_and_boards_writes_artifact', 'canvas-navigation-boards', False),
     'session-restart-restore': ('inspect_session_restart_restore_writes_artifact', 'session-restart-restore', False),
     'persistence-write-retry': ('inspect_persistence_write_retry_writes_artifact', 'persistence-write-retry', False),
+    'browser-url-drop': ('inspect_browser_url_drop_writes_artifact', 'browser-url-drop', False),
     'slow-url-inactive-mixed-batch': ('inspect_slow_url_and_inactive_mixed_batch_writes_artifact', 'slow-url-inactive-mixed-batch', False),
     'multi-transform-layout-contracts': ('inspect_multi_transform_and_layout_contracts_writes_artifact', 'multi-transform-layout-contracts', False),
 }
