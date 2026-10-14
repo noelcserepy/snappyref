@@ -54,9 +54,17 @@ Preconditions:
 - **Loading appearance.** Run `run-scenario.sh sample-image-import` to see the
   before, loading, and loaded frames. Everything in it is seeded. It shows how
   placeholders look and drives no import path.
-- **Decoded formats.** Run `run-scenario.sh image-format-gallery`. It is
-  ignored by default and needs `SNAPPYREF_MEDIA_FIXTURES`. It covers decoding
-  and fitting 20 fixture files across 13 file types, not intake.
+- **Literal pixels and fitting.** Run `run-scenario.sh image-format-gallery`.
+  It uses generated PNG, BMP, TIFF, WebP and GIF plus checked-in farbfeld,
+  HDR, ICO, JPEG XL and EXR. macOS also includes PSD and JPEG 2000.
+  Two generated TIFFs prove rotated and mirrored orientation. Each import
+  checks literal dimensions and RGBA bytes, then rendered colors within
+  texture-filtering tolerance. Space starts from an offscreen viewport and
+  must fit the selection without changing its identities or geometry.
+- **External contact sheet.** Run `run-scenario.sh external-image-format-gallery`
+  with `SNAPPYREF_MEDIA_FIXTURES`. This optional, ignored scenario retains the
+  20 external files across 13 types. Its non-SVG pixels and orientation still
+  need visual review. Space fitting is asserted from an offscreen viewport.
 - **Real preparation.** Run
   `docs/skills/inspect/scripts/mcp-drive.py docs/skills/inspect/scripts/mcp-all-tools.json`
   after a debug build. Its `add_images` call imports two JPEGs by path in the
