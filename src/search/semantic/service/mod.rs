@@ -1214,23 +1214,55 @@ mod tests {
         .unwrap();
 
         service.enqueue_idle_backfill_step().unwrap();
-
+        service.enqueue_idle_backfill_step().unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
-        let mut backfill_idle = false;
-        while Instant::now() < deadline {
-            for result in service.try_recv_all() {
-                if matches!(result, IndexResult::BackfillIdle { retry_in: None }) {
-                    backfill_idle = true;
-                }
-            }
-            if backfill_idle {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
+        let mut results = Vec::new();
+        while results.len() < 2 {
+            results.extend(service.try_recv_all());
+            assert!(
+                Instant::now() < deadline,
+                "empty backfill responses never arrived"
+            );
+            thread::sleep(Duration::from_millis(10));
         }
-
-        assert!(backfill_idle, "timed out waiting for empty backfill");
+        // The second response fences completion of the first request on the serial worker.
+        assert!(matches!(
+            results.as_slice(),
+            [
+                IndexResult::BackfillIdle { retry_in: None },
+                IndexResult::BackfillIdle { retry_in: None },
+            ]
+        ));
         assert!(!service.is_ready());
+
+        // An Uninitialized model reports pending and starts loading on the first query.
+        // Loading would not start again; Failed would return a failed query instead.
+        service.enqueue_search_with_limit(17, "cat", 1).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let query_results = loop {
+            let results = service.try_recv_search_all();
+            if !results.is_empty() {
+                break results;
+            }
+            assert!(Instant::now() < deadline, "query response never arrived");
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert!(matches!(
+            query_results.as_slice(),
+            [super::SearchQueryResult::ModelPending { request_id: 17 }]
+        ));
+        let first_event = loop {
+            let results = service.try_recv_all();
+            if !results.is_empty() {
+                break results.into_iter().next().unwrap();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "model initialization never started"
+            );
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert!(matches!(first_event, IndexResult::ModelLoadStarted));
     }
 
     #[test]

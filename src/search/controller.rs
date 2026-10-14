@@ -1388,6 +1388,85 @@ mod tests {
         assert!(search.embedding_backfill_is_idle());
     }
 
+    #[test]
+    fn cached_import_does_not_reset_backfill_failure_streak() {
+        let root = TempRoot::new("snappyref-cached-import-backfill-test");
+        let library = crate::library::storage::Library::initialize(root.join("library")).unwrap();
+        let mut model = crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
+        model.model_key = "cached-import-backfill-test";
+        model.dimension = 2;
+        let cached_path = library
+            .store_rgba_image("cached", &[255, 255, 255, 255], 1, 1)
+            .unwrap();
+        let cached = library
+            .register_original(&cached_path, "image/png", 1, 1, 4, None)
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(cached.id, model.model_key, &[1.0, 0.0])
+            .unwrap();
+        let mut search = SearchController {
+            service: Some(
+                crate::search::semantic::SemanticSearchService::new(
+                    library.clone(),
+                    crate::search::semantic::SemanticSearchConfig {
+                        model,
+                        canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+                    },
+                )
+                .unwrap(),
+            ),
+            ..SearchController::default()
+        };
+        // Fail at the persisted boundary before the worker launches an embed helper.
+        rusqlite::Connection::open(root.join("library/library.db")).unwrap()
+            .execute_batch("CREATE TRIGGER reject_pending_embedding BEFORE INSERT ON asset_embeddings
+                WHEN NEW.status = 'pending' BEGIN SELECT RAISE(ABORT, 'fixture write failure'); END;")
+            .unwrap();
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+        for color in [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]] {
+            // A fresh Asset guarantees another eligible step even after stored retries defer.
+            let path = library.store_rgba_image("failure", &color, 1, 1).unwrap();
+            library
+                .register_original(&path, "image/png", 1, 1, 4, None)
+                .unwrap();
+            let now = Instant::now();
+            search.can_start_embedding_backfill(now, idle);
+            assert_eq!(
+                search.drive_embedding_backfill(now + Duration::from_millis(750), idle),
+                Ok(true)
+            );
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                search.handle_results();
+                if search
+                    .embedding_backfill_repaint_after(Instant::now())
+                    .is_some()
+                    || search.embedding_backfill_is_idle()
+                {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "backfill response never arrived");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if color == [0, 255, 0, 255] {
+                search
+                    .queue_asset_index(cached.id, cached_path.clone())
+                    .unwrap();
+                assert_eq!(search.demand_embedding_pending_count(), 1);
+                search.handle_results();
+                assert_eq!(search.demand_embedding_pending_count(), 0);
+                assert!(backfill_starts_after_quiet(&mut search, Instant::now()));
+            }
+        }
+        let now = Instant::now();
+        assert_eq!(search.embedding_backfill_repaint_after(now), None);
+        assert!(!backfill_starts_after_quiet(
+            &mut search,
+            now + Duration::from_secs(3600)
+        ));
+        assert!(search.embedding_backfill_is_idle());
+    }
+
     /// The whole path: a dispatched step, the worker's answer from storage, and
     /// `handle_results`.
     #[test]
@@ -1515,7 +1594,7 @@ mod tests {
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)),
             super::SearchPlacementCreationConfig {
                 placement_target_area: 10_000.0,
-                placement_gap: crate::ui::theme::SPACE_2,
+                placement_gap: 10.0,
                 visible_canvas_rect: egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(1200.0, 800.0),
@@ -1528,19 +1607,21 @@ mod tests {
             .into_iter()
             .map(|placement| {
                 (
-                    placement.state.geometry.center.x,
-                    placement.state.geometry.center.y,
+                    placement.state.geometry.center,
+                    placement.scaled_display_size(),
                 )
             })
             .collect::<Vec<_>>();
-        let mut rows = layout
-            .iter()
-            .map(|(_, y)| y.round() as i32)
-            .collect::<Vec<_>>();
-        rows.sort_unstable();
-        rows.dedup();
-        assert_eq!(layout.len(), 5);
-        assert!(rows.len() > 1);
+        assert_eq!(
+            layout,
+            vec![
+                (egui::pos2(345.0, 190.0), egui::vec2(100.0, 100.0)),
+                (egui::pos2(455.0, 190.0), egui::vec2(100.0, 100.0)),
+                (egui::pos2(345.0, 300.0), egui::vec2(100.0, 100.0)),
+                (egui::pos2(455.0, 300.0), egui::vec2(100.0, 100.0)),
+                (egui::pos2(345.0, 410.0), egui::vec2(100.0, 100.0)),
+            ]
+        );
     }
 
     #[test]
@@ -1664,8 +1745,8 @@ mod tests {
             None,
             egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)),
             super::SearchPlacementCreationConfig {
-                placement_target_area: 10_000.0,
-                placement_gap: crate::ui::theme::SPACE_2,
+                placement_target_area: 5_000.0,
+                placement_gap: 10.0,
                 visible_canvas_rect: egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(1200.0, 800.0),
@@ -1673,13 +1754,25 @@ mod tests {
             },
         );
 
-        let bounds = canvas
-            .selected_bounds_world()
-            .expect("expected provisional search placement bounds");
-        assert_eq!(canvas.provisional_placements_in_selection_order().len(), 5);
-        assert!(
-            bounds.width() < 360.0 && bounds.height() < 420.0,
-            "expected compact search provisional batch, got bounds {bounds:?}"
+        let layout = canvas
+            .provisional_placements_in_selection_order()
+            .into_iter()
+            .map(|placement| {
+                (
+                    placement.state.geometry.center,
+                    placement.scaled_display_size(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            layout,
+            vec![
+                (egui::pos2(345.0, 240.0), egui::vec2(100.0, 50.0)),
+                (egui::pos2(455.0, 240.0), egui::vec2(100.0, 50.0)),
+                (egui::pos2(345.0, 300.0), egui::vec2(100.0, 50.0)),
+                (egui::pos2(455.0, 300.0), egui::vec2(100.0, 50.0)),
+                (egui::pos2(345.0, 360.0), egui::vec2(100.0, 50.0)),
+            ]
         );
     }
 
