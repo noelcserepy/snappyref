@@ -55,8 +55,8 @@ Preconditions:
   drives a click and two ⌘-clicks to select 3 results, then a drag and drop.
   The image search itself is opened in code, not with ⌘F or the menu.
 - **Result drag basics.** Run `run-scenario.sh search-drag-to-canvas`, which
-  `check-harness.sh` also runs. It renders only the overlay. Its one frame is
-  a drawn rectangle and not a screenshot.
+  `check-harness.sh` also runs. It renders the full app before and after the
+  drop and checks the source asset and placement at the drop pointer.
 - **Settings row.** Run `run-scenario.sh semantic-search-sidebar-status`. It
   shows whatever model status this machine has on disk, and no assertion checks
   the status text. `sidebar-pages` seeds a download in progress and is the
