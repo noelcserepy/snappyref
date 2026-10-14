@@ -1062,6 +1062,21 @@ fn serve_bytes_once(
 }
 
 /// Reserve a real Loading Placement before worker tests prepare its content.
+fn next_preparation(worker: &ImagePrepWorker) -> ImagePrepResult {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(result) = worker.try_recv_up_to(1).into_iter().next() {
+            return result;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "preparation did not finish: {:?}",
+            worker.stats()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 pub(super) fn reserve_import_fixture(
     library: &Library,
     mut request: ImportRequest,
@@ -1208,11 +1223,7 @@ fn malformed_xpm_fails_its_import_and_the_worker_accepts_the_next_image() {
         worker
             .enqueue(super::ImagePrepRequest::Import(request))
             .unwrap();
-        match worker
-            .receiver
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap()
-        {
+        match next_preparation(&worker) {
             ImagePrepResult::Failed {
                 target_board_id,
                 queue_id,
@@ -1256,11 +1267,7 @@ fn malformed_xpm_fails_its_import_and_the_worker_accepts_the_next_image() {
     worker
         .enqueue(super::ImagePrepRequest::Import(request))
         .unwrap();
-    match worker
-        .receiver
-        .recv_timeout(Duration::from_secs(5))
-        .unwrap()
-    {
+    match next_preparation(&worker) {
         ImagePrepResult::Loaded(loaded) => {
             assert_eq!(loaded.queue_id, Some(20));
             assert_eq!((loaded.preview_width, loaded.preview_height), (1, 1));
