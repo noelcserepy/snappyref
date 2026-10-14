@@ -20,6 +20,6 @@ release that contains that change. The paste change stays.
 
 ## Refreshing on an egui bump
 
-Download the matching `egui-winit` crate from crates.io, replace `src/` and
-`Cargo.toml` here, reapply the paste change above, then diff the new `src/`
-against the upstream crate to confirm what differs.
+Follow the shared [vendored-crate refresh procedure](../eframe/README.md#refreshing-the-vendored-crates).
+It covers both local patches, including reapplying the screenshot patch until
+an upstream release contains #8571.

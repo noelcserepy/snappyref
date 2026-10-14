@@ -7,8 +7,8 @@ repo root points `egui-wgpu` at this directory through `[patch.crates-io]`.
 
 ## Local patch
 
-This carries [egui#8571](https://github.com/emilk/egui/pull/8571), merged
-after 0.36.2 and not yet released. It lets a `ViewportCommand::Screenshot` be
+This carries [egui#8571](https://github.com/emilk/egui/pull/8571) on top of
+0.36.2. It lets a `ViewportCommand::Screenshot` be
 served from a window that is minimized or covered, which the AI control
 `screenshot` tool needs. Three vendored crates carry it together: `eframe`,
 `egui-wgpu`, and `egui-winit`. The upstream `RequestPaintWhileHidden` command
@@ -19,9 +19,6 @@ The change here is in `src/capture.rs` and `src/winit.rs`. A capture renders
 to its own texture, so it no longer needs a surface texture, which a covered
 or minimized window does not get.
 
-## Dropping this copy
+## Refreshing or removing this copy
 
-Once SnappyRef moves to an egui release that contains egui#8571, delete this
-directory and its `[patch.crates-io]` line. Then run
-`docs/skills/inspect/scripts/mcp-drive.py docs/skills/inspect/scripts/mcp-all-tools.json`
-and confirm its `screenshot` calls still answer with the window covered.
+Follow the shared [vendored-crate refresh procedure](../eframe/README.md#refreshing-the-vendored-crates).

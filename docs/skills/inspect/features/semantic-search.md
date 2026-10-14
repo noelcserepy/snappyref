@@ -38,8 +38,9 @@ be placed with Enter or dragged onto the canvas.
 Preconditions:
 
 - `doctor.sh` exits 0.
-- Every scenario except `semantic-search-real-install` injects model status and
-  results. None of them ranks, indexes, or downloads.
+- `semantic-search-sidebar-status` reads the real model store. Other scenarios
+  inject model status and results, except `semantic-search-real-install`.
+  The injected scenarios do not rank, index, or download.
 
 - **First launch and remove dialog.** Run `run-scenario.sh semantic-search-install`.
   It checks that ⌘F stays blocked behind the prompt and that Enter starts the
