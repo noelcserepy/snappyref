@@ -236,8 +236,12 @@ jobs:
             echo "$tag is already published. Bump the version for a new release." >&2
             exit 1
           fi
-          shopt -s nullglob
-          gh release upload "$tag" "${RUNNER_TEMP}"/release-assets/*.zip "${RUNNER_TEMP}"/release-assets/latest.json --clobber
+          assets=("${RUNNER_TEMP}"/release-assets/*.zip)
+          # A dry run signs no latest.json.
+          if [ -f "${RUNNER_TEMP}/release-assets/latest.json" ]; then
+            assets+=("${RUNNER_TEMP}/release-assets/latest.json")
+          fi
+          gh release upload "$tag" "${assets[@]}" --clobber
 
       # Apps from v0.3.0 and older read latest.json from snappyref-dist. This
       # copy's zip URLs point at this repo, so they update here once and then

@@ -134,7 +134,7 @@ def main():
     (artifact / 'frames').mkdir(parents=True)
     calls = json.loads(args.calls.read_text().replace('$REPO', str(ROOT)).replace('$OUT', str(artifact)))
     data_root = Path(tempfile.mkdtemp(prefix='snappyref-mcp-'))
-    # The update check would otherwise reach the public dist repo.
+    # The update check would otherwise reach the published release.
     env = dict(os.environ, SNAPPYREF_DATA_ROOT=str(data_root),
                SNAPPYREF_UPDATE_MANIFEST_URL='http://127.0.0.1:9/mcp-drive-no-updates')
     env.pop('SNAPPYREF_LIBRARY_ROOT', None)
