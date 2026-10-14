@@ -1877,15 +1877,9 @@ fn dialog_keyboard_confirms_primary_but_requires_a_click_to_delete() {
     app.request_board_delete(second.id, "Keep".to_owned());
     let mut harness = app_harness(app, |ctx, app| app.show_board_delete_confirmation(ctx));
     harness.key_press(egui::Key::Enter);
-    harness.step();
-    assert_eq!(
-        harness
-            .state()
-            .pending_board_delete
-            .as_ref()
-            .map(|pending| pending.board_id),
-        Some(second.id)
-    );
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Delete board").is_some());
+    harness.state_mut().flush_persistence();
     assert_eq!(
         library
             .list_boards()
@@ -1897,13 +1891,16 @@ fn dialog_keyboard_confirms_primary_but_requires_a_click_to_delete() {
     );
     harness.key_press(egui::Key::Escape);
     harness.step();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Delete board").is_none());
     assert_eq!(
-        harness
-            .state()
-            .pending_board_delete
-            .as_ref()
-            .map(|pending| pending.board_id),
-        None
+        library
+            .list_boards()
+            .unwrap()
+            .iter()
+            .map(|b| b.name.clone())
+            .collect::<Vec<_>>(),
+        vec!["My Board", "Keep"]
     );
     harness
         .state_mut()

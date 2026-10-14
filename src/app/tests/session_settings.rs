@@ -74,6 +74,21 @@ fn real_startup_and_exit_keep_pending_content_session_and_history() {
                 SnappyRefApp::new(cc, config, startup)
             })
     }
+    fn tool(
+        harness: &mut Harness<'_, SnappyRefApp>,
+        name: &str,
+        args: serde_json::Value,
+    ) -> serde_json::Value {
+        let ctx = harness.ctx.clone();
+        let result = harness.state_mut().control_call(&ctx, name, args).unwrap();
+        let crate::app::control::Step::Done(value) = result else {
+            panic!("tool waits")
+        };
+        value
+    }
+    fn rectangle(x: f64, y: f64) -> serde_json::Value {
+        serde_json::json!([{"id":3,"type":"rectangle","x":x,"y":y,"width":80.0,"height":40.0,"stroke":"m","color":"default","fill":"tint"}])
+    }
     let root = TempRoot::new("snappyref-real-startup-exit-history");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let board = library.fixture_board("Saved").unwrap();
@@ -84,47 +99,61 @@ fn real_startup_and_exit_keep_pending_content_session_and_history() {
     session.settings.semantic_search_first_launch_prompt_seen = true;
     library.save_user_session(&session).unwrap();
     let mut harness = start(root.to_path_buf());
-    assert_eq!(harness.state().active_board_id, board.id);
-    assert_eq!(harness.state().settings.placement_gap, 37.0);
-    assert!(harness.state().sidebar_open);
-    let ctx = harness.ctx.clone();
-    let made=harness.state_mut().control_call(&ctx,"edit_board",serde_json::json!({"edits":[{"action":"add","type":"rectangle","x":10,"y":20,"width":80,"height":40,"ref":"box"}]})).unwrap();
-    let crate::app::control::Step::Done(made) = made else {
-        panic!("edit waits")
-    };
-    let id = made["refs"]["box"].as_i64().unwrap();
+    assert_eq!(
+        tool(&mut harness, "get_board", serde_json::json!({}))["board"],
+        serde_json::json!({"id":2,"name":"Saved"})
+    );
+    let settings = tool(&mut harness, "get_settings", serde_json::json!({}));
+    assert_eq!(settings["placement_gap"], 37.0);
+    assert_eq!(settings["sidebar_open"], true);
+    let made = tool(
+        &mut harness,
+        "edit_board",
+        serde_json::json!({"edits":[{"action":"add","type":"rectangle","x":10,"y":20,"width":80,"height":40,"ref":"box"}]}),
+    );
+    assert_eq!(made["refs"], serde_json::json!({"box":3}));
+    let id = 3;
     harness.state_mut().flush_persistence();
     assert_eq!(
         library.load_board_document(board.id).unwrap().annotations[0].start(),
         egui::pos2(10.0, 20.0)
     );
-    let mut geometry = harness.state().canvas.rect_item_geometry(id).unwrap();
-    geometry.center = egui::pos2(250.0, 140.0);
-    harness
-        .state_mut()
-        .canvas
-        .set_rect_item_geometry(id, geometry);
+    // Seed an unrecorded UI edit. The action under test is exit, not dragging.
+    harness.state_mut().canvas.set_rect_item_geometry(
+        id,
+        crate::data::RectGeometry::new(
+            egui::pos2(250.0, 140.0),
+            egui::vec2(80.0, 40.0),
+            1.0,
+            0.0,
+            0,
+        ),
+    );
     harness.state_mut().settings.placement_gap = 51.0;
     harness.state_mut().sidebar_open = false;
     // Do not render or explicitly flush the edit. Exit owns the pending edit.
     eframe::App::on_exit(harness.state_mut());
     drop(harness);
     let mut reopened = start(root.to_path_buf());
-    let restored = reopened.state().canvas.annotation_for_id(id).unwrap();
-    assert_eq!(restored.start(), egui::pos2(210.0, 120.0));
-    assert_eq!(restored.end(), egui::pos2(290.0, 160.0));
-    assert_eq!(reopened.state().active_board_id, board.id);
-    assert_eq!(reopened.state().settings.placement_gap, 51.0);
-    assert!(!reopened.state().sidebar_open);
-    let ctx = reopened.ctx.clone();
-    reopened.state_mut().undo_document_history(&ctx);
-    let undone = reopened.state().canvas.annotation_for_id(id).unwrap();
-    assert_eq!(undone.start(), egui::pos2(10.0, 20.0));
-    assert_eq!(undone.end(), egui::pos2(90.0, 60.0));
-    reopened.state_mut().redo_document_history(&ctx);
-    let redone = reopened.state().canvas.annotation_for_id(id).unwrap();
-    assert_eq!(redone.start(), egui::pos2(210.0, 120.0));
-    assert_eq!(redone.end(), egui::pos2(290.0, 160.0));
+    let restored = tool(&mut reopened, "get_board", serde_json::json!({}));
+    assert_eq!(
+        restored["board"],
+        serde_json::json!({"id":2,"name":"Saved"})
+    );
+    assert_eq!(restored["items"], rectangle(210.0, 120.0));
+    let settings = tool(&mut reopened, "get_settings", serde_json::json!({}));
+    assert_eq!(settings["placement_gap"], 51.0);
+    assert_eq!(settings["sidebar_open"], false);
+    tool(&mut reopened, "undo", serde_json::json!({}));
+    assert_eq!(
+        tool(&mut reopened, "get_board", serde_json::json!({}))["items"],
+        rectangle(10.0, 20.0)
+    );
+    tool(&mut reopened, "redo", serde_json::json!({}));
+    assert_eq!(
+        tool(&mut reopened, "get_board", serde_json::json!({}))["items"],
+        rectangle(210.0, 120.0)
+    );
     eframe::App::on_exit(reopened.state_mut());
     assert_eq!(
         library.load_board_document(board.id).unwrap().annotations[0].start(),
