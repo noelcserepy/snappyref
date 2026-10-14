@@ -13,8 +13,7 @@
 //!    popup. Hidden becomes Failed; known available, downloading, and ready
 //!    updates retain their state.
 
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -85,19 +84,16 @@ pub(crate) struct UpdateConfig {
     /// Install root override, applied to the in-app updates/staging
     /// resolution. `None` resolves via `install_paths::resolve_install_root`.
     pub install_root: Option<PathBuf>,
-    pub diagnostic_path: Option<PathBuf>,
 }
 
 #[cfg(test)]
 impl UpdateConfig {
-    /// Fixed config so tests never read the `SNAPPYREF_UPDATE_*` environment
-    /// or append to a real diagnostic log.
+    /// Fixed config so tests never read the `SNAPPYREF_UPDATE_*` environment.
     pub(crate) fn for_tests() -> Self {
         Self {
             manifest_url: "https://example.invalid/manifest.json".to_owned(),
             current_version: env!("CARGO_PKG_VERSION").to_owned(),
             install_root: None,
-            diagnostic_path: None,
         }
     }
 }
@@ -110,8 +106,6 @@ impl Default for UpdateConfig {
             current_version: std::env::var("SNAPPYREF_UPDATE_CURRENT_VERSION")
                 .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_owned()),
             install_root: None,
-            diagnostic_path: std::env::var_os("SNAPPYREF_UPDATE_DIAGNOSTIC_PATH")
-                .map(PathBuf::from),
         }
     }
 }
@@ -130,15 +124,6 @@ pub(crate) struct InstallContext {
 
 impl UpdateService {
     pub(crate) fn new(config: UpdateConfig) -> Self {
-        if let Some(path) = &config.diagnostic_path {
-            write_diagnostic(
-                path,
-                &format!(
-                    "new current_version={} manifest_url={}",
-                    config.current_version, config.manifest_url
-                ),
-            );
-        }
         let service = Self {
             state: UpdateState::Hidden,
             started_at: Instant::now(),
@@ -383,7 +368,6 @@ impl UpdateService {
     pub(crate) fn tick(&mut self, app_settled_idle: bool) {
         if app_settled_idle && !self.settled_idle {
             self.settled_idle = true;
-            self.write_diagnostic("settled_idle");
         }
 
         if let Some(rx) = &self.in_flight {
@@ -398,10 +382,6 @@ impl UpdateService {
                             self.consecutive_failures = 0;
                         }
                     }
-                    self.write_diagnostic(&format!(
-                        "result outcome={:?} state_before={:?}",
-                        result, self.state
-                    ));
                     let discovered_version_during_download = match (&self.state, &result) {
                         (
                             UpdateState::Downloading { .. },
@@ -410,7 +390,6 @@ impl UpdateService {
                         _ => None,
                     };
                     self.state.apply(result);
-                    self.write_diagnostic(&format!("state_after={:?}", self.state));
                     if let UpdateState::Available { release } = &self.state {
                         let release = release.clone();
                         self.detect_existing_staging(&release);
@@ -464,7 +443,6 @@ impl UpdateService {
     /// Tab "Check for updates" button.
     pub(crate) fn request_check_now(&mut self) {
         self.manual_check_requested = true;
-        self.write_diagnostic("manual_check_requested");
     }
 
     /// Unix-epoch milliseconds the most recent check completed. `None`
@@ -515,7 +493,6 @@ impl UpdateService {
             return;
         }
         let (tx, rx) = channel();
-        self.write_diagnostic("start_check");
         self.spawn_fetch(tx);
         self.in_flight = Some(rx);
         self.next_check_after = None;
@@ -538,12 +515,6 @@ impl UpdateService {
                 let outcome = run_fetch(&config);
                 let _ = tx.send(outcome);
             });
-        }
-    }
-
-    fn write_diagnostic(&self, message: &str) {
-        if let Some(path) = &self.config.diagnostic_path {
-            write_diagnostic(path, message);
         }
     }
 
@@ -680,15 +651,9 @@ fn run_install(context: InstallContext, tx: Sender<InstallProgress>) {
 }
 
 fn run_fetch(config: &UpdateConfig) -> CheckOutcome {
-    if let Some(path) = &config.diagnostic_path {
-        write_diagnostic(path, "fetch_begin");
-    }
     let bytes = match fetch_manifest(&config.manifest_url) {
         Ok(bytes) => bytes,
         Err(error) => {
-            if let Some(path) = &config.diagnostic_path {
-                write_diagnostic(path, &format!("fetch_failed {error}"));
-            }
             log_failure("fetch", &error);
             return CheckOutcome::Failed;
         }
@@ -696,24 +661,11 @@ fn run_fetch(config: &UpdateConfig) -> CheckOutcome {
     let manifest = match manifest::parse_and_verify(&bytes) {
         Ok(manifest) => manifest,
         Err(error) => {
-            if let Some(path) = &config.diagnostic_path {
-                write_diagnostic(path, &format!("verify_failed {error}"));
-            }
             log_failure("verify", &error);
             return CheckOutcome::Failed;
         }
     };
-    let outcome = classify(&manifest, &config.current_version);
-    if let Some(path) = &config.diagnostic_path {
-        write_diagnostic(
-            path,
-            &format!(
-                "fetch_ok manifest_version={} current_version={} outcome={outcome:?}",
-                manifest.version, config.current_version
-            ),
-        );
-    }
-    outcome
+    classify(&manifest, &config.current_version)
 }
 
 fn fetch_manifest(url: &str) -> Result<Vec<u8>, String> {
@@ -744,20 +696,6 @@ fn current_unix_millis() -> Option<u64> {
 fn log_failure(stage: &str, error: &dyn std::fmt::Display) {
     // Update discovery failures are quiet: logging only, no popup.
     eprintln!("update discovery {stage} failed: {error}");
-}
-
-fn write_diagnostic(path: &Path, message: &str) {
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    else {
-        return;
-    };
-    let _ = writeln!(file, "{message}");
 }
 
 /// Compare a verified manifest's version against `current_version` and
