@@ -1336,6 +1336,37 @@ mod tests {
         assert_eq!(record.state.geometry.center, egui::pos2(10.0, 10.0));
     }
 
+    fn assert_complete_nonoverlapping_layout(
+        items: &[PlacementArrangementInput],
+        placements: &[(PlacementId, egui::Pos2)],
+        width: f32,
+        height: f32,
+    ) {
+        let mut actual_ids = placements.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        actual_ids.sort_unstable();
+        let expected_ids = (0..items.len() as i64).collect::<Vec<_>>();
+        assert_eq!(actual_ids, expected_ids);
+        let rects = placements
+            .iter()
+            .map(|(id, center)| {
+                let item = items.iter().find(|item| item.id == *id).unwrap();
+                egui::Rect::from_center_size(*center, item.size())
+            })
+            .collect::<Vec<_>>();
+        for (index, rect) in rects.iter().enumerate() {
+            for other in &rects[index + 1..] {
+                let overlap = rect.intersect(*other);
+                assert!(
+                    overlap.width() <= 0.001 || overlap.height() <= 0.001,
+                    "overlapping placements: {rect:?}, {other:?}"
+                );
+            }
+        }
+        let bounds = rects.iter().copied().reduce(egui::Rect::union).unwrap();
+        assert!((bounds.width() - width).abs() < 0.001);
+        assert!((bounds.height() - height).abs() < 0.001);
+    }
+
     #[test]
     fn compact_layout_balances_equal_size_landscape_images() {
         let items = (0..6)
@@ -1386,7 +1417,8 @@ mod tests {
                 size,
             ));
         }
-        let (_, width, height) = best_compact_layout(&items, 12.0).unwrap();
+        let (placements, width, height) = best_compact_layout(&items, 12.0).unwrap();
+        assert_complete_nonoverlapping_layout(&items, &placements, width, height);
         let aspect = width.max(height) / width.min(height).max(1.0);
 
         assert!(
@@ -1422,7 +1454,8 @@ mod tests {
             id += 1;
         }
 
-        let (_, width, height) = best_compact_layout(&items, 0.0).unwrap();
+        let (placements, width, height) = best_compact_layout(&items, 0.0).unwrap();
+        assert_complete_nonoverlapping_layout(&items, &placements, width, height);
         let aspect = width.max(height) / width.min(height).max(1.0);
 
         assert!(

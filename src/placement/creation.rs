@@ -504,7 +504,7 @@ mod tests {
     fn source_intent_has_geometry_before_content_resolves() {
         let mut canvas = crate::canvas::CanvasState::default();
         let settings = PlacementCreationSettings {
-            placement_target_area: 36_000.0,
+            placement_target_area: 21_600.0,
             gap: 12.0,
         };
 
@@ -524,14 +524,8 @@ mod tests {
         );
 
         assert_eq!(geometry.len(), 1);
-        assert_eq!(
-            geometry[0].size,
-            display_size_for_dimensions(
-                FALLBACK_IMPORT_WIDTH,
-                FALLBACK_IMPORT_HEIGHT,
-                settings.placement_target_area,
-            )
-        );
+        assert_eq!(geometry[0].size, egui::vec2(180.0, 120.0));
+        assert_eq!(geometry[0].center, egui::pos2(120.0, 80.0));
     }
 
     #[test]
