@@ -56,6 +56,12 @@ Preconditions:
   the canvas, W and E at gaps 0 and 24, the four arrow settles, ⌘L, and ⇧⌘L.
   The selection, the 15° snap setting, and each gap are set in code. The real
   checks are plain asserts that run before the summary assertions.
+- **Corner resize and drag snapping.** Run `run-scenario.sh rotated-corner-resize`
+  for a rotated image at non-default pan/zoom, release outside the canvas,
+  persisted geometry, and one Undo. Run `run-scenario.sh snapped-drag-commit`
+  for snap acquisition, retention, committed position, and Command bypass.
+- **Clipped marquee selection.** Run `run-scenario.sh marquee-clipped-group`
+  for hidden overflow versus visible group content and exact Shift-add selection.
 - **Delete, Undo, Redo.** Run `run-scenario.sh delete-undo-redo-placement`.
   "explicit flush makes final Redo durable" proves the stored state.
 - **Crop.** Run `run-scenario.sh crop-undo-redo-placement`. A real C+drag
@@ -78,9 +84,9 @@ Preconditions:
 
 ## Gotchas
 
-- Marquee selection and scaling an image by its corner handles have no
-  scenario. `canvas_selection_gestures_preserve_content_geometry` in
-  `src/app/tests/inspect_operations.rs` checks the marquee without an artifact.
+- `canvas_selection_gestures_preserve_content_geometry` in
+  `src/app/tests/inspect_operations.rs` also checks ordinary marquee selection
+  without an artifact.
 - Copy, Paste, Duplicate, Delete, Group, and front/back have no scenario that
   runs them from the context menu. Only "Remove from library…" is clicked.
 - Copy fires only on `Event::Copy`. A kittest ⌘C key press does not copy.

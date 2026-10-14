@@ -1606,3 +1606,6 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
     scenario.capture_screen("screen-001-after-layouts", &mut harness);
     finish(scenario);
 }
+
+#[path = "pointer_contracts.rs"]
+mod pointer_contracts;
