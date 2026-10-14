@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use std::io::Read;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::data::CanvasImageLod;
@@ -90,25 +90,39 @@ impl ImagePrepHelper {
         let stdout = std::thread::spawn(move || read_helper_output(stdout));
         let stderr = std::thread::spawn(move || read_helper_output(stderr));
         let started = Instant::now();
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break Ok(status),
-                Ok(None) if started.elapsed() < self.timeout => {
-                    std::thread::sleep(Duration::from_millis(5));
+        let (exit_tx, exit_rx) = std::sync::mpsc::channel();
+        let wait_for_exit = helper_exit_waiter(&child);
+        let waiter = std::thread::spawn(move || {
+            let _ = exit_tx.send(wait_for_exit());
+        });
+        let exited = exit_rx
+            .recv_timeout(self.timeout.saturating_sub(started.elapsed()))
+            .map_err(|error| match error {
+                std::sync::mpsc::RecvTimeoutError::Timeout => format!(
+                    "imageprep helper timed out after {} ms",
+                    self.timeout.as_millis()
+                ),
+                std::sync::mpsc::RecvTimeoutError::Disconnected => {
+                    "imageprep exit waiter disconnected".to_owned()
                 }
-                result => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break Err(match result {
-                        Err(error) => format!("failed to wait for imageprep helper: {error}"),
-                        _ => format!(
-                            "imageprep helper timed out after {} ms",
-                            self.timeout.as_millis()
-                        ),
-                    });
-                }
-            }
-        };
+            })
+            .and_then(|result| {
+                result.map_err(|error| format!("failed to wait for imageprep helper: {error}"))
+            });
+        if exited.is_err() {
+            let _ = child.kill();
+        }
+        // The waiter observes exit without reaping. Keep the child PID/handle
+        // alive until it joins, so timeout cancellation cannot target a reused PID.
+        let _ = waiter.join();
+        let status = child.wait();
+        if status.is_err() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let status = exited.and_then(|()| {
+            status.map_err(|error| format!("failed to wait for imageprep helper: {error}"))
+        });
         let stdout = stdout
             .join()
             .map_err(|_| "imageprep stdout reader panicked".to_owned())?;
@@ -169,6 +183,56 @@ impl ImagePrepHelper {
             cache_path: prepared.cache_path,
             cache_extension: prepared.cache_extension,
         }))
+    }
+}
+
+// Capture only the process identifier/handle. The caller retains Child until
+// this wait has finished, and owns both timeout cancellation and reaping.
+#[cfg(unix)]
+fn helper_exit_waiter(
+    child: &std::process::Child,
+) -> impl FnOnce() -> std::io::Result<()> + Send + use<> {
+    let pid = child.id();
+    move || loop {
+        let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+        // SAFETY: info is writable, pid identifies our unreaped child, and
+        // WNOWAIT leaves it available for Child::kill and Child::wait.
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid,
+                info.as_mut_ptr(),
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        if result == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn helper_exit_waiter(
+    child: &std::process::Child,
+) -> impl FnOnce() -> std::io::Result<()> + Send + use<> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::System::Threading::{INFINITE, WaitForSingleObject};
+
+    let handle = child.as_raw_handle() as usize;
+    move || {
+        // SAFETY: the caller retains Child and its process handle until this
+        // waiter joins. Waiting does not close the handle or reap the child.
+        let result = unsafe { WaitForSingleObject(handle as _, INFINITE) };
+        if result == WAIT_OBJECT_0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
     }
 }
 
