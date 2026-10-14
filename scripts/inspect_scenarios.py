@@ -37,6 +37,7 @@ SCENARIOS = {
     'semantic-search-install': ('inspect_semantic_search_install_accepts_prompt', 'semantic-search-install', False),
     'semantic-search-sidebar-status': ('inspect_semantic_search_sidebar_status_writes_artifact', 'semantic-search-sidebar-status', False),
     'ai-control': ('inspect_ai_control_writes_artifact', 'ai-control', False),
+    'sidebar-board-shortcuts': ('inspect_sidebar_board_shortcuts_writes_artifact', 'sidebar-board-shortcuts', False),
     'sidebar-pages': ('inspect_sidebar_pages_writes_artifact', 'sidebar-pages', False),
     'semantic-search-real-install': ('inspect_semantic_search_real_install_writes_artifact', 'semantic-search-real-install', True),
     'sample-image-import': ('inspect_sample_image_import_writes_artifact', 'sample-image-import', False),

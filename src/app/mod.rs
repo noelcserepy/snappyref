@@ -39,8 +39,8 @@ use shortcuts::{
     delete_shortcut_pressed, settle_direction_pressed, shortcut_pressed,
 };
 pub(crate) use shortcuts::{
-    BOARD_DIGITS, CORE_SHORTCUTS, LAYOUT_AND_HISTORY_SHORTCUTS, NEW_BOARD, SWITCH_BOARD,
-    SupportedShortcut, TOGGLE_ALWAYS_ON_TOP, TOGGLE_SIDEBAR, UNGROUP,
+    BOARD_DIGITS, CORE_SHORTCUTS, LAYOUT_AND_HISTORY_SHORTCUTS, NEW_BOARD, SupportedShortcut,
+    TOGGLE_ALWAYS_ON_TOP, TOGGLE_SIDEBAR, UNGROUP,
 };
 
 #[derive(Clone, Debug)]
@@ -921,7 +921,7 @@ impl SnappyRefApp {
             return;
         }
 
-        if ctx.egui_wants_keyboard_input() {
+        if ctx.text_edit_focused() {
             return;
         }
 

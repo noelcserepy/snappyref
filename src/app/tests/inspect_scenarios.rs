@@ -337,7 +337,7 @@ fn inspect_sidebar_pages_writes_artifact() {
     scenario.event(
         "seed",
         serde_json::json!({
-            "seed": "five-boards-long-names-update-available-search-downloading",
+            "seed": "four-boards-long-names-update-available-search-downloading",
             "purpose": "every sidebar page: Boards at rest and hovered, then General with Semantic Search and About, then Keys",
         }),
     );
@@ -385,7 +385,8 @@ fn inspect_sidebar_pages_writes_artifact() {
         .fixture_board("Architecture references from the Lisbon trip, tiles and facades")
         .unwrap();
     add_placements(hovered.id, 7);
-    library.fixture_board("Lighting").unwrap();
+    let lighting = library.fixture_board("Lighting").unwrap();
+    add_placements(lighting.id, 1);
     library.set_active_board(active.id).unwrap();
 
     let mut app = test_app(Some(library.clone()));
@@ -418,6 +419,20 @@ fn inspect_sidebar_pages_writes_artifact() {
     let mut harness = app_full_harness(app);
     harness.step();
     scenario.capture_screen("screen-000-boards", &mut harness);
+    let text = super::support::inspect_displayed_text(&harness);
+    scenario.fact("boards.rendered-labels", serde_json::json!(text));
+    scenario.assertion(
+        "board counts identify items with singular and plural labels",
+        ["3 items", "12 items", "7 items", "1 item"]
+            .iter()
+            .all(|label| text.iter().any(|shown| shown == label)),
+    );
+    let boards_tab = harness.get_by_label("Boards").rect();
+    let first_row = harness.get_by_label("Board My Board").rect();
+    scenario.assertion(
+        "Boards and Settings navigation sits above the board list",
+        boards_tab.bottom() < first_row.top(),
+    );
     scenario.assertion(
         "every board has a row and New board follows them",
         harness.state().board_summaries().len() == 4
@@ -432,6 +447,13 @@ fn inspect_sidebar_pages_writes_artifact() {
     harness.step();
     harness.step();
     scenario.capture_screen("screen-001-boards-hover", &mut harness);
+    let hovered_text = super::support::inspect_displayed_text(&harness);
+    scenario.assertion(
+        "hover replaces only the hovered board count with Delete",
+        hovered_text.iter().any(|text| text == "Delete")
+            && !hovered_text.iter().any(|text| text == "7 items")
+            && hovered_text.iter().any(|text| text == "12 items"),
+    );
 
     let settings_tab = harness.get_by_label("Settings").rect();
     scenario.action("open the Settings tab", settings_tab.center());
@@ -465,8 +487,47 @@ fn inspect_sidebar_pages_writes_artifact() {
     harness.run_steps(6);
     scenario.capture_screen("screen-003-keys", &mut harness);
     scenario.assertion(
+        "Settings navigation sits above its General and Keys pages",
+        harness.get_by_label("Settings").rect().bottom()
+            < harness.get_by_label("Keys").rect().top(),
+    );
+
+    scenario.assertion(
         "Keys lists the shortcut groups",
         harness.query_by_label("CORE ACTIONS").is_some(),
+    );
+
+    harness.set_size(egui::vec2(640.0, 360.0));
+    harness.run_steps(6);
+    scenario.capture_screen("screen-004-short-keys", &mut harness);
+    let short_tab = harness.get_by_label("Settings").rect();
+    scenario.assertion(
+        "short window keeps both levels of navigation visible",
+        short_tab.bottom() < harness.get_by_label("Keys").rect().top()
+            && short_tab.top() >= 40.0
+            && harness.get_by_label("Keys").rect().bottom() < 360.0,
+    );
+    harness.get_by_label("General").click();
+    harness.run_steps(6);
+    harness.get_by_label("Update").scroll_to_me();
+    harness.run_steps(6);
+    scenario.capture_screen("screen-005-short-general-end", &mut harness);
+    let update = harness.get_by_label("Update").rect();
+    scenario.assertion(
+        "short General page scrolls to Update without moving navigation",
+        harness.get_by_label("Settings").rect() == short_tab
+            && update.top() > harness.get_by_label("General").rect().bottom()
+            && update.bottom() < 360.0,
+    );
+    harness.get_by_label("Boards").click();
+    harness.run_steps(6);
+    scenario.capture_screen("screen-006-short-boards", &mut harness);
+    scenario.assertion(
+        "short window returns to Boards with New board reachable",
+        harness.state().sidebar_tab == SidebarTab::Boards
+            && harness.get_by_label("Boards").rect().bottom()
+                < harness.get_by_label("Board My Board").rect().top()
+            && harness.get_by_label("New board").rect().bottom() < 360.0,
     );
 
     let report = scenario.finish();
@@ -3077,6 +3138,186 @@ fn inspect_search_keyboard_placement_writes_artifact() {
                 == vec!["stone arches", "blue chairs"],
     );
     scenario.capture_screen("screen-008-clicked-recent", &mut harness);
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+}
+
+#[test]
+fn inspect_sidebar_board_shortcuts_writes_artifact() {
+    fn board_key(harness: &mut Harness<'_, SnappyRefApp>, key: egui::Key) {
+        let modifiers = inspect_command_modifier();
+        for pressed in [true, false] {
+            harness.event_modifiers(
+                egui::Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed,
+                    repeat: false,
+                    modifiers,
+                },
+                modifiers,
+            );
+        }
+        harness.step();
+        harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        harness.step();
+    }
+
+    let mut scenario = InspectScenario::new("sidebar-board-shortcuts");
+    let root = TempRoot::new("snappyref-inspect-sidebar-board-shortcuts");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let first = library.list_boards().unwrap()[0].clone();
+    let second = library.fixture_board("References").unwrap();
+    for name in [
+        "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth",
+    ] {
+        library.fixture_board(name).unwrap();
+    }
+    let mut app = test_app(Some(library.clone()));
+    app.sidebar_open = true;
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+    let mut harness = app_full_harness_with_step_dt(app, 1.0 / 60.0);
+    harness.run_steps(12);
+    scenario.capture_screen("screen-000-open", &mut harness);
+
+    // Clicking a board gives its button focus. Navigation must still work.
+    inspect_click_at(
+        &harness,
+        harness.get_by_label("Board References").rect().center(),
+        egui::Modifiers::NONE,
+    );
+    harness.run_steps(4);
+    scenario.assertion(
+        "clicking References opens that board",
+        harness.state().active_board_id == second.id,
+    );
+    harness.key_press(egui::Key::Tab);
+    harness.step();
+    scenario.fact("focused-board-button", serde_json::json!({"keyboard_input": harness.ctx.egui_wants_keyboard_input(), "text_edit": harness.ctx.text_edit_focused()}));
+    board_key(&mut harness, egui::Key::Num1);
+    harness.run_steps(4);
+    scenario.capture_screen("screen-001-command-1", &mut harness);
+    scenario.assertion(
+        "Command-1 switches with a keyboard-focused board button",
+        harness.state().active_board_id == first.id && harness.state().sidebar_open,
+    );
+
+    for (key, name) in [
+        (egui::Key::Num2, "References"),
+        (egui::Key::Num3, "Third"),
+        (egui::Key::Num4, "Fourth"),
+        (egui::Key::Num5, "Fifth"),
+        (egui::Key::Num6, "Sixth"),
+        (egui::Key::Num7, "Seventh"),
+        (egui::Key::Num8, "Eighth"),
+        (egui::Key::Num9, "Ninth"),
+        (egui::Key::Num0, "Tenth"),
+    ] {
+        board_key(&mut harness, key);
+        harness.run_steps(4);
+        let active = harness
+            .state()
+            .board_summaries()
+            .iter()
+            .find(|s| s.board.id == harness.state().active_board_id)
+            .unwrap()
+            .board
+            .name
+            .clone();
+        scenario.fact(
+            "digit-switch",
+            serde_json::json!({"key": format!("{key:?}"), "expected": name, "active": active}),
+        );
+        scenario.assertion(
+            "each digit opens its board with the sidebar open",
+            active == name,
+        );
+    }
+
+    inspect_click_at(
+        &harness,
+        harness.get_by_label("Settings").rect().center(),
+        egui::Modifiers::NONE,
+    );
+    harness.run_steps(12);
+    board_key(&mut harness, egui::Key::Num2);
+    harness.run_steps(4);
+    scenario.capture_screen("screen-002-settings-switch", &mut harness);
+    scenario.assertion(
+        "Command-2 switches after a Settings tab click",
+        harness.state().active_board_id == second.id
+            && harness.state().sidebar_tab == SidebarTab::Settings,
+    );
+    inspect_click_at(
+        &harness,
+        harness.get_by_label("Keys").rect().center(),
+        egui::Modifiers::NONE,
+    );
+    harness.run_steps(12);
+    board_key(&mut harness, egui::Key::Num1);
+    harness.run_steps(4);
+    scenario.assertion(
+        "Command-1 switches after a Keys tab click",
+        harness.state().active_board_id == first.id,
+    );
+    inspect_click_at(
+        &harness,
+        harness.get_by_label("Boards").rect().center(),
+        egui::Modifiers::NONE,
+    );
+    harness.run_steps(12);
+
+    inspect_click_at(
+        &harness,
+        harness.get_by_label("Board References").rect().center(),
+        egui::Modifiers::NONE,
+    );
+    harness.run_steps(20);
+    // Seed an open rename editor; the behavior under test is its keyboard routing.
+    harness
+        .ctx
+        .data_mut(|d| d.insert_temp(egui::Id::new("board-renaming"), second.id));
+    crate::ui::card::focus_field(&harness.ctx, "Board name");
+    harness.step();
+    harness.get_by_label("Board name");
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::A);
+    harness.step();
+    harness.event(egui::Event::Text("Renamed references".to_owned()));
+    harness.step();
+    let rename_board = harness.state().active_board_id;
+    board_key(&mut harness, egui::Key::Num1);
+    harness.step();
+    scenario.capture_screen("screen-003-rename-keeps-keys", &mut harness);
+    scenario.assertion(
+        "the rename field keeps Command-1 without switching",
+        harness.state().active_board_id == rename_board
+            && harness.get_by_label("Board name").value() == Some("Renamed references".to_owned()),
+    );
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(4);
+    scenario.assertion(
+        "Enter commits the typed board name",
+        harness
+            .state()
+            .board_summaries()
+            .iter()
+            .find(|s| s.board.id == second.id)
+            .unwrap()
+            .board
+            .name
+            == "Renamed references",
+    );
+    board_key(&mut harness, egui::Key::Num1);
+    harness.run_steps(4);
+    scenario.assertion(
+        "board switching resumes after the rename",
+        harness.state().active_board_id == first.id,
+    );
+    scenario.capture_screen("screen-004-renamed", &mut harness);
     let report = scenario.finish();
     assert!(
         report.passed,
