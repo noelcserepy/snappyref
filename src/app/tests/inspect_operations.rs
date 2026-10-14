@@ -1541,47 +1541,6 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
         }
     }
     scenario.assertion("row and column respect gap0/24 and proportions, undo restores, setting alone does not rearrange", true);
-    for key in [
-        egui::Key::ArrowLeft,
-        egui::Key::ArrowRight,
-        egui::Key::ArrowUp,
-        egui::Key::ArrowDown,
-    ] {
-        harness.state_mut().canvas.select_placements(&ids);
-        let original = snapshot(&harness);
-        harness.key_press(key);
-        harness.step();
-        assert_eq!(
-            harness
-                .state()
-                .canvas
-                .placement_for_id(other.id())
-                .unwrap()
-                .state
-                .geometry,
-            other.state.geometry
-        );
-        let ra = harness
-            .state()
-            .canvas
-            .placement_for_id(ids[0])
-            .unwrap()
-            .visual_bounds();
-        let rb = harness
-            .state()
-            .canvas
-            .placement_for_id(ids[1])
-            .unwrap()
-            .visual_bounds();
-        let overlap = ra.intersect(rb);
-        assert!(overlap.width() <= 0.01 || overlap.height() <= 0.01);
-        shortcut(&mut harness, CMD, egui::Key::Z);
-        assert_eq!(snapshot(&harness), original);
-    }
-    scenario.assertion(
-        "four arrow settle commands preserve unselected image, avoid overlap and undo exactly",
-        true,
-    );
     for modifiers in [CMD, egui::Modifiers { shift: true, ..CMD }] {
         harness.state_mut().canvas.select_placements(&ids);
         let original = snapshot(&harness);
@@ -1603,6 +1562,93 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
         assert_eq!(snapshot(&harness), original);
     }
     scenario.assertion("default and selection average-area shortcuts hit their targets, preserve aspect ratios and undo", true);
+    // Start with overlapping images so a disabled settle command cannot pass.
+    for (key, expected) in [
+        (
+            egui::Key::ArrowLeft,
+            [egui::pos2(0.0, 0.0), egui::pos2(134.0, 0.0)],
+        ),
+        (
+            egui::Key::ArrowRight,
+            [egui::pos2(0.0, 0.0), egui::pos2(-134.0, 0.0)],
+        ),
+        (
+            egui::Key::ArrowUp,
+            [egui::pos2(0.0, 154.0), egui::pos2(0.0, 0.0)],
+        ),
+        (
+            egui::Key::ArrowDown,
+            [egui::pos2(0.0, -154.0), egui::pos2(0.0, 0.0)],
+        ),
+    ] {
+        let settle_root = TempRoot::new("snappyref-arrow-settle");
+        let library = Library::initialize(settle_root.to_path_buf()).unwrap();
+        let mut harness = app_full_harness(test_app(Some(library.clone())));
+        harness.state_mut().settings.placement_gap = 24.0;
+        let a = seed_loaded_placement(
+            &library,
+            &mut harness,
+            "settle-a",
+            [60, 100, 180, 255],
+            (140, 100),
+            egui::Pos2::ZERO,
+        );
+        let b = seed_loaded_placement(
+            &library,
+            &mut harness,
+            "settle-b",
+            [180, 100, 60, 255],
+            (80, 160),
+            egui::Pos2::ZERO,
+        );
+        let other = seed_loaded_placement(
+            &library,
+            &mut harness,
+            "unselected",
+            [60, 180, 100, 255],
+            (90, 90),
+            egui::pos2(650.0, 250.0),
+        );
+        let ids = [a.id(), b.id()];
+        harness.state_mut().canvas.select_placements(&ids);
+        let original = snapshot(&harness);
+        scenario.capture_screen(&format!("settle-{key:?}-before"), &mut harness);
+        harness.key_press(key);
+        harness.step();
+        let after = snapshot(&harness);
+        scenario.fact("settle.centers", serde_json::json!({"key":format!("{key:?}"), "centers": after.map(|g| [g.center.x,g.center.y])}));
+        scenario.assertion(
+            "arrow settles overlapping images in the requested direction at gap 24",
+            after
+                .iter()
+                .zip(expected)
+                .all(|(g, center)| g.center.distance(center) < 0.01),
+        );
+        scenario.assertion(
+            "arrow settle keeps sizes and scales",
+            after
+                .iter()
+                .zip(original)
+                .all(|(a, b)| a.size == b.size && a.scale == b.scale),
+        );
+        scenario.assertion(
+            "arrow settle preserves the unselected image",
+            harness
+                .state()
+                .canvas
+                .placement_for_id(other.id())
+                .unwrap()
+                .state
+                .geometry
+                == other.state.geometry,
+        );
+        scenario.capture_screen(&format!("settle-{key:?}-after"), &mut harness);
+        shortcut(&mut harness, CMD, egui::Key::Z);
+        scenario.assertion(
+            "one undo restores the overlapping arrangement",
+            snapshot(&harness) == original,
+        );
+    }
     scenario.capture_screen("screen-001-after-layouts", &mut harness);
     finish(scenario);
 }

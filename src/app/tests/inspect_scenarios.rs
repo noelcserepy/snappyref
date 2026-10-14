@@ -1,4 +1,4 @@
-use super::support::INSPECT_DELETE_KEY;
+use super::support::{INSPECT_DELETE_KEY, check_compact_placements, inspect_displayed_text};
 use super::*;
 
 #[test]
@@ -49,11 +49,12 @@ fn inspect_search_result_drag_to_canvas_writes_artifact() {
         asset_height: source.require_loaded_asset().height,
     }];
     app.search.overlay.result_selection.replace(0);
-    let mut harness = app_harness(app, |ctx, app| {
-        app.show_search_overlay(ctx, test_screen_rect());
-    });
+    app.search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+    let mut harness = app_full_harness(app);
+    scenario.capture_screen("screen-before-drag", &mut harness);
 
-    let source_screen = egui::pos2(344.0, 206.0);
+    let source_screen = inspect_search_result_tile_center(0, 1);
     let drop_screen = egui::pos2(900.0, 600.0);
     scenario.target(
         "snap.search.result[0]",
@@ -132,9 +133,14 @@ fn inspect_search_result_drag_to_canvas_writes_artifact() {
             harness.state().canvas.selected_placement_ids() == vec![placement.state.id]
         }),
     );
-    if let Some(placement) = committed.as_ref() {
-        scenario.capture_board_state_frame("board-after-release", placement, drop_screen);
-    }
+    scenario.assertion(
+        "drop preserves the source asset and pointer center",
+        committed.as_ref().is_some_and(|p| {
+            p.require_loaded_asset().id == source.require_loaded_asset().id
+                && p.state.geometry.center.distance(pointer_world) < 0.1
+        }),
+    );
+    scenario.capture_screen("screen-after-release", &mut harness);
 
     let report = scenario.finish();
     assert!(
@@ -953,6 +959,7 @@ fn inspect_compact_windows_column_images_writes_artifact() {
     harness.step();
 
     scenario.capture_screen("screen-000-before-compact", &mut harness);
+    let before = harness.state().canvas.committed_placements();
     scenario.fact(
         "compact.windows-column.before",
         compact_selection_fact(harness.state()),
@@ -967,6 +974,23 @@ fn inspect_compact_windows_column_images_writes_artifact() {
     let after_stats = scenario.capture_screen("screen-001-after-q-compact", &mut harness);
     let after_fact = compact_selection_fact(harness.state());
     scenario.fact("compact.windows-column.after", after_fact.clone());
+    scenario.assertion(
+        "Q produces the concrete windows-column arrangement",
+        [
+            (1, egui::pos2(-1044.5, 1405.5)),
+            (2, egui::pos2(-698.5, 1405.5)),
+            (43, egui::pos2(443.0, 3413.5)),
+        ]
+        .into_iter()
+        .all(|(id, center)| {
+            harness
+                .state()
+                .canvas
+                .placement_for_id(id)
+                .is_some_and(|p| p.state.geometry.center.distance(center) < 0.05)
+        }),
+    );
+    check_compact_placements(&mut scenario, &before, harness.state());
     scenario.assertion(
         "compact copied Windows column frame is opaque",
         after_stats.transparent_pixels == 0,
@@ -1041,6 +1065,7 @@ fn inspect_compact_mixed_column_images_writes_artifact() {
     harness.step();
 
     scenario.capture_screen("screen-000-before-compact", &mut harness);
+    let before = harness.state().canvas.committed_placements();
     scenario.fact(
         "compact.mixed-column.before",
         compact_selection_fact(harness.state()),
@@ -1050,6 +1075,23 @@ fn inspect_compact_mixed_column_images_writes_artifact() {
     let after_stats = scenario.capture_screen("screen-001-after-q-compact", &mut harness);
     let after_fact = compact_selection_fact(harness.state());
     scenario.fact("compact.mixed-column.after", after_fact.clone());
+    scenario.assertion(
+        "Q produces the concrete mixed-column arrangement",
+        [
+            (1, egui::pos2(72.0, 55.5)),
+            (2, egui::pos2(139.5, 17.0)),
+            (30, egui::pos2(255.0, -50.5)),
+        ]
+        .into_iter()
+        .all(|(id, center)| {
+            harness
+                .state()
+                .canvas
+                .placement_for_id(id)
+                .is_some_and(|p| p.state.geometry.center.distance(center) < 0.05)
+        }),
+    );
+    check_compact_placements(&mut scenario, &before, harness.state());
     scenario.assertion(
         "compact mixed-column frame is opaque",
         after_stats.transparent_pixels == 0,
@@ -1136,6 +1178,7 @@ fn inspect_compact_equal_size_images_writes_artifact() {
     harness.step();
 
     scenario.capture_screen("screen-000-before-compact", &mut harness);
+    let before = harness.state().canvas.committed_placements();
     scenario.fact(
         "compact.equal.before",
         compact_selection_fact(harness.state()),
@@ -1145,6 +1188,26 @@ fn inspect_compact_equal_size_images_writes_artifact() {
     let after_stats = scenario.capture_screen("screen-001-after-q-compact", &mut harness);
     let after_fact = compact_selection_fact(harness.state());
     scenario.fact("compact.equal.after", after_fact.clone());
+    scenario.assertion(
+        "Q produces the concrete equal arrangement",
+        [
+            (1, egui::pos2(84.0, -102.0)),
+            (2, egui::pos2(246.0, -102.0)),
+            (3, egui::pos2(84.0, -50.0)),
+            (4, egui::pos2(246.0, -50.0)),
+            (5, egui::pos2(84.0, 2.0)),
+            (6, egui::pos2(246.0, 2.0)),
+        ]
+        .into_iter()
+        .all(|(id, center)| {
+            harness
+                .state()
+                .canvas
+                .placement_for_id(id)
+                .is_some_and(|p| p.state.geometry.center.distance(center) < 0.05)
+        }),
+    );
+    check_compact_placements(&mut scenario, &before, harness.state());
     scenario.assertion(
         "compact equal-size frame is opaque",
         after_stats.transparent_pixels == 0,
@@ -1216,6 +1279,8 @@ fn inspect_search_composer_writes_artifact() {
     let library = Library::initialize(root.join("library")).unwrap();
     let mut app = test_app(Some(library));
     app.settings.semantic_search_first_launch_prompt_seen = true;
+    app.search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
     app.search.set_recent_searches(
         [
             "warm interior light",
@@ -1266,6 +1331,21 @@ fn inspect_search_composer_writes_artifact() {
         .capture_screen("screen-000-recents", &mut harness)
         .transparent_pixels
         == 0;
+    scenario.assertion(
+        "recents state displays all four saved searches",
+        [
+            "warm interior light",
+            "brutalist stairwell",
+            "fog over hills",
+            "red chair",
+        ]
+        .into_iter()
+        .all(|label| {
+            inspect_displayed_text(&harness)
+                .iter()
+                .any(|text| text == label)
+        }),
+    );
 
     let search = &mut harness.state_mut().search;
     search.overlay.query = "warm light over hills".into();
@@ -1279,6 +1359,27 @@ fn inspect_search_composer_writes_artifact() {
         .capture_screen("screen-001-results-selected", &mut harness)
         .transparent_pixels
         == 0;
+    scenario.assertion(
+        "results state displays the typed query",
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .value()
+            .as_deref()
+            == Some("warm light over hills"),
+    );
+    let pixels = image::open(
+        scenario
+            .artifact_dir
+            .join("frames/screen-001-results-selected.png"),
+    )
+    .unwrap()
+    .to_rgba8();
+    scenario.assertion(
+        "results state renders each of the ten colored thumbnails",
+        colors
+            .iter()
+            .all(|color| pixels.pixels().filter(|p| p.0 == *color).count() >= 500),
+    );
 
     let search = &mut harness.state_mut().search;
     search.overlay.query = "purple giraffe on a bicycle".into();
@@ -1290,6 +1391,15 @@ fn inspect_search_composer_writes_artifact() {
         .capture_screen("screen-002-no-results", &mut harness)
         .transparent_pixels
         == 0;
+    scenario.assertion(
+        "empty results display the query and No results",
+        harness
+            .get_by_role(egui::accesskit::Role::TextInput)
+            .value()
+            .as_deref()
+            == Some("purple giraffe on a bicycle")
+            && harness.query_by_label("No results").is_some(),
+    );
 
     let search = &mut harness.state_mut().search;
     search.overlay.query.clear();
@@ -1305,6 +1415,17 @@ fn inspect_search_composer_writes_artifact() {
         .capture_screen("screen-003-similar", &mut harness)
         .transparent_pixels
         == 0;
+    scenario.assertion(
+        "similar state displays the image pivot and refinement input",
+        inspect_displayed_text(&harness)
+            .iter()
+            .any(|text| text == "similar to #9000")
+            && harness
+                .get_by_role(egui::accesskit::Role::TextInput)
+                .value()
+                .as_deref()
+                == Some(""),
+    );
 
     let search = &mut harness.state_mut().search;
     search.overlay.image_pivot = None;
@@ -1316,6 +1437,16 @@ fn inspect_search_composer_writes_artifact() {
         .capture_screen("screen-004-install", &mut harness)
         .transparent_pixels
         == 0;
+    scenario.assertion(
+        "missing model displays the install card and its actions",
+        ["Install Semantic Search", "Install", "Not now"]
+            .into_iter()
+            .all(|label| {
+                inspect_displayed_text(&harness)
+                    .iter()
+                    .any(|text| text == label)
+            }),
+    );
     harness.key_press(egui::Key::Enter);
     settle(&mut harness);
     scenario.assertion(
@@ -1332,6 +1463,14 @@ fn inspect_search_composer_writes_artifact() {
         .capture_screen("screen-005-downloading", &mut harness)
         .transparent_pixels
         == 0;
+    let displayed = inspect_displayed_text(&harness);
+    scenario.assertion(
+        "downloading displays installation progress and Cancel",
+        ["Installing Semantic Search", "42%", "Cancel"]
+            .into_iter()
+            .all(|label| displayed.iter().any(|text| text == label)),
+    );
+    scenario.fact("composer.download-text", serde_json::json!(displayed));
 
     harness
         .state_mut()
@@ -1344,6 +1483,16 @@ fn inspect_search_composer_writes_artifact() {
         .capture_screen("screen-006-install-error", &mut harness)
         .transparent_pixels
         == 0;
+    scenario.assertion(
+        "failed install displays its error and Retry",
+        ["Install failed", "network: timeout", "Retry"]
+            .into_iter()
+            .all(|label| {
+                inspect_displayed_text(&harness)
+                    .iter()
+                    .any(|text| text == label)
+            }),
+    );
 
     harness
         .state_mut()
@@ -1562,6 +1711,57 @@ fn inspect_blue_image_search_drag_writes_artifact() {
     harness.step();
     scenario.capture_screen("screen-008-search-images-dropped-loaded", &mut harness);
 
+    let dropped = harness
+        .state()
+        .canvas
+        .committed_placements()
+        .into_iter()
+        .filter(|p| p.id() != blue.id())
+        .collect::<Vec<_>>();
+    let mut dropped_assets = dropped
+        .iter()
+        .map(|p| p.require_loaded_asset().id)
+        .collect::<Vec<_>>();
+    dropped_assets.sort_unstable();
+    let mut expected_assets = result_placements
+        .iter()
+        .map(|p| p.require_loaded_asset().id)
+        .collect::<Vec<_>>();
+    expected_assets.sort_unstable();
+    scenario.assertion(
+        "drop keeps exactly the three selected asset identities",
+        dropped_assets == expected_assets,
+    );
+    let pointer_world = harness
+        .state()
+        .canvas
+        .screen_to_world(provisional_screen, test_screen_rect());
+    scenario.assertion(
+        "dropped batch stays centered at the drop pointer",
+        harness
+            .state()
+            .canvas
+            .selected_bounds_world()
+            .is_some_and(|r| r.center().distance(pointer_world) < 0.1),
+    );
+    scenario.assertion(
+        "dropped results keep their source dimensions",
+        dropped.iter().all(|p| {
+            result_placements.iter().any(|source| {
+                source.require_loaded_asset().id == p.require_loaded_asset().id
+                    && source.state.geometry.size == p.state.geometry.size
+            })
+        }),
+    );
+    scenario.assertion(
+        "dropped results do not overlap",
+        dropped.iter().enumerate().all(|(i, a)| {
+            dropped[i + 1..].iter().all(|b| {
+                let r = a.visual_bounds().intersect(b.visual_bounds());
+                r.width() <= 0.01 || r.height() <= 0.01
+            })
+        }),
+    );
     let final_placement_count = harness.state().canvas.all_placement_ids().len();
     scenario.fact(
         "blue-image-search-drag.final",
@@ -1669,12 +1869,39 @@ fn inspect_placement_click_hold_flash_writes_artifact() {
         modifiers: egui::Modifiers::NONE,
     });
     harness.step();
+    scenario.assertion(
+        "press frame shows the selection border",
+        harness
+            .state()
+            .canvas
+            .selection_border_visible(harness.ctx.input(|input| input.time)),
+    );
     scenario.capture_click_hold_fact("screen-001-pressed-selected", &harness, placement_id);
     scenario.capture_screen("screen-001-pressed-selected", &mut harness);
 
     for index in 2..=8 {
         harness.step();
         let name = format!("screen-{index:03}-held");
+        scenario.assertion(
+            "each held frame keeps the selection border visible",
+            harness
+                .state()
+                .canvas
+                .selection_border_visible(harness.ctx.input(|input| input.time)),
+        );
+        scenario.assertion(
+            "each held frame keeps the blue placement selected and stationary",
+            harness.state().canvas.selected_placement_ids() == vec![placement_id]
+                && harness
+                    .state()
+                    .canvas
+                    .placement_for_id(placement_id)
+                    .unwrap()
+                    .state
+                    .geometry
+                    .center
+                    == egui::Pos2::ZERO,
+        );
         scenario.capture_click_hold_fact(&name, &harness, placement_id);
         scenario.capture_screen(&name, &mut harness);
     }
@@ -2048,6 +2275,21 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
     scenario.assertion(
         "pointer crop creates one derived Asset",
         cropped_asset_id != source_asset_id,
+    );
+    scenario.assertion(
+        "pointer rectangle crops to 100 by 70 pixels",
+        (
+            cropped.require_loaded_asset().width,
+            cropped.require_loaded_asset().height,
+        ) == (100, 70),
+    );
+    let pixels = image::open(&cropped.require_loaded_asset().original_path)
+        .unwrap()
+        .to_rgba8();
+    scenario.assertion(
+        "crop keeps the source rectangle pixels",
+        pixels.get_pixel(0, 0).0 == [39, 96, 42, 255]
+            && pixels.get_pixel(99, 69).0 == [197, 96, 189, 255],
     );
     scenario.capture_screen("screen-003-cropped", &mut harness);
 

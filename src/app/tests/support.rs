@@ -299,54 +299,6 @@ impl InspectScenario {
         }));
     }
 
-    pub(super) fn capture_board_state_frame(
-        &mut self,
-        name: &'static str,
-        placement: &Placement,
-        pointer_screen: egui::Pos2,
-    ) {
-        let frames_dir = self.artifact_dir.join("frames");
-        fs::create_dir_all(&frames_dir).unwrap();
-        let path = frames_dir.join(format!("{name}.png"));
-        let mut image = image::RgbaImage::from_pixel(
-            1200,
-            800,
-            image::Rgba([
-                crate::ui::theme::BACKGROUND.r(),
-                crate::ui::theme::BACKGROUND.g(),
-                crate::ui::theme::BACKGROUND.b(),
-                255,
-            ]),
-        );
-        let center = pointer_screen;
-        let size = placement.state.geometry.scaled_size();
-        let min_x = (center.x - size.x / 2.0).round().max(0.0) as u32;
-        let min_y = (center.y - size.y / 2.0).round().max(0.0) as u32;
-        let max_x = (center.x + size.x / 2.0).round().min(1199.0) as u32;
-        let max_y = (center.y + size.y / 2.0).round().min(799.0) as u32;
-        for y in min_y..=max_y {
-            for x in min_x..=max_x {
-                let border = x == min_x || x == max_x || y == min_y || y == max_y;
-                let color = if border {
-                    image::Rgba([235, 238, 245, 255])
-                } else {
-                    image::Rgba([255, 64, 64, 255])
-                };
-                image.put_pixel(x, y, color);
-            }
-        }
-        image.save(&path).expect("inspect frame should save");
-        self.frames.push(path.display().to_string());
-        self.event(
-            "frame",
-            serde_json::json!({
-                "name": name,
-                "path": path,
-                "source": "board-state-render",
-            }),
-        );
-    }
-
     pub(super) fn capture_screen(
         &mut self,
         name: &str,
@@ -794,6 +746,74 @@ pub(super) fn inspect_command_modifier() -> egui::Modifiers {
         command: true,
         ..Default::default()
     }
+}
+
+/// Text submitted to the renderer, including painter-only controls without AccessKit labels.
+pub(super) fn inspect_displayed_text(harness: &Harness<'_, SnappyRefApp>) -> Vec<String> {
+    fn collect(shape: &egui::epaint::Shape, clip: egui::Rect, out: &mut Vec<String>) {
+        match shape {
+            egui::epaint::Shape::Text(text) if clip.intersects(text.visual_bounding_rect()) => {
+                out.push(text.galley.job.text.clone())
+            }
+            egui::epaint::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    collect(shape, clip, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut text = Vec::new();
+    for shape in &harness.output().shapes {
+        collect(&shape.shape, shape.clip_rect, &mut text);
+    }
+    text
+}
+
+pub(super) fn check_compact_placements(
+    scenario: &mut InspectScenario,
+    before: &[Placement],
+    app: &SnappyRefApp,
+) {
+    let mut after = app.canvas.committed_placements();
+    after.sort_by_key(|p| p.id());
+    let mut before = before.to_vec();
+    before.sort_by_key(|p| p.id());
+    scenario.assertion(
+        "Q keeps every placement and asset identity",
+        after
+            .iter()
+            .map(|p| (p.id(), p.require_loaded_asset().id))
+            .collect::<Vec<_>>()
+            == before
+                .iter()
+                .map(|p| (p.id(), p.require_loaded_asset().id))
+                .collect::<Vec<_>>(),
+    );
+    scenario.assertion(
+        "Q changes the seeded arrangement",
+        after
+            .iter()
+            .zip(&before)
+            .any(|(a, b)| a.state.geometry.center.distance(b.state.geometry.center) > 1.0),
+    );
+    let gap = app.settings.placement_gap;
+    scenario.assertion(
+        "Q leaves the requested gap between every pair",
+        after.iter().enumerate().all(|(i, a)| {
+            after[i + 1..].iter().all(|b| {
+                let a = a.visual_bounds();
+                let b = b.visual_bounds();
+                let dx = a.left().max(b.left()) - a.right().min(b.right());
+                let dy = a.top().max(b.top()) - a.bottom().min(b.bottom());
+                dx >= gap - 0.05 || dy >= gap - 0.05
+            })
+        }),
+    );
+    scenario.fact(
+        "compact.placements",
+        serde_json::json!(after.iter().map(inspect_placement).collect::<Vec<_>>()),
+    );
 }
 
 pub(super) fn compact_selection_fact(app: &SnappyRefApp) -> serde_json::Value {

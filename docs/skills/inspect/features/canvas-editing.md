@@ -68,11 +68,13 @@ Preconditions:
   creates a derived asset through the real prep worker. It then checks one
   Undo, a second Undo that must do nothing, and Redo. Look for "pointer crop
   creates one derived Asset" and "explicit flush preserves the cropped Asset
-  relation".
+  relation". The crop also checks its 100 by 70 dimensions and source-gradient
+  pixels.
 - **Compact (Q).** Run `compact-equal-size-images`,
   `compact-mixed-column-images`, and `compact-windows-column-images`. Each
   seeds a selection and drives Q, then compares `screen-000-before-compact`
-  with `screen-001-after-q-compact`.
+  with `screen-001-after-q-compact`. Each checks placement and asset identities,
+  a changed concrete arrangement, and the requested gap between every pair.
 - **Click-and-hold selection.** Run `run-scenario.sh placement-click-hold-flash`.
   It checks that the selection border stays visible through 8 held frames.
 - **Context menu.** Run `run-scenario.sh context-menu`. It opens the menu,
