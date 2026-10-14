@@ -32,6 +32,11 @@ into ordinary app release zips.
 
 ## Signing And Secrets
 
+- `SNAPPYREF_WEB_RELEASE_REFRESH_URL` and
+  `SNAPPYREF_WEB_RELEASE_REFRESH_SECRET`: optional website refresh webhook and
+  its `x-snappyref-release-refresh-secret` header value. The full-release
+  workflow skips refresh if either secret is absent. Its refresh runs before
+  draft publication; the release skill owns the post-publication refresh.
 - `MANIFEST_SIGNING_KEY`: ed25519 private key used by
   `publish-full-release.yml` to sign `latest.json`.
 - Public key: [keys/signing-key.pub.pem](keys/signing-key.pub.pem) is the single
@@ -45,33 +50,12 @@ and the PEM file, then rebuild and ship a manual app update embedding the new
 public key. No Rust constant needs updating. Old clients reject manifests signed
 by a key they do not know.
 
-## Publish Full Release
+## App release procedure
 
-1. Make sure `main` contains the intended release commit.
-2. Use the [local pre-push gate](../README.md#development-checks).
-3. Bump the package version as needed. The release tag must match it.
-4. Dispatch `Publish Full Release` with the release tag.
-5. Public builds use the shipping `release` profile.
-6. Inspect the draft release here. It holds both app zips and `latest.json`.
-7. Confirm archive validation passed for both app zips.
-8. Publish the draft release here. That makes its `latest.json` the update for
-   current apps and creates the release tag on the commit the run built, which
-   the patchnotes range starts from next time.
-9. Run [update smokes](#update-smokes) only on explicit user request.
-
-The run refuses to upload to a tag that is already published, because installed
-apps check those zips against the published `latest.json`. Bump the version
-first, even for a dry run. A dry run dispatches with `publish_update=false`. The
-zips land on the draft here, with no `latest.json`. A dry run
-cannot replace the zips of a signed draft. Rerun with `publish_update` or delete
-the draft.
-
-```sh
-gh workflow run publish-full-release.yml --ref main -f ref=main -f publish_update=false
-```
-
-Before a release, walk the [feature list](release-functional-test-plan.md) on
-macOS and Windows. It excludes app updating.
+Use the [release skill](skills/release/SKILL.md) for the version bump PR,
+patchnotes, dry run, draft inspection, publication and public-channel checks.
+The workflow refuses published tags and keeps signed draft zips and their
+manifest together; see [Reuse app builds](#reuse-app-builds).
 
 ## Older apps
 

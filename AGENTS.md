@@ -127,6 +127,8 @@ first, and otherwise ask one question at a time.
   from the PRs merged since the last release.
 - [model-packaging](docs/skills/model-packaging/SKILL.md) owns building and
   publishing Semantic Search packages and updating the app descriptor.
+- [release](docs/skills/release/SKILL.md) owns app release preparation, draft
+  inspection, publication and public update-channel verification.
 - [Release operations](docs/release-operations.md#update-smokes) owns the
   networked update smokes and their explicit-request-only scope.
 
