@@ -56,6 +56,13 @@ Preconditions:
 - **Result drag basics.** Run `run-scenario.sh search-drag-to-canvas`, which
   `check-harness.sh` also runs. It renders the full app before and after the
   drop and checks the source asset and placement at the drop pointer.
+- **Keyboard placement.** Run `run-scenario.sh search-keyboard-placement`.
+  An installed palette and six results are seeded without starting a model.
+  Right, Shift-Right, Down, Up, Enter, Escape, and Mod-Enter are driven.
+  The scenario checks exact asset identities, literal drop centers, durable
+  placements, one-batch Undo, and Redo after cancellation. Recent queries are
+  restored by arrows/Enter and a click, with saved order read from the library.
+  This proves query restoration, not a model search result.
 - **Settings row.** Run `run-scenario.sh semantic-search-sidebar-status`. It
   injects a download in progress and asserts "Downloading 42%" with Cancel.
   Its output does not depend on this machine's model files.
@@ -63,8 +70,9 @@ Preconditions:
 ## Gotchas
 
 - Opening search with ⌘F or "Search using image" has no scenario.
-- No scenario drives result selection with the arrow keys, ↵ or ⌘↵
-  placement, or cancelling a result drag with Esc or a right click.
+- `search-keyboard-placement` drives arrow selection, ↵ and ⌘↵ placement,
+  and Escape cancellation. Right-click cancellation and pagination past the
+  final loaded row remain manual.
 - No scenario clicks "Install", "Cancel", or "Retry" on the palette card, or
   "Cancel", "Retry", or the confirmed "Remove" in Settings. Plain tests in
   `src/app/tests/semantic_search.rs` cover some of these, without artifacts.

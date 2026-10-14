@@ -201,11 +201,11 @@ Semantic rows need the model installed in the data root.
 | SRC-2 | Model installed: `Mod+F`, type a subject, Escape | Relevant results, Escape closes without adding anything | |
 | SRC-3 | Search for an image that is only on another board or deleted from all boards | Found; search covers the whole Library | |
 | SRC-4 | Select one image, `Mod+F` or context menu Search using image; clear the pivot | Similar images; clearing returns to text search | |
-| SRC-5 | Click, `Mod`-click, Shift-click results; arrows and Shift+arrows; arrow past the last row | Highlight follows; more results load | |
+| SRC-5 | Click, `Mod`-click, Shift-click results; arrows and Shift+arrows; arrow past the last row | Highlight follows; more results load | Partial. `inspect::blue-image-search-drag` covers clicks and Mod-clicks; `inspect::search-keyboard-placement` covers arrows and Shift-arrows. Shift-click and pagination stay manual. |
 | SRC-6 | Drag one result, then several, onto the canvas | Preview follows the pointer, drop adds one batch | |
-| SRC-7 | Enter on selected results then click to place; `Mod+Enter` for all | Results follow the cursor, click places once | |
-| SRC-8 | Start placing results, press Escape | Nothing added, no Undo entry | |
-| SRC-9 | Reopen search, pick a recent search by click and by arrows + Enter | Query restored and run | |
+| SRC-7 | Enter on selected results then click to place; `Mod+Enter` for all | Results follow the cursor, click places once | `inspect::search-keyboard-placement` |
+| SRC-8 | Start placing results, press Escape | Nothing added, no Undo entry | `inspect::search-keyboard-placement` |
+| SRC-9 | Reopen search, pick a recent search by click and by arrows + Enter | Query restored and run | Partial. `inspect::search-keyboard-placement` restores queries and saved order; model execution stays manual. |
 | SRC-10 | Import a new image, wait, search for it | It appears in results | |
 
 ## Settings

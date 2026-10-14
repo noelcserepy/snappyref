@@ -403,6 +403,47 @@ fn inspect_ai_control_writes_artifact() {
         undone.is_ok() && empty && redone.is_ok() && harness.state().canvas.groups().len() == 1,
     );
 
+    harness.state_mut().flush_persistence();
+    let reopened = Library::initialize(root.to_path_buf()).unwrap();
+    let document = reopened
+        .load_board_document(harness.state().active_board_id)
+        .unwrap();
+    scenario.fact(
+        "ai-control.durable-document",
+        json!({"annotations":document.annotations.iter().map(|a| (a.id,format!("{:?}",a.kind),&a.text)).collect::<Vec<_>>(), "groups":document.groups.iter().map(|g| (g.id,&g.name,&g.members)).collect::<Vec<_>>()}),
+    );
+    scenario.assertion(
+        "AI edit survives a flush and independent library readback",
+        document
+            .annotations
+            .iter()
+            .map(|a| (a.id, a.kind, a.text.as_str()))
+            .collect::<Vec<_>>()
+            == vec![
+                (2, CanvasAnnotationKind::Textbox, "Warm palette"),
+                (3, CanvasAnnotationKind::Rectangle, ""),
+                (4, CanvasAnnotationKind::Rectangle, ""),
+                (6, CanvasAnnotationKind::Arrow, ""),
+            ]
+            && document
+                .groups
+                .iter()
+                .map(|g| (g.id, g.name.as_str(), g.members.clone()))
+                .collect::<Vec<_>>()
+                == vec![(5, "Palette", vec![2, 3, 4])],
+    );
+
+    scenario.assertion(
+        "AI arrow endpoints survive durable readback",
+        document
+            .annotations
+            .iter()
+            .find(|a| a.id == 6)
+            .is_some_and(|a| {
+                a.start() == egui::pos2(420.0, 40.0) && a.end() == egui::pos2(260.0, 120.0)
+            }),
+    );
+
     let call = start_ai_call(&root, "remove_from_library", json!({"assets": [asset]}));
     for _ in 0..200 {
         if harness.state().pending_library_remove.is_some() {
