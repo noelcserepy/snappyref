@@ -1390,19 +1390,75 @@ mod tests {
 
     #[test]
     fn cached_import_does_not_reset_backfill_failure_streak() {
-        let (mut search, _root) =
-            search_controller_with_semantic_service("snappyref-cached-import-backfill-test");
-        let mut now = Instant::now();
-        for _ in 0..2 {
-            now = finish_backfill_step(&mut search, backfill_failed(), now);
+        let root = TempRoot::new("snappyref-cached-import-backfill-test");
+        let library = crate::library::storage::Library::initialize(root.join("library")).unwrap();
+        let mut model = crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
+        model.model_key = "cached-import-backfill-test";
+        model.dimension = 2;
+        let cached_path = library
+            .store_rgba_image("cached", &[255, 255, 255, 255], 1, 1)
+            .unwrap();
+        let cached = library
+            .register_original(&cached_path, "image/png", 1, 1, 4, None)
+            .unwrap();
+        library
+            .upsert_asset_embedding_blob(cached.id, model.model_key, &[1.0, 0.0])
+            .unwrap();
+        let mut search = SearchController {
+            service: Some(
+                crate::search::semantic::SemanticSearchService::new(
+                    library.clone(),
+                    crate::search::semantic::SemanticSearchConfig {
+                        model,
+                        canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+                    },
+                )
+                .unwrap(),
+            ),
+            ..SearchController::default()
+        };
+        // Fail at the persisted boundary before the worker launches an embed helper.
+        rusqlite::Connection::open(root.join("library/library.db")).unwrap()
+            .execute_batch("CREATE TRIGGER reject_pending_embedding BEFORE INSERT ON asset_embeddings
+                WHEN NEW.status = 'pending' BEGIN SELECT RAISE(ABORT, 'fixture write failure'); END;")
+            .unwrap();
+        let idle = EmbeddingBackfillIdleState { app_idle: true };
+        for color in [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]] {
+            // A fresh Asset guarantees another eligible step even after stored retries defer.
+            let path = library.store_rgba_image("failure", &color, 1, 1).unwrap();
+            library
+                .register_original(&path, "image/png", 1, 1, 4, None)
+                .unwrap();
+            let now = Instant::now();
+            search.can_start_embedding_backfill(now, idle);
+            assert_eq!(
+                search.drive_embedding_backfill(now + Duration::from_millis(750), idle),
+                Ok(true)
+            );
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                search.handle_results();
+                if search
+                    .embedding_backfill_repaint_after(Instant::now())
+                    .is_some()
+                    || search.embedding_backfill_is_idle()
+                {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "backfill response never arrived");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if color == [0, 255, 0, 255] {
+                search
+                    .queue_asset_index(cached.id, cached_path.clone())
+                    .unwrap();
+                assert_eq!(search.demand_embedding_pending_count(), 1);
+                search.handle_results();
+                assert_eq!(search.demand_embedding_pending_count(), 0);
+                assert!(backfill_starts_after_quiet(&mut search, Instant::now()));
+            }
         }
-
-        let cached_import = SearchIndexResult::Indexed { asset_id: 42 };
-        search.note_index_result_for_backfill(&cached_import, now);
-        search.process_index_result(cached_import);
-        assert!(backfill_starts_after_quiet(&mut search, now));
-        now = finish_backfill_step(&mut search, backfill_failed(), now);
-
+        let now = Instant::now();
         assert_eq!(search.embedding_backfill_repaint_after(now), None);
         assert!(!backfill_starts_after_quiet(
             &mut search,
