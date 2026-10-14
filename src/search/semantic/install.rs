@@ -10,6 +10,7 @@ use crate::zip_extraction::{self, ExtractError};
 
 use super::model_store::{
     PROMOTION_READY_FILE, model_store_root, recover_interrupted_model_promotion, remove_path_any,
+    rollback_model_promotion,
 };
 use crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
 use crate::updater::{download, install_paths};
@@ -307,14 +308,10 @@ fn promote_staged_model_with_hooks(
     });
 
     if let Err(error) = promote_result {
-        let _ = remove_path_any(&final_model_root);
         if had_existing_model && backup_model_root.exists() {
-            remove_path_any(&installing_model_root)?;
-            remove_path_any(&preparing_model_root)?;
-            let _ = fs::rename(&backup_model_root, &final_model_root).or_else(|_| {
-                copy_dir_recursive(&backup_model_root, &final_model_root)?;
-                remove_path_any(&backup_model_root)
-            });
+            rollback_model_promotion(data_root, &descriptor.model_key)?;
+        } else {
+            let _ = remove_path_any(&final_model_root);
         }
         return Err(SemanticSearchInstallError::Io(error));
     }
@@ -1039,5 +1036,9 @@ mod tests {
             Some(vec![0, 0, 128, 63, 0, 0, 0, 191])
         );
         assert_eq!(reopened.load_asset(asset.id).unwrap(), asset);
+        assert_eq!(
+            image::open(&path).unwrap().to_rgba8().into_raw(),
+            vec![255, 0, 0, 255]
+        );
     }
 }

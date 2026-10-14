@@ -75,11 +75,7 @@ pub(crate) fn recover_interrupted_model_promotion(
                 return Ok(());
             }
             if recovery == store.join(format!("{model_key}.previous")) {
-                // A rollback must discard the replacement before consuming its backup.
-                for suffix in ["installing", "preparing"] {
-                    let incoming = store.join(format!("{model_key}.{suffix}"));
-                    remove_path_any(&incoming)?;
-                }
+                return rollback_model_promotion(data_root, model_key);
             }
             remove_path_any(&final_model)?;
             // Both paths are in the model store, so recovery is an atomic rename.
@@ -88,6 +84,18 @@ pub(crate) fn recover_interrupted_model_promotion(
         }
     }
     Ok(())
+}
+
+pub(crate) fn rollback_model_promotion(data_root: &Path, model_key: &str) -> io::Result<()> {
+    let store = model_store_root(data_root);
+    // Discard the replacement before consuming its backup, including on cleanup failure.
+    for suffix in ["installing", "preparing"] {
+        remove_path_any(&store.join(format!("{model_key}.{suffix}")))?;
+    }
+    let final_model = store.join(model_key);
+    remove_path_any(&final_model)?;
+    // Both paths are in the model store; rollback does not need a copy fallback.
+    fs::rename(store.join(format!("{model_key}.previous")), final_model)
 }
 
 pub(crate) fn remove_path_any(path: &Path) -> Result<(), io::Error> {
