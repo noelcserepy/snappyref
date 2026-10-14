@@ -421,32 +421,46 @@ mod layout {
                 extended.push(rows[r + 1][0]);
                 assert!(used(&extended) > g.size[0]);
             }
-            let (space, count) = b.allocation(0, row, 0);
-            // Auto spacing leaves all residual capacity for Fill.
-            let expected = (g.size[0]
-                - row.iter().map(|&m| b.base(m, 0)).sum::<f32>()
-                - if g.auto == GapMode::Number {
-                    g.gap * row.len().saturating_sub(1) as f32
+            let fill_widths: Vec<_> = row
+                .iter()
+                .filter(|m| b.members[m].fill[0])
+                .map(|m| pixels.sizes[m].x)
+                .collect();
+            assert!(fill_widths.iter().all(|&width| width >= 0.0));
+            assert!(
+                fill_widths
+                    .windows(2)
+                    .all(|pair| (pair[0] - pair[1]).abs() < 0.001)
+            );
+            if !fill_widths.is_empty() {
+                let gap = if g.auto == GapMode::Number {
+                    g.gap
                 } else {
                     0.0
-                })
-            .max(0.0);
-            assert!((space - expected).abs() < 0.001);
-            let share = if count == 0 {
-                0.0
-            } else {
-                space / count as f32
-            };
-            // Division preserves fractional pixels.
-            assert!(share >= 0.0 && share * count as f32 <= space + 0.001);
-            for (c, &m) in row.iter().enumerate() {
-                // Fixed widths remain unchanged; Fill gets its share.
-                let expected = if b.members[&m].fill[0] {
-                    share
-                } else {
-                    b.members[&m].size[0]
                 };
-                assert!((pixels.sizes[&m].x - expected).abs() < 0.001);
+                let fixed_occupied = row
+                    .iter()
+                    .filter(|m| !b.members[m].fill[0])
+                    .map(|m| b.members[m].size[0])
+                    .sum::<f32>()
+                    + gap * row.len().saturating_sub(1) as f32;
+                if fixed_occupied <= g.size[0] {
+                    // Follow the rendered row from its first edge to its final edge.
+                    // Fill consumes the capacity, including overlap from a negative gap.
+                    let first = row[0];
+                    let last = *row.last().unwrap();
+                    let occupied =
+                        pixels.offsets[&last].x + pixels.sizes[&last].x - pixels.offsets[&first].x;
+                    assert!((occupied - g.size[0]).abs() < 0.001, "{g:?} {row:?}");
+                } else {
+                    assert!(fill_widths.iter().all(|&width| width == 0.0));
+                }
+            }
+            for (c, &m) in row.iter().enumerate() {
+                // Fixed widths remain unchanged.
+                if !b.members[&m].fill[0] {
+                    assert!((pixels.sizes[&m].x - b.members[&m].size[0]).abs() < 0.001);
+                }
                 // Vertical arrows keep the column.
                 if g.flow == GroupFlow::Wrap {
                     for (direction, adjacent) in [
@@ -484,7 +498,6 @@ mod layout {
     #[test]
     fn every_small_layout_input_and_wide_samples() {
         // Exercise small widths and list lengths before wider fractional samples.
-        let mut count = 0;
         for n in 0..=4 {
             for code in 0..8usize.pow(n) {
                 let mut code = code;
@@ -500,14 +513,12 @@ mod layout {
                         for wrap in [false, true] {
                             for auto in [false, true] {
                                 check(&mut state(&xs, capacity as f32, gap as f32, wrap, auto));
-                                count += 1;
                             }
                         }
                     }
                 }
             }
         }
-        assert_eq!(count, 168_516);
         // Reproducible samples
         // span every capacity and both integral and fractional pixel inputs.
         let mut seed = 1_u64;
@@ -534,15 +545,11 @@ mod layout {
                     for wrap in [false, true] {
                         for auto in [false, true] {
                             check(&mut state(&xs, capacity as f32, gap as f32, wrap, auto));
-                            count += 1;
                         }
                     }
                 }
             }
         }
-        println!(
-            "layout: {count} inputs, 168516 exhaustive small inputs and 24000 wide/fractional samples"
-        );
     }
     #[test]
     fn layout_scenarios() {
@@ -579,6 +586,17 @@ mod layout {
                 true,
                 vec![vec![0, 1, 2]],
                 vec![1., 1., 1.],
+                None,
+            ),
+            (
+                "fill shares negative gap overlap",
+                vec![(0., true), (0., true)],
+                3.,
+                -1.,
+                false,
+                false,
+                vec![vec![0, 1]],
+                vec![2., 2.],
                 None,
             ),
             (

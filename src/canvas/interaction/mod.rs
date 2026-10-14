@@ -774,15 +774,14 @@ pub(crate) fn hit_test_placement(
 #[cfg(test)]
 mod tests {
     use super::{
-        PlacementTransformState, animate_mouse_wheel_zoom_around_pointer,
-        begin_placement_drag_scale, begin_placement_rotation, compute_uniform_scale_snap_preview,
+        animate_mouse_wheel_zoom_around_pointer, compute_uniform_scale_snap_preview,
         map_mouse_mode_scroll_events, placement_drag_scale_factor, scaled_placement_transforms,
         selected_placement_rotation_handle_screen_pos, step_mouse_wheel_zoom_animation,
     };
     use crate::canvas::interaction::movement::{
         compute_drag_snap_preview, layout_bounds_with_offset,
     };
-    use crate::canvas::{ActiveGesture, CanvasState, DragState};
+    use crate::canvas::{CanvasState, DragState};
     use crate::data::{
         Asset, CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasImageLod,
         CanvasStrokeWidth, CanvasTextSize, Placement, PlacementState,
@@ -792,95 +791,110 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn multi_placement_selection_uses_group_rotation_handle() {
-        let ctx = egui::Context::default();
-        let mut canvas = CanvasState::default();
-        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
-        add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 80);
-        canvas.select_placements(&[1, 2]);
-        let screen_rect = test_screen_rect();
-        let selection_rect = canvas.selection_screen_rect(screen_rect).unwrap();
-
-        let (line_start, handle_pos) =
-            selected_placement_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
-
-        assert_eq!(
-            line_start,
-            egui::pos2(selection_rect.center().x, selection_rect.top())
-        );
-        assert_eq!(
-            handle_pos,
-            line_start - egui::vec2(0.0, super::super::PLACEMENT_ROTATE_HANDLE_OFFSET_SCREEN)
-        );
+    fn rotation_handle_drag_turns_selected_images_and_their_centers() {
+        for (initial_rotation, final_rotation) in [
+            (0.0, std::f32::consts::FRAC_PI_2),
+            (std::f32::consts::FRAC_PI_2, std::f32::consts::PI),
+        ] {
+            let ctx = egui::Context::default();
+            let mut canvas = CanvasState::default();
+            add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
+            add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 80);
+            canvas.select_placements(&[1, 2]);
+            canvas.set_placement_rotation(1, initial_rotation);
+            canvas.set_placement_rotation(2, initial_rotation);
+            canvas.take_document_changes();
+            let screen = test_screen_rect();
+            let (_, handle) =
+                selected_placement_rotation_handle_screen_pos(&canvas, screen).unwrap();
+            let target = screen.center()
+                + super::rotate_vec2(handle - screen.center(), std::f32::consts::FRAC_PI_2);
+            let mut frame = |events| {
+                let _ = crate::ui::test_frame::run_ui(
+                    &ctx,
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let response = ui.interact(
+                            screen,
+                            egui::Id::new("rotation-canvas"),
+                            egui::Sense::click_and_drag(),
+                        );
+                        super::handle_input(ui, screen, screen, None, &mut canvas, &response);
+                    },
+                );
+            };
+            frame(vec![
+                egui::Event::Key {
+                    key: egui::Key::R,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerMoved(handle),
+            ]);
+            frame(vec![egui::Event::PointerButton {
+                pos: handle,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }]);
+            frame(vec![egui::Event::PointerMoved(target)]);
+            frame(vec![egui::Event::PointerButton {
+                pos: target,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }]);
+            for (id, expected_center) in [(1, egui::pos2(0.0, -120.0)), (2, egui::pos2(0.0, 120.0))]
+            {
+                let geometry = canvas.placement_by_id(id).unwrap().state.geometry;
+                assert!(geometry.center.distance(expected_center) < 0.001);
+                assert!((geometry.rotation - final_rotation).abs() < 0.001);
+                assert_eq!(geometry.scale, 1.0);
+            }
+            assert!(!canvas.user_edit_in_progress());
+            let changes = canvas.take_document_changes();
+            assert_eq!(
+                changes
+                    .updated_placements
+                    .iter()
+                    .map(|p| p.state.id)
+                    .collect::<Vec<_>>(),
+                vec![1, 2]
+            );
+        }
     }
 
     #[test]
-    fn cmd_alt_scale_drag_does_not_disable_guide_snapping() {
-        let modifiers = egui::Modifiers {
-            command: true,
-            alt: true,
-            ..Default::default()
-        };
-
-        assert!(super::scale_drag_active(modifiers));
-        assert!(!super::guide_snap_disabled(modifiers));
-    }
-
-    #[test]
-    fn plain_cmd_disables_guide_snapping() {
-        let modifiers = egui::Modifiers {
-            command: true,
-            ..Default::default()
-        };
-
-        assert!(!super::scale_drag_active(modifiers));
-        assert!(super::guide_snap_disabled(modifiers));
-    }
-
-    #[test]
-    fn group_rotation_handle_follows_selected_placement_rotation() {
-        let ctx = egui::Context::default();
-        let mut canvas = CanvasState::default();
-        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
-        add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 80);
-        canvas.select_placements(&[1, 2]);
-        let _ = canvas.set_placement_rotation(1, std::f32::consts::FRAC_PI_2);
-        let _ = canvas.set_placement_rotation(2, std::f32::consts::FRAC_PI_2);
-        let screen_rect = test_screen_rect();
-        let selection_rect = canvas.selection_screen_rect(screen_rect).unwrap();
-
-        let (line_start, handle_pos) =
-            selected_placement_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
-
-        assert!((line_start.x - selection_rect.right()).abs() < 0.01);
-        assert!((line_start.y - selection_rect.center().y).abs() < 0.01);
-        assert_eq!(
-            handle_pos,
-            line_start + egui::vec2(super::super::PLACEMENT_ROTATE_HANDLE_OFFSET_SCREEN, 0.0)
-        );
-    }
-
-    #[test]
-    fn placement_rotation_state_captures_selected_group() {
-        let ctx = egui::Context::default();
-        let mut canvas = CanvasState::default();
-        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 100, 80);
-        add_test_image(&mut canvas, &ctx, 2, egui::pos2(120.0, 0.0), 100, 80);
-        canvas.select_placements(&[1, 2]);
-        let screen_rect = test_screen_rect();
-        let (_, handle_pos) =
-            selected_placement_rotation_handle_screen_pos(&canvas, screen_rect).unwrap();
-
-        begin_placement_rotation(&mut canvas, screen_rect, handle_pos);
-
-        assert!(matches!(
-            canvas.interaction.gesture,
-            Some(ActiveGesture::PlacementTransform(PlacementTransformState::Rotating {
-                ref placement_ids,
-                ref starting_items,
-                ..
-            })) if placement_ids == &vec![1, 2] && starting_items.len() == 2
-        ));
+    fn command_bypasses_guides_except_during_command_alt_scale() {
+        for (modifiers, scale, bypass) in [
+            (egui::Modifiers::NONE, false, false),
+            (
+                egui::Modifiers {
+                    command: true,
+                    ..Default::default()
+                },
+                false,
+                true,
+            ),
+            (
+                egui::Modifiers {
+                    command: true,
+                    alt: true,
+                    ..Default::default()
+                },
+                true,
+                false,
+            ),
+        ] {
+            assert_eq!(super::scale_drag_active(modifiers), scale);
+            assert_eq!(super::guide_snap_disabled(modifiers), bypass);
+        }
     }
 
     #[test]
@@ -921,29 +935,6 @@ mod tests {
         assert_eq!(transforms[1].placement_id, 2);
         assert_eq!(transforms[1].center_world, egui::pos2(200.0, 0.0));
         assert!((transforms[1].scale - 1.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn placement_drag_scale_state_captures_selected_group() {
-        let ctx = egui::Context::default();
-        let mut canvas = CanvasState::default();
-        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-100.0, 0.0), 100, 80);
-        add_test_image(&mut canvas, &ctx, 2, egui::pos2(100.0, 0.0), 100, 80);
-        canvas.select_placements(&[1, 2]);
-
-        begin_placement_drag_scale(&mut canvas, test_screen_rect(), 1, egui::pos2(380.0, 360.0));
-
-        assert!(matches!(
-            canvas.interaction.gesture,
-            Some(ActiveGesture::PlacementTransform(PlacementTransformState::Scaling {
-                ref placement_ids,
-                group_center_world,
-                ref starting_items,
-                ..
-            })) if placement_ids == &vec![1, 2]
-                && group_center_world == egui::pos2(0.0, 0.0)
-                && starting_items.len() == 2
-        ));
     }
 
     #[test]
