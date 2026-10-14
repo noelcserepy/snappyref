@@ -22,14 +22,16 @@ struct SearchEmbeddingCache {
 pub(super) struct AssetIndex {
     library: Library,
     model_key: &'static str,
+    dimension: usize,
     cache: Arc<Mutex<SearchEmbeddingCache>>,
 }
 
 impl AssetIndex {
-    pub(super) fn new(library: Library, model_key: &'static str) -> Self {
+    pub(super) fn new(library: Library, model_key: &'static str, dimension: usize) -> Self {
         Self {
             library,
             model_key,
+            dimension,
             cache: Arc::new(Mutex::new(SearchEmbeddingCache::default())),
         }
     }
@@ -92,7 +94,8 @@ impl AssetIndex {
                 }
                 cache.generation
             };
-            let embeddings = load_decoded_library_embeddings(&self.library, self.model_key)?;
+            let embeddings =
+                load_decoded_library_embeddings(&self.library, self.model_key, self.dimension)?;
             let mut cache = self
                 .cache
                 .lock()
@@ -128,9 +131,11 @@ impl AssetIndex {
 
         let library = self.library.clone();
         let model_key = self.model_key;
+        let dimension = self.dimension;
         let cache = self.cache.clone();
         thread::spawn(move || {
-            let decoded_embeddings = load_decoded_library_embeddings(&library, model_key);
+            let decoded_embeddings =
+                load_decoded_library_embeddings(&library, model_key, dimension);
             let Ok(mut cache) = cache.lock() else {
                 return;
             };
@@ -147,20 +152,25 @@ impl AssetIndex {
 fn load_decoded_library_embeddings(
     library: &Library,
     model_key: &'static str,
+    dimension: usize,
 ) -> Result<Arc<Vec<DecodedAssetEmbedding>>, String> {
-    library
+    let embeddings = library
         .load_library_embeddings(model_key)?
         .into_iter()
-        .map(|row| {
-            let embedding = decode_f32_blob(&row.embedding_blob)?;
-            Ok(DecodedAssetEmbedding {
+        .filter_map(|row| {
+            // A corrupt persisted cache row must not disable the other Assets' search.
+            let embedding = decode_f32_blob(&row.embedding_blob).ok()?;
+            if embedding.len() != dimension || !squared_norm(&embedding).is_finite() {
+                return None;
+            }
+            Some(DecodedAssetEmbedding {
                 asset_id: row.asset_id,
                 cosine_is_zero: squared_norm(&embedding) <= f32::EPSILON,
                 embedding: normalized_embedding(&embedding),
             })
         })
-        .collect::<Result<Vec<_>, String>>()
-        .map(Arc::new)
+        .collect();
+    Ok(Arc::new(embeddings))
 }
 
 fn score_decoded_embeddings(
