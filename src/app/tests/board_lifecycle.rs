@@ -1847,3 +1847,75 @@ fn deleting_last_board_is_rejected_and_cancel_preserves_content() {
     app.create_and_switch_board(false);
     assert_eq!(app.board_summaries().len(), 2);
 }
+
+#[test]
+fn dialog_keyboard_confirms_primary_but_requires_a_click_to_delete() {
+    let ctx = egui::Context::default();
+    let primary = crate::app::dialogs::Dialog {
+        id: "primary-keyboard",
+        title: "Create?",
+        detail: "Create a board.",
+        cancel: "Cancel",
+        action: crate::app::dialogs::DialogAction::Primary("Create"),
+    };
+    let mut created = false;
+    crate::ui::test_frame::run_ui(
+        &ctx,
+        key_press_input(egui::Modifiers::NONE, egui::Key::Enter),
+        |ui| {
+            created = matches!(
+                primary.show(ui.ctx()),
+                Some(crate::app::dialogs::DialogChoice::Confirm)
+            );
+        },
+    );
+    assert!(created);
+    let root = TempRoot::new("snappyref-dialog-destructive-keyboard");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let second = library.fixture_board("Keep").unwrap();
+    let mut app = test_app(Some(library.clone()));
+    app.request_board_delete(second.id, "Keep".to_owned());
+    let mut harness = app_harness(app, |ctx, app| app.show_board_delete_confirmation(ctx));
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Delete board").is_some());
+    harness.state_mut().flush_persistence();
+    assert_eq!(
+        library
+            .list_boards()
+            .unwrap()
+            .iter()
+            .map(|b| b.name.clone())
+            .collect::<Vec<_>>(),
+        vec!["My Board", "Keep"]
+    );
+    harness.key_press(egui::Key::Escape);
+    harness.step();
+    harness.run_steps(2);
+    assert!(harness.query_by_label("Delete board").is_none());
+    assert_eq!(
+        library
+            .list_boards()
+            .unwrap()
+            .iter()
+            .map(|b| b.name.clone())
+            .collect::<Vec<_>>(),
+        vec!["My Board", "Keep"]
+    );
+    harness
+        .state_mut()
+        .request_board_delete(second.id, "Keep".to_owned());
+    harness.run_steps(4);
+    harness.get_by_label("Delete board").click();
+    harness.step();
+    harness.state_mut().flush_persistence();
+    assert_eq!(
+        library
+            .list_boards()
+            .unwrap()
+            .iter()
+            .map(|b| b.name.clone())
+            .collect::<Vec<_>>(),
+        vec!["My Board"]
+    );
+}
