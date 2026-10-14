@@ -797,7 +797,9 @@ mod tests {
         let calls_clone = calls.clone();
         service.fetch_override = Some(Box::new(move || {
             calls_clone.fetch_add(1, Ordering::SeqCst);
-            CheckOutcome::UpToDate
+            CheckOutcome::NewerAvailable {
+                release: manifest_with("2.0.0"),
+            }
         }));
 
         service.started_at = Instant::now() - Duration::from_secs(60);
@@ -811,6 +813,12 @@ mod tests {
         drive_until_quiescent(&mut service);
 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            service.state(),
+            &UpdateState::Available {
+                release: manifest_with("2.0.0")
+            }
+        );
     }
 
     #[test]
@@ -818,7 +826,13 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig::for_tests());
         service.fetch_override = Some(Box::new(|| CheckOutcome::Failed));
         drive_until_quiescent(&mut service);
-        assert!(matches!(service.state(), UpdateState::Failed { .. }));
+        assert_eq!(
+            service.state(),
+            &UpdateState::Failed {
+                reason: "Release discovery failed".into(),
+                version: None
+            }
+        );
         assert!(service.time_until_next_check().unwrap() <= Duration::from_secs(60));
     }
 
@@ -867,12 +881,27 @@ mod tests {
                     release: offered.clone()
                 }
             );
-            service.install_override = Some(Box::new(move |context, _| {
-                let expected = offered.entry_for(context.platform);
-                assert_eq!(context.version, offered.version);
-                assert_eq!(context.url, expected.url);
-                assert_eq!(context.sha256, expected.sha256);
-                assert_eq!(context.size, expected.size);
+            service.install_override = Some(Box::new(|context, _| {
+                assert_eq!(context.version, "2.0.0");
+                assert_eq!(context.size, 1);
+                #[cfg(target_os = "macos")]
+                {
+                    assert_eq!(context.platform, TargetPlatform::Macos);
+                    assert_eq!(context.url, "https://example/offered-mac.zip");
+                    assert_eq!(
+                        context.sha256,
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    );
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    assert_eq!(context.platform, TargetPlatform::Windows);
+                    assert_eq!(context.url, "https://example/offered-win.zip");
+                    assert_eq!(
+                        context.sha256,
+                        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    );
+                }
             }));
             service.start_install();
             assert_eq!(
@@ -911,19 +940,33 @@ mod tests {
             }
         );
         service.start_install();
-        assert!(matches!(service.state(), UpdateState::Failed { .. }));
+        assert_eq!(
+            service.state(),
+            &UpdateState::Failed {
+                reason: "Package checksum mismatch".into(),
+                version: Some("2.0.0".into())
+            }
+        );
         service.request_check_now();
         drive_until_quiescent(&mut service);
-        assert!(service.state().is_available());
+        assert_eq!(
+            service.state(),
+            &UpdateState::Available {
+                release: manifest_with("2.0.0")
+            }
+        );
     }
 
     #[test]
     fn drain_install_progress_promotes_to_ready_on_staged() {
-        let mut service = UpdateService::new(UpdateConfig::for_tests());
+        let root = TempRoot::new("install-progress");
+        let mut service = UpdateService::new(UpdateConfig {
+            install_root: Some(root.to_path_buf()),
+            ..UpdateConfig::for_tests()
+        });
         service.state.apply(CheckOutcome::NewerAvailable {
             release: manifest_with("1.0.0"),
         });
-        service.config.install_root = Some(std::env::temp_dir());
         // Test installer immediately reports progress + Staged.
         service.install_override = Some(Box::new(|ctx, tx| {
             let _ = tx.send(InstallProgress::Progress {
@@ -936,10 +979,11 @@ mod tests {
         }));
         service.start_install();
         service.tick(true);
-        assert!(
-            service.state().is_ready(),
-            "service should be Ready after Staged, got {:?}",
+        assert_eq!(
             service.state(),
+            &UpdateState::Ready {
+                version: "1.0.0".into()
+            }
         );
     }
 
@@ -962,7 +1006,7 @@ mod tests {
         });
 
         assert!(!partial.exists(), "partial download must be removed");
-        assert!(staging.join("marker").exists(), "staging tree must survive");
+        assert_eq!(std::fs::read(staging.join("marker")).unwrap(), b"keep");
     }
 
     /// Create a structurally-valid staged bundle on disk, with the source
@@ -1024,10 +1068,8 @@ mod tests {
                 ..UpdateConfig::for_tests()
             });
             service.detect_existing_staging(&manifest_with("9.9.9"));
-            assert!(
-                !service.state().is_ready(),
-                "missing {executable} became Ready"
-            );
+            assert_eq!(service.state(), &UpdateState::Hidden);
+            assert!(!staging.exists());
         }
     }
 
@@ -1038,10 +1080,11 @@ mod tests {
 
         let service = discover_release(&root);
 
-        assert!(
-            service.state().is_ready(),
-            "service should be Ready when a verified staged bundle is on disk for the manifest's version, got {:?}",
+        assert_eq!(
             service.state(),
+            &UpdateState::Ready {
+                version: "1.0.0".into()
+            }
         );
     }
 
@@ -1056,10 +1099,11 @@ mod tests {
 
             let service = discover_release(&root);
 
-            assert!(
-                service.state().is_available(),
-                "sidecar {sidecar:?} must leave the release Available, got {:?}",
+            assert_eq!(
                 service.state(),
+                &UpdateState::Available {
+                    release: manifest_with("1.0.0")
+                }
             );
             assert!(
                 !staging.exists(),
@@ -1079,10 +1123,12 @@ mod tests {
         discover_release(&root);
 
         assert!(!stale.exists(), "stale staging-0.9.0/ must be removed");
-        assert!(
-            current.exists(),
-            "current-version staging must survive sweep"
-        );
+        let payload = if cfg!(target_os = "macos") {
+            "SnappyRef/SnappyRef.app/Contents/MacOS/snappyref"
+        } else {
+            "SnappyRef/snappyref.exe"
+        };
+        assert_eq!(std::fs::read(current.join(payload)).unwrap(), b"binary");
     }
 
     #[test]
@@ -1090,11 +1136,21 @@ mod tests {
         let mut service = UpdateService::new(UpdateConfig::for_tests());
         service.fetch_override = Some(Box::new(|| CheckOutcome::UpToDate));
         assert_eq!(service.last_check_completed_at(), None);
+        let before = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
         drive_until_quiescent(&mut service);
+        let after = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let completed = service.last_check_completed_at().unwrap();
         assert!(
-            service.last_check_completed_at().is_some(),
-            "last_check_completed_at must be set once a check resolves",
+            (before..=after).contains(&completed),
+            "completion timestamp {completed} outside {before}..={after}"
         );
+        assert_eq!(service.state(), &UpdateState::Hidden);
     }
 
     #[test]
@@ -1114,8 +1170,10 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
         service.fetch_override = Some(Box::new(move || {
-            calls_clone.fetch_add(1, Ordering::SeqCst);
-            CheckOutcome::UpToDate
+            let call = calls_clone.fetch_add(1, Ordering::SeqCst);
+            CheckOutcome::NewerAvailable {
+                release: manifest_with(if call == 0 { "2.0.0" } else { "3.0.0" }),
+            }
         }));
         // Drive the initial steady-state check to completion so the
         // schedule has settled into the long-poll wait.
@@ -1131,6 +1189,12 @@ mod tests {
             "manual request must trigger an extra fetch (baseline {baseline}, observed {})",
             calls.load(Ordering::SeqCst),
         );
+        assert_eq!(
+            service.state(),
+            &UpdateState::Available {
+                release: manifest_with("3.0.0")
+            }
+        );
     }
 
     #[test]
@@ -1139,8 +1203,10 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
         service.fetch_override = Some(Box::new(move || {
-            calls_clone.fetch_add(1, Ordering::SeqCst);
-            CheckOutcome::UpToDate
+            let call = calls_clone.fetch_add(1, Ordering::SeqCst);
+            CheckOutcome::NewerAvailable {
+                release: manifest_with(if call == 0 { "2.0.0" } else { "3.0.0" }),
+            }
         }));
 
         service.request_check_now();
@@ -1151,6 +1217,12 @@ mod tests {
             calls.load(Ordering::SeqCst),
             1,
             "manual request must not wait for settled idle"
+        );
+        assert_eq!(
+            service.state(),
+            &UpdateState::Available {
+                release: manifest_with("2.0.0")
+            }
         );
     }
 
