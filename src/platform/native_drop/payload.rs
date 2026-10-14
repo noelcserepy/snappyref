@@ -4,9 +4,10 @@ use eframe::egui;
 
 pub(super) fn append_http_urls_from_text(text: &str, urls: &mut Vec<String>) {
     let mut remainder = text;
-    while let Some(start) = remainder
-        .find("http://")
-        .or_else(|| remainder.find("https://"))
+    while let Some(start) = [remainder.find("http://"), remainder.find("https://")]
+        .into_iter()
+        .flatten()
+        .min()
     {
         let candidate = &remainder[start..];
         let end = candidate
@@ -160,6 +161,19 @@ mod tests {
                 "https://example.com/a.jpg".to_owned(),
                 "https://example.com/b.png".to_owned()
             ]
+        );
+    }
+
+    #[test]
+    fn extracts_mixed_http_and_https_urls_in_text_order() {
+        let mut urls = Vec::new();
+        super::append_http_urls_from_text(
+            "https://example.com/a.png http://example.com/b.png",
+            &mut urls,
+        );
+        assert_eq!(
+            urls,
+            ["https://example.com/a.png", "http://example.com/b.png"]
         );
     }
 
