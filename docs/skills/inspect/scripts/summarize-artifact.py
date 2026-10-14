@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 import json
+import struct
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "scripts"))
+from inspect_artifact import load_report
 
 
 def load_ndjson(path: Path) -> list[dict]:
@@ -34,7 +38,12 @@ def main() -> int:
         print(f"report.json not found: {report_path}", file=sys.stderr)
         return 1
 
-    report = json.loads(report_path.read_text())
+    scenario = artifact_dir.parent.name if artifact_dir.name.startswith('run-') else artifact_dir.name
+    try:
+        report = load_report(artifact_dir, scenario)
+    except (OSError, ValueError, struct.error) as error:
+        print(str(error), file=sys.stderr)
+        return 1
     events = load_ndjson(events_path)
     assertions = report.get("assertions", [])
     failed_assertions = [item for item in assertions if not item.get("passed")]

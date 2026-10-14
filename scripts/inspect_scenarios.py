@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 import time
 
+from inspect_artifact import load_report
+
 ROOT = Path(__file__).resolve().parents[1]
 # name: test filter, artifact scenario, network/ignored
 SCENARIOS = {
@@ -58,7 +60,10 @@ SCENARIOS = {
 def inspect_root(root=ROOT):
     # Mirrors inspect_artifact_dir in src/app/tests/support.rs.
     target = Path(os.environ.get('CARGO_TARGET_DIR', 'target'))
-    return (target if target.is_absolute() else root / target) / 'snappyref-inspect'
+    target = (target if target.is_absolute() else root / target).resolve()
+    if not target.is_relative_to(root.resolve()):
+        raise RuntimeError('CARGO_TARGET_DIR points outside this checkout; unset it')
+    return target / 'snappyref-inspect'
 
 
 def check_artifact(scenario, started, root=ROOT):
@@ -69,11 +74,9 @@ def check_artifact(scenario, started, root=ROOT):
     report_path = artifact / 'report.json'
     if not report_path.is_file() or report_path.stat().st_mtime < started:
         raise RuntimeError(f'missing or stale inspect report: {scenario}')
-    report = json.loads(report_path.read_text())
-    if (report.get('status') != 'pass' or not report.get('assertions') or not report.get('frames')
-            or not all(item.get('passed') for item in report['assertions'])
-            or not all(Path(frame).is_file() for frame in report['frames'])):
-        raise RuntimeError(f'failed or incomplete inspect report: {scenario}')
+    report = load_report(artifact, scenario)
+    if report['status'] != 'pass':
+        raise RuntimeError(f'failed inspect report: {scenario}')
     return dict(scenario=scenario, artifact=str(artifact), assertions=len(report['assertions']))
 
 
@@ -89,8 +92,10 @@ def main():
         parser.error('missing scenario')
     test, scenario, ignored = SCENARIOS[args.scenario]
     started = time.time()
-    result = subprocess.run(['cargo', 'test', '--locked', '--lib', test, '--', '--nocapture', *(['--ignored'] if ignored else [])], cwd=ROOT)
+    artifact_root = None
     try:
+        artifact_root = inspect_root()
+        result = subprocess.run(['cargo', 'test', '--locked', '--lib', test, '--', '--nocapture', *(['--ignored'] if ignored else [])], cwd=ROOT)
         if result.returncode:
             raise RuntimeError(f'Cargo exited {result.returncode}')
         artifact = check_artifact(scenario, started)
@@ -98,8 +103,8 @@ def main():
         return 0
     except (RuntimeError, OSError, ValueError, KeyError) as error:
         print(f'status=fail\nscenario={scenario}\nerror={error}')
-        latest = inspect_root() / scenario / 'latest.txt'
-        if latest.is_file() and latest.stat().st_mtime >= started:
+        latest = artifact_root / scenario / 'latest.txt' if artifact_root else None
+        if latest and latest.is_file() and latest.stat().st_mtime >= started:
             print(f'artifact={latest.read_text().strip()}')
         return 1
 

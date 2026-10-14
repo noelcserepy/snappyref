@@ -3,10 +3,19 @@ import json
 from pathlib import Path
 import tempfile
 import time
+import struct
+import zlib
 import unittest
 from unittest.mock import patch
 
 from inspect_scenarios import check_artifact, main, SCENARIOS
+
+
+def png_bytes():
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 6, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(b'\0\xff\0\0\xff')) + chunk(b'IEND', b''))
 
 
 class InspectEvidenceTests(unittest.TestCase):
@@ -14,25 +23,33 @@ class InspectEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch, patch.dict('os.environ', {'CARGO_TARGET_DIR': 'build'}):
             root = Path(scratch)
             started = time.time()
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises((RuntimeError, ValueError)):
                 check_artifact('sample', started, root)
             directory = root / 'build/snappyref-inspect/sample'
             directory.mkdir(parents=True)
             frame = directory / 'frame.png'
-            frame.write_bytes(b'fixture')
+            frame.write_bytes(png_bytes())
             (directory / 'latest.txt').write_text(str(directory))
-            report = {'status': 'pass', 'frames': [str(frame)], 'assertions': [{'passed': True}]}
+            report = {'scenario': 'sample', 'artifact_dir': str(directory), 'status': 'pass',
+                      'frames': [str(frame)], 'assertions': [{'name': 'image visible', 'passed': True}]}
             (directory / 'report.json').write_text(json.dumps(report))
-            self.assertEqual(check_artifact('sample', started, root)['assertions'], 1)
-            with self.assertRaises(RuntimeError):
+            self.assertEqual(check_artifact('sample', started, root),
+                             {'scenario': 'sample', 'artifact': str(directory), 'assertions': 1})
+            with self.assertRaises((RuntimeError, ValueError)):
                 check_artifact('sample', time.time() + 1, root)
-            for change in ({'status': 'fail'}, {'frames': []}, {'assertions': []}, {'assertions': [{'passed': False}]}):
+            for change in ({'status': 'fail'}, {'frames': []}, {'assertions': []}, {'assertions': [{'name': 'image visible', 'passed': False}]}, {'scenario': 'other'},
+                           {'artifact_dir': str(root)}, {'assertions': [{'name': 'image visible', 'passed': 'yes'}]}):
                 (directory / 'report.json').write_text(json.dumps({**report, **change}))
-                with self.assertRaises(RuntimeError):
+                with self.assertRaises((RuntimeError, ValueError)):
                     check_artifact('sample', started, root)
 
+            (directory / 'report.json').write_text(json.dumps(report))
+            frame.write_bytes(b'corrupt PNG')
+            with self.assertRaises(ValueError):
+                check_artifact('sample', started, root)
+
     def test_zero_cargo_matches_cannot_report_success(self):
-        with patch('sys.argv', ['inspect', 'sample-image-import']), patch('inspect_scenarios.subprocess.run') as cargo, patch('inspect_scenarios.check_artifact', side_effect=RuntimeError('missing artifact')):
+        with tempfile.TemporaryDirectory() as scratch, patch.dict('os.environ', {'CARGO_TARGET_DIR': 'target/test-inspect-no-evidence'}), patch('sys.argv', ['inspect', 'sample-image-import']), patch('inspect_scenarios.subprocess.run') as cargo:
             cargo.return_value.returncode = 0
             self.assertEqual(main(), 1)
 
