@@ -24,7 +24,7 @@ of a new release.
    [explicit-request-only](../../release-operations.md#update-smokes).
 3. Resolve the intended merged source to its exact commit and record it as
    `release_sha`. Set `release_tag` to `v` plus that commit's package version.
-   `scripts/resolve-release-version.py --tag "$release_tag"` checks the version
+   `python3 scripts/resolve-release-version.py --tag "$release_tag"` checks the version
    when run from that source checkout. Check existing tags and releases before
    dispatching; a published tag requires a new version. If an unpublished tag
    already exists, resolve it and require its commit to equal `release_sha`;
