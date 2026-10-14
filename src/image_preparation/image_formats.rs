@@ -1248,6 +1248,11 @@ fn decode_xpm(bytes: &[u8], file_size: u64) -> Result<DecodedImage, String> {
     let text =
         std::str::from_utf8(bytes).map_err(|error| format!("failed to read XPM: {error}"))?;
     let strings = quoted_c_strings(text);
+    // XPM keys count bytes. Validate the quoted data before any byte-indexed
+    // slicing, including pixel keys and hexadecimal color channels.
+    if strings.iter().any(|value| !value.is_ascii()) {
+        return Err("XPM strings must contain only ASCII characters".to_owned());
+    }
     let header = strings
         .first()
         .ok_or_else(|| "failed to read XPM header".to_owned())?;
