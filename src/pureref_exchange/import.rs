@@ -332,9 +332,7 @@ mod tests {
         // must land where PureRef draws the crop's top-left corner.
         let half_extent = geometry.size * geometry.scale / 2.0;
         let top_left = geometry.center + Rot2::from_angle(geometry.rotation) * -half_extent;
-        let (expected_x, expected_y) = transform.map_point(crop.x, crop.y);
-
-        assert!((top_left - pos2(expected_x as f32, expected_y as f32)).length() < 1e-3);
+        assert!((top_left - pos2(87.320_51, 11.961_524)).length() < 1e-3);
         assert!((geometry.scale - 2.0).abs() < 1e-5);
         assert!((geometry.size - vec2(40.0, 45.0)).length() < 1e-3);
         assert!(!geometry.flipped);
