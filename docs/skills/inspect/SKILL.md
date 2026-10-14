@@ -115,11 +115,16 @@ same artifact shape as a scenario under
 and `latest-artifact.sh mcp-drive` read it. Each call is `[tool, arguments]`,
 or `[tool, arguments, "refused"]` for a call the app must refuse. An argument
 of `"$3.board.id"` takes that value from the reply to call 3. A call's
-assertion says only that it answered or was refused, so read the replies in
-`events.ndjson`. A caught drive error adds one failed assertion, `the drive finishes`, with
-the error. On this version, call-file parsing and cleanup errors can exit
-before `report.json` is written. Check for the report before using the
-latest artifact as evidence.
+assertion checks acceptance or refusal. For `create_board`, `rename_board`,
+`delete_board`, and `set_settings`, it also checks selected deterministic reply fields.
+Read the other replies and effects in `events.ndjson`.
+
+Each MCP reply and final shutdown wait has a 60-second deadline, adjustable with
+`--timeout <seconds>`. A caught drive error adds a failed `the drive finishes`
+assertion. Process cleanup failures become failed assertions too, and do not prevent
+report writing. Call-file parsing happens before the protected drive and can
+exit without writing `report.json` or updating `latest.txt`. Do not treat an
+older latest artifact as evidence for a failed invocation.
 
 The app opens behind the frontmost window and never takes focus. `screenshot`
 answers from there, and each image lands in `frames/`.
@@ -138,13 +143,16 @@ from the same checkout queue on cargo's build lock, so start them one after
 another.
 
 `mcp-drive.py` sets `SNAPPYREF_DATA_ROOT` to a fresh temp directory and removes
-it at the end. It points the update check at a dead local address, so the run
-stays off the network. It attempts to stop the app it started by PID, on a failed run too. A cleanup
-error can interrupt later cleanup and report writing.
-If it is killed first, `doctor.sh` lists the app left running from this
-checkout, and the temp directory stays.
+it at the end on a best-effort basis. It points the update check at a dead
+local address. It attempts to close the MCP helper and stop its app by PID,
+on a failed run too. Cleanup steps run independently; timed-out processes
+are force-killed, and reported cleanup errors appear in `report.json`.
+Directory-removal errors are ignored, so a passing report alone does not
+prove the temporary directory was removed. If the driver is killed first,
+processes or temporary data can remain; `doctor.sh` lists any app left running
+from this checkout.
 
-After successful cleanup, nothing outlives a run except the artifact. If a run hangs, stop the
+After successful cleanup, only the artifact remains. If a run hangs, stop the
 `run-scenario.sh` or cargo process you started, using its PID. Never kill by
 process name, because the user may have a dev build of `snappyref` open.
 
