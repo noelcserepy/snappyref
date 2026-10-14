@@ -167,7 +167,7 @@ class EvaluationTests(unittest.TestCase):
             with patch('perf_eval.subprocess.Popen', side_effect=spawn), self.assertRaises(TimeoutError):
                 run_case(binary, directory, trial, directory, 'import-1', timeout=0.5)
             self.assertFalse(json.loads((trial / 'result.json').read_text())['valid'])
-            self.assertIsNotNone(started[0].returncode)
+            self.assertIn(started[0].returncode, (-signal.SIGTERM, -signal.SIGKILL))
             with self.assertRaises(ProcessLookupError):
                 os.kill(started[0].pid, 0)
 
