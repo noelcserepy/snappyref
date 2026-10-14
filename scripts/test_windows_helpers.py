@@ -19,7 +19,6 @@ class WindowsHelperTests(unittest.TestCase):
         self.env = dict(os.environ, SNAPPYREF_WINDOWS_ENV=str(self.root / 'env'),
                         SNAPPYREF_WINDOWS_HOST='windows-host-placeholder',
                         SNAPPYREF_WINDOWS_REPO=r'C:\checkout-placeholder',
-                        SNAPPYREF_WINDOWS_WAKE_TIMEOUT_SECONDS='1',
                         SSH_LOG=str(self.log), PATH=f'{self.root}:{os.environ["PATH"]}')
         (self.root / 'ssh').write_text('''#!/usr/bin/env python3
 import json, os, sys, time
@@ -148,6 +147,8 @@ sys.exit(subprocess.run(shlex.split(sys.argv[-1])).returncode)
         self.env['SNAPPYREF_WINDOWS_WAKE_CMD'] = 'true'
         self.env['SSH_RESULT'] = '255'
         self.env['SSH_HANG'] = '1'
+        # Only the unreachable case needs a short bound; success returns on the first probe.
+        self.env['SNAPPYREF_WINDOWS_WAKE_TIMEOUT_SECONDS'] = '1'
         result = self.run_script('windows-wake.sh')
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn('Windows SSH did not become reachable within 1 seconds.', result.stderr)
