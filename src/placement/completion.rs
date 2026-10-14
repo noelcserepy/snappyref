@@ -166,7 +166,10 @@ impl PlacementCreation {
             completion.queue_id,
             None,
         );
-        if board_id == context.board_id {
+        // Obsolete existing loads do not own the current canvas LOD request.
+        if board_id == context.board_id
+            && !matches!(result, ImagePrepResult::ExistingLoadFailed { .. })
+        {
             context.canvas.clear_image_lod_load(id);
         }
         true

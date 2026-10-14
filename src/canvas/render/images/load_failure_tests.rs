@@ -69,12 +69,16 @@ fn paint(ctx: &egui::Context, state: &mut CanvasState) -> Vec<egui::TextureId> {
         .collect()
 }
 
-fn fail_load(ctx: &egui::Context, canvas: &mut CanvasState, asset_id: i64, lod: CanvasImageLod) {
-    let mut creation = PlacementCreation::new();
+fn accept_failure(
+    ctx: &egui::Context,
+    canvas: &mut CanvasState,
+    creation: &mut PlacementCreation,
+    result: ImagePrepResult,
+) -> PreparationOutcome {
     let mut editing = BoardEditing::default();
     let mut residency = crate::canvas::residency::ImageResidencyCoordinator::default();
     let settings = WorkspaceSettings::default();
-    let outcome = creation.accept_result(
+    creation.accept_result(
         ctx,
         &mut CompletionContext {
             canvas,
@@ -85,6 +89,15 @@ fn fail_load(ctx: &egui::Context, canvas: &mut CanvasState, asset_id: i64, lod: 
             residency: &mut residency,
             editing: &mut editing,
         },
+        result,
+    )
+}
+
+fn fail_load(ctx: &egui::Context, canvas: &mut CanvasState, asset_id: i64, lod: CanvasImageLod) {
+    let outcome = accept_failure(
+        ctx,
+        canvas,
+        &mut PlacementCreation::new(),
         ImagePrepResult::ExistingLoadFailed {
             asset_id: Some(asset_id),
             target_board_id: 1,
@@ -166,4 +179,44 @@ fn late_load_failure_keeps_other_lod_and_replacement_requests() {
     assert!(canvas.has_pending_image_loads());
     assert_eq!(paint(&ctx, &mut canvas), vec![texture]);
     assert_eq!(canvas.placement_for_id(7).unwrap().asset_id(), Some(8));
+}
+
+#[test]
+fn stale_history_failure_preserves_the_replacement_detail_request() {
+    let ctx = egui::Context::default();
+    let mut canvas = CanvasState::default();
+    let mut creation = PlacementCreation::new();
+    let old = creation.reserve_history_placement(1, 7);
+    creation.invalidate_placement(7);
+    canvas.add_prepared_placement_image(&ctx, preview(8, CanvasImageLod::Working));
+    let texture = canvas.rendered_placement_by_id(7).unwrap().texture.id();
+    assert_eq!(paint(&ctx, &mut canvas), vec![texture]);
+    assert_eq!(
+        canvas.undispatched_image_lod_loads(),
+        vec![(7, CanvasImageLod::Detail)]
+    );
+    let outcome = accept_failure(
+        &ctx,
+        &mut canvas,
+        &mut creation,
+        ImagePrepResult::ExistingLoadFailed {
+            asset_id: Some(7),
+            target_board_id: 1,
+            queue_id: Some(old.queue_id),
+            placement_id: 7,
+            lod: CanvasImageLod::Working,
+            context: "old.png".to_owned(),
+            error: "old decode failure".to_owned(),
+        },
+    );
+    assert!(matches!(outcome, PreparationOutcome::Status(None)));
+    assert!(canvas.has_pending_image_loads());
+    assert_eq!(paint(&ctx, &mut canvas), vec![texture]);
+    assert_eq!(canvas.undispatched_image_lod_loads(), vec![]);
+    assert_eq!(canvas.placement_for_id(7).unwrap().asset_id(), Some(8));
+
+    fail_load(&ctx, &mut canvas, 8, CanvasImageLod::Detail);
+    assert!(!canvas.has_pending_image_loads());
+    assert_eq!(paint(&ctx, &mut canvas), vec![texture]);
+    assert_eq!(canvas.undispatched_image_lod_loads(), vec![]);
 }
