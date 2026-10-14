@@ -144,6 +144,9 @@ mod tests {
         let rect = egui::Rect::from_center_size(egui::pos2(50.0, 20.0), egui::vec2(100.0, 40.0));
         let pressed = pressed_rect(rect, 1.0);
         assert_eq!(pressed.center(), rect.center());
-        assert!(pressed.width() < rect.width());
+        assert!(pressed.width() > 0.0 && pressed.width() < rect.width());
+        assert!(pressed.height() > 0.0 && pressed.height() < rect.height());
+        assert!((pressed.width() / pressed.height() - 2.5).abs() < 0.001);
+        assert_eq!(pressed_rect(rect, 0.0), rect);
     }
 }

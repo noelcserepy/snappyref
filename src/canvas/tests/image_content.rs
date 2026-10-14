@@ -454,7 +454,7 @@ fn pending_crop_restore_snapshot_shares_warmed_pixels() {
 }
 
 #[test]
-fn loaded_raster_does_not_eagerly_cache_cpu_pixels() {
+fn cpu_pixels_are_lazy_retained_while_selected_and_pruned_after_deselection() {
     let ctx = eframe::egui::Context::default();
     let mut state = crate::canvas::CanvasState::default();
 
@@ -475,41 +475,22 @@ fn loaded_raster_does_not_eagerly_cache_cpu_pixels() {
             trace: None,
         },
     );
-
-    assert!(state.render.asset_rgba_cache.is_empty());
-}
-
-#[test]
-fn deselection_prunes_warmed_cpu_pixels() {
-    let ctx = eframe::egui::Context::default();
-    let mut state = crate::canvas::CanvasState::default();
-
-    state.add_prepared_placement_image(
-        &ctx,
-        crate::image_preparation::PreparedPlacementImage {
-            target_board_id: 1,
-            queue_id: None,
-            placement: test_record(42, 42, 8, 8),
-            preview_rgba: vec![255; 4 * 4 * 4],
-            preview_width: 4,
-            preview_height: 4,
-            animated_preview: None,
-            preview_texture: crate::image_preparation::ImagePrepPreviewTexture::Cpu,
-            loaded_lod: CanvasImageLod::Working,
-            existing_load_diagnostics: None,
-            origin: crate::image_preparation::ImportOrigin::Existing,
-            trace: None,
-        },
-    );
+    assert!(state.snapshot_item_image(42).is_err());
     state.select_content(&[42], &[]);
     state
         .render
         .asset_rgba_cache
         .insert(42, vec![255; 4 * 4 * 4].into());
 
+    state.select_content(&[42], &[]);
+    let (placement, pixels, width, height) = state.snapshot_item_image(42).unwrap();
+    assert_eq!(placement.state.id, 42);
+    assert_eq!(pixels.as_ref(), &[255; 64]);
+    assert_eq!((width, height), (4, 4));
+
     state.select_content(&[], &[]);
 
-    assert!(state.render.asset_rgba_cache.is_empty());
+    assert!(state.snapshot_item_image(42).is_err());
 }
 
 #[test]

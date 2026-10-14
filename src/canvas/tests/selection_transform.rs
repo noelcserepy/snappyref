@@ -1,18 +1,6 @@
 use super::*;
 
 #[test]
-fn focus_selection_in_view_noops_without_selection() {
-    let mut state = CanvasState::default();
-    let canvas_rect = eframe::egui::Rect::from_min_size(
-        eframe::egui::Pos2::ZERO,
-        eframe::egui::vec2(960.0, 640.0),
-    );
-    let target_rect = canvas_rect.shrink2(eframe::egui::vec2(0.0, 120.0));
-
-    assert!(!state.focus_selection_in_view(canvas_rect, target_rect));
-}
-
-#[test]
 fn focus_selection_in_view_fits_selected_bounds_inside_target_rect() {
     eframe::egui::__run_test_ui(|ui| {
         let mut state = CanvasState::default();
@@ -24,6 +12,8 @@ fn focus_selection_in_view_fits_selected_bounds_inside_target_rect() {
             eframe::egui::pos2(0.0, 0.0),
             eframe::egui::pos2(960.0, 420.0),
         );
+        assert!(!state.focus_selection_in_view(canvas_rect, target_rect));
+
         push_test_image(
             ui,
             &mut state,
@@ -68,7 +58,19 @@ fn textbox_resize_respects_minimum_size() {
     );
 
     assert_eq!(resized.min, eframe::egui::pos2(20.0, 40.0));
-    assert_eq!(resized.size(), crate::canvas::MIN_TEXTBOX_WORLD_SIZE);
+    assert_eq!(resized.max, eframe::egui::pos2(36.0, 56.0));
+
+    let ordinary = resized_textbox_rect(
+        TextboxResizeHandle::BottomRight,
+        eframe::egui::pos2(20.0, 40.0),
+        eframe::egui::Rect::from_min_max(
+            eframe::egui::pos2(20.0, 40.0),
+            eframe::egui::pos2(260.0, 96.0),
+        ),
+        eframe::egui::pos2(320.0, 120.0),
+    );
+    assert_eq!(ordinary.min, eframe::egui::pos2(20.0, 40.0));
+    assert_eq!(ordinary.max, eframe::egui::pos2(320.0, 120.0));
 }
 
 #[test]
@@ -175,7 +177,7 @@ fn placement_resize_respects_minimum_scale() {
         height: 200,
     };
 
-    let (_, scale) = resized_placement_transform(
+    let (center, scale) = resized_placement_transform(
         &asset,
         1.0,
         eframe::egui::pos2(100.0, 100.0),
@@ -183,7 +185,8 @@ fn placement_resize_respects_minimum_scale() {
         eframe::egui::pos2(100.5, 100.5),
     );
 
-    assert_eq!(scale, min_loaded_placement_scale(&asset));
+    assert_eq!(scale, 0.12);
+    assert_eq!(center, eframe::egui::pos2(124.0, 112.0));
 }
 
 #[test]
@@ -279,12 +282,6 @@ fn marquee_selects_textboxes_and_shift_marquee_adds_to_them() {
     drag_marquee_over(&mut state, 13, true);
     assert_eq!(state.interaction.selected_annotation_ids, vec![12, 13]);
 }
-#[test]
-fn single_selected_annotation_id_is_none_when_selection_is_empty() {
-    let state = CanvasState::default();
-    assert_eq!(state.single_selected_annotation_id(), None);
-}
-
 #[test]
 fn compact_arrangement_respects_rotated_placement_display_bounds() {
     let mut state = CanvasState::default();

@@ -1,6 +1,6 @@
 use super::geometry::{
-    crop_center_offset_local, merge_cropped_item_fields, min_loaded_placement_scale,
-    pixel_crop_rect_from_local, screen_rect_to_local_crop_rect,
+    crop_center_offset_local, merge_cropped_item_fields, pixel_crop_rect_from_local,
+    screen_rect_to_local_crop_rect,
 };
 use super::interaction::{
     begin_marquee_selection, handle_textbox_primary_press, hit_test_canvas_item,

@@ -36,14 +36,14 @@ fn grouping_padding_exhausts_fixed_capacity() {
         .group_edit(|s| s.set_axis_mode(7, 0, AxisMode::Fixed(100.0)))
         .unwrap();
     let fixed_member = canvas.group_member_geometry(1).unwrap().scaled_size();
-    for padding in [50.0, 70.0, 20.0] {
+    for (padding, capacity) in [(50.0, 0.0), (70.0, 0.0), (20.0, 60.0)] {
         canvas
             .group_edit(|s| s.use_dock(Control::Padding(padding)))
             .unwrap();
         assert_eq!(canvas.groups()[0].container.scaled_size().x, 100.0);
         assert_eq!(
             canvas.grouping_state().board.groups[&7].capacity(0),
-            (100.0 - 2.0 * padding).max(0.0)
+            capacity
         );
         assert_eq!(
             canvas.group_member_geometry(1).unwrap().scaled_size(),
