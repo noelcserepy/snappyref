@@ -15,7 +15,7 @@ use super::{
 
 pub struct ImagePrepWorker {
     pub(super) queue: Arc<RequestQueue>,
-    pub(super) receiver: Receiver<ImagePrepResult>,
+    receiver: Receiver<ImagePrepResult>,
     pub(super) workers: Vec<JoinHandle<()>>,
 }
 
@@ -83,64 +83,71 @@ impl ImagePrepWorker {
         wgpu_render_state: Option<eframe::egui_wgpu::RenderState>,
         config: ImagePrepWorkerConfig,
     ) -> Self {
+        let helper = super::decode::ImagePrepHelper::default();
+        Self::new_with_processor(ctx, config, move |request| match request {
+            ImagePrepRequest::Import(request) => {
+                import(&library, request, wgpu_render_state.as_ref(), &helper)
+            }
+            ImagePrepRequest::Crop {
+                request,
+                max_texture_side,
+                canvas_image_settings,
+            } => crop_item(
+                &library,
+                request,
+                max_texture_side,
+                canvas_image_settings,
+                wgpu_render_state.as_ref(),
+            ),
+            ImagePrepRequest::LoadExisting {
+                target_board_id,
+                queue_id,
+                placement,
+                max_texture_side,
+                canvas_image_settings,
+                target_lod,
+                priority: _,
+                trace,
+            } => load_existing(
+                &library,
+                target_board_id,
+                queue_id,
+                placement,
+                max_texture_side,
+                canvas_image_settings,
+                target_lod,
+                trace,
+                wgpu_render_state.as_ref(),
+            ),
+            ImagePrepRequest::BackfillLod {
+                placement,
+                canvas_image_settings,
+                lod,
+            } => backfill_cache_lod(&library, placement, canvas_image_settings, lod),
+        })
+    }
+
+    pub(super) fn new_with_processor(
+        ctx: egui::Context,
+        config: ImagePrepWorkerConfig,
+        process: impl Fn(ImagePrepRequest) -> ImagePrepResult + Send + Sync + 'static,
+    ) -> Self {
+        let process = Arc::new(process);
         let (result_tx, result_rx) = mpsc::channel::<ImagePrepResult>();
         let queue = Arc::new(RequestQueue::default());
         let mut workers = Vec::with_capacity(config.total_workers());
 
         for kind in config.worker_kinds() {
             let worker_queue = queue.clone();
-            let worker_library = library.clone();
             let worker_ctx = ctx.clone();
-            let worker_render_state = wgpu_render_state.clone();
             let worker_result_tx = result_tx.clone();
+            let process = process.clone();
             workers.push(thread::spawn(move || {
                 while let Some(request) = worker_queue.pop(kind) {
-                    let result = match request {
-                        ImagePrepRequest::Import(request) => {
-                            import(&worker_library, request, worker_render_state.as_ref())
-                        }
-                        ImagePrepRequest::Crop {
-                            request,
-                            max_texture_side,
-                            canvas_image_settings,
-                        } => crop_item(
-                            &worker_library,
-                            request,
-                            max_texture_side,
-                            canvas_image_settings,
-                            worker_render_state.as_ref(),
-                        ),
-                        ImagePrepRequest::LoadExisting {
-                            target_board_id,
-                            queue_id,
-                            placement,
-                            max_texture_side,
-                            canvas_image_settings,
-                            target_lod,
-                            priority: _,
-                            trace,
-                        } => load_existing(
-                            &worker_library,
-                            target_board_id,
-                            queue_id,
-                            placement,
-                            max_texture_side,
-                            canvas_image_settings,
-                            target_lod,
-                            trace,
-                            worker_render_state.as_ref(),
-                        ),
-                        ImagePrepRequest::BackfillLod {
-                            placement,
-                            canvas_image_settings,
-                            lod,
-                        } => backfill_cache_lod(
-                            &worker_library,
-                            placement,
-                            canvas_image_settings,
-                            lod,
-                        ),
-                    };
+                    let failure = request.panic_failure();
+                    let result =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| process(request)))
+                            .unwrap_or(failure);
 
                     worker_queue.finish_one();
                     if worker_result_tx.send(result).is_ok() {
@@ -340,6 +347,60 @@ impl Drop for ImagePrepWorker {
 }
 
 impl ImagePrepRequest {
+    fn panic_failure(&self) -> ImagePrepResult {
+        let error = "image preparation panicked".to_owned();
+        let (target_board_id, queue_id, placement_id, context) = match self {
+            Self::Import(request) => (
+                Some(request.target_board_id),
+                Some(request.queue_id),
+                Some(request.placement_id),
+                request.source.label(),
+            ),
+            Self::Crop { request, .. } => {
+                (None, None, Some(request.placement_id), "crop".to_owned())
+            }
+            Self::LoadExisting {
+                target_board_id,
+                queue_id,
+                placement,
+                target_lod,
+                ..
+            } => {
+                return ImagePrepResult::ExistingLoadFailed {
+                    asset_id: placement.asset_id(),
+                    target_board_id: *target_board_id,
+                    queue_id: *queue_id,
+                    placement_id: placement.id(),
+                    lod: *target_lod,
+                    context: "load existing image".to_owned(),
+                    error,
+                };
+            }
+            Self::BackfillLod { placement, lod, .. } => {
+                if let Some(asset) = placement.loaded_asset() {
+                    return ImagePrepResult::CacheLodBackfillFailed {
+                        asset_id: asset.id,
+                        lod: *lod,
+                        error,
+                    };
+                }
+                (
+                    None,
+                    None,
+                    Some(placement.id()),
+                    "backfill cache".to_owned(),
+                )
+            }
+        };
+        ImagePrepResult::Failed {
+            target_board_id,
+            queue_id,
+            placement_id,
+            context,
+            error,
+        }
+    }
+
     fn priority(&self) -> ImagePrepPriority {
         match self {
             ImagePrepRequest::LoadExisting { priority, .. } => match priority {

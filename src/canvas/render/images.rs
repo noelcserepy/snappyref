@@ -204,6 +204,9 @@ impl CanvasState {
             .sort_by_key(|p| p.state.geometry.z_index);
         self.render.placement_images.insert(id, image);
         self.render.image_lod_loads.remove(&id);
+        self.render
+            .failed_image_lod_loads
+            .retain(|(failed_id, _)| *failed_id != id);
         self.append_missing_stack_item(CanvasStackItem::Placement(id));
     }
     pub fn add_unresolved_placement(&mut self, placement: Placement) {
@@ -405,6 +408,9 @@ impl CanvasState {
         self.document.placements[image_index].state = updated_placement_state;
         self.document.placements[image_index].content =
             crate::data::PlacementContent::Loaded { asset };
+        self.render
+            .failed_image_lod_loads
+            .retain(|(failed_id, _)| *failed_id != request.placement_id);
         let image = self
             .render
             .placement_images
@@ -463,6 +469,9 @@ impl CanvasState {
         image.loaded_lod = loaded_lod;
         image.animation = None;
         self.render.image_lod_loads.remove(&placement_id);
+        self.render
+            .failed_image_lod_loads
+            .retain(|(failed_id, _)| *failed_id != placement_id);
         self.render.pending_crop_previews.remove(&placement_id);
         self.mark_placement_for_persistence(placement_id);
         Ok(())
@@ -515,6 +524,19 @@ impl CanvasState {
             .crop_pending_placement_ids
             .retain(|pending_id| *pending_id != placement_id);
     }
+    pub fn note_image_lod_load_failed(&mut self, placement_id: i64, lod: CanvasImageLod) {
+        self.render
+            .failed_image_lod_loads
+            .insert((placement_id, lod));
+        if self
+            .render
+            .image_lod_loads
+            .get(&placement_id)
+            .is_some_and(|load| load.lod == lod)
+        {
+            self.render.image_lod_loads.remove(&placement_id);
+        }
+    }
     pub fn clear_image_lod_load(&mut self, placement_id: i64) {
         self.render.image_lod_loads.remove(&placement_id);
     }
@@ -535,6 +557,13 @@ impl CanvasState {
             .retain(|asset_id, _| selected_asset_ids.contains(asset_id));
     }
     pub(super) fn request_image_lod_load(&mut self, placement_id: i64, lod: CanvasImageLod) {
+        if self
+            .render
+            .failed_image_lod_loads
+            .contains(&(placement_id, lod))
+        {
+            return;
+        }
         let Some(image) = self.rendered_placement_by_id(placement_id) else {
             return;
         };
@@ -622,3 +651,6 @@ impl CanvasState {
         Some(std::time::Duration::from_secs_f32(0.01))
     }
 }
+
+#[cfg(test)]
+mod load_failure_tests;

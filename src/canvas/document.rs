@@ -73,6 +73,9 @@ impl CanvasState {
             if let Some(load) = self.render.image_lod_loads.remove(&provisional_id) {
                 self.render.image_lod_loads.insert(committed_id, load);
             }
+            self.render
+                .failed_image_lod_loads
+                .retain(|(id, _)| *id != provisional_id);
             for selected_id in &mut self.interaction.selected_placement_ids {
                 if *selected_id == provisional_id {
                     *selected_id = committed_id;
@@ -322,6 +325,7 @@ impl CanvasState {
         self.render.asset_rgba_cache.clear();
         self.render.textbox_layout_cache.clear();
         self.render.image_lod_loads.clear();
+        self.render.failed_image_lod_loads.clear();
     }
 
     pub fn take_document_changes(&mut self) -> CanvasDocumentChanges {
@@ -699,6 +703,9 @@ impl CanvasState {
         self.render
             .image_lod_loads
             .retain(|placement_id, _| !removed_ids.contains(placement_id));
+        self.render
+            .failed_image_lod_loads
+            .retain(|(placement_id, _)| !removed_ids.contains(placement_id));
         self.interaction.pending_crop = None;
         self.prune_cached_pixels_to_selected_items();
         removed_ids

@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
-#[cfg(not(test))]
-use std::process::Command;
-#[cfg(not(test))]
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::data::CanvasImageLod;
@@ -36,23 +36,41 @@ struct ImagePrepOutput {
     cache_extension: Option<String>,
 }
 
-pub(super) fn prepare_image_with_helper(
-    source_path: &Path,
-    canvas_image_settings: CanvasImageSettings,
-) -> Result<Option<PreparedImage>, String> {
-    #[cfg(test)]
-    {
-        let _ = (source_path, canvas_image_settings);
-        Ok(None)
-    }
+/// Executes the per-image decode subprocess. Tests can supply a small
+/// executable to exercise the same process protocol and deadline.
+#[derive(Clone)]
+pub(crate) struct ImagePrepHelper {
+    pub(super) executable: Option<PathBuf>,
+    pub(super) timeout: std::time::Duration,
+}
 
-    #[cfg(not(test))]
-    {
-        let rgba_path = unique_imageprep_rgba_path();
-        let output =
-            Command::new(std::env::current_exe().map_err(|error| {
-                format!("failed to locate imageprep helper executable: {error}")
-            })?)
+impl Default for ImagePrepHelper {
+    fn default() -> Self {
+        Self {
+            #[cfg(not(test))]
+            executable: std::env::current_exe().ok(),
+            #[cfg(test)]
+            executable: None,
+            timeout: std::time::Duration::from_secs(60),
+        }
+    }
+}
+
+impl ImagePrepHelper {
+    pub(super) fn prepare(
+        &self,
+        source_path: &Path,
+        canvas_image_settings: CanvasImageSettings,
+    ) -> Result<Option<PreparedImage>, String> {
+        let Some(executable) = &self.executable else {
+            return Ok(None);
+        };
+        let mut files = HelperOutputFiles {
+            rgba_path: unique_imageprep_rgba_path(),
+            keep_cache: false,
+        };
+        let rgba_path = files.rgba_path.clone();
+        let mut child = Command::new(executable)
             .arg("--imageprep")
             .arg(format!("--source={}", source_path.display()))
             .arg(format!("--rgba-output={}", rgba_path.display()))
@@ -60,31 +78,76 @@ pub(super) fn prepare_image_with_helper(
                 "--canvas-max-side={}",
                 canvas_image_settings.max_side
             ))
-            .output()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|error| format!("failed to run imageprep helper: {error}"))?;
-
-        if !output.status.success() {
-            let _ = std::fs::remove_file(&rgba_path);
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        // Drain both pipes while waiting, so a decoder's diagnostics cannot
+        // fill a pipe and prevent its exit or our deadline from being observed.
+        let stdout = child.stdout.take().expect("piped helper stdout");
+        let stderr = child.stderr.take().expect("piped helper stderr");
+        let stdout = std::thread::spawn(move || read_helper_output(stdout));
+        let stderr = std::thread::spawn(move || read_helper_output(stderr));
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) if started.elapsed() < self.timeout => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                result => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err(match result {
+                        Err(error) => format!("failed to wait for imageprep helper: {error}"),
+                        _ => format!(
+                            "imageprep helper timed out after {} ms",
+                            self.timeout.as_millis()
+                        ),
+                    });
+                }
+            }
+        };
+        let stdout = stdout
+            .join()
+            .map_err(|_| "imageprep stdout reader panicked".to_owned())?;
+        let stderr = stderr
+            .join()
+            .map_err(|_| "imageprep stderr reader panicked".to_owned())?;
+        // Every failed attempt removes partial pixels and any cache the helper
+        // wrote before it failed. Successful cache output is adopted below.
+        let status = status?;
+        if !status.success() {
+            let stderr = stderr?;
             return Err(format!(
-                "imageprep helper failed for {}: {}",
+                "imageprep helper failed for {} ({status}): {}",
                 source_path.display(),
-                stderr.trim()
+                String::from_utf8_lossy(&stderr).trim()
             ));
         }
+        let stdout = stdout?;
 
-        let prepared: ImagePrepOutput = serde_json::from_slice(&output.stdout)
+        let prepared: ImagePrepOutput = serde_json::from_slice(&stdout)
             .map_err(|error| format!("failed to decode imageprep helper output: {error}"))?;
         if prepared.animated {
-            let _ = std::fs::remove_file(&rgba_path);
             return Ok(None);
         }
 
+        let expected_len = (prepared.width as usize)
+            .checked_mul(prepared.height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .filter(|_| {
+                prepared.width > 0
+                    && prepared.height > 0
+                    && prepared.source_width > 0
+                    && prepared.source_height > 0
+            })
+            .ok_or_else(|| "imageprep helper returned invalid image dimensions".to_owned())?;
         let output_path = prepared.rgba_path.as_ref().unwrap_or(&rgba_path);
         let rgba = std::fs::read(output_path)
             .map_err(|error| format!("failed to read imageprep helper pixels: {error}"))?;
         let _ = std::fs::remove_file(output_path);
-        let expected_len = prepared.width as usize * prepared.height as usize * 4;
         if rgba.len() != expected_len {
             return Err(format!(
                 "imageprep helper returned {} bytes for {}x{} RGBA image; expected {}",
@@ -95,6 +158,7 @@ pub(super) fn prepare_image_with_helper(
             ));
         }
 
+        files.keep_cache = true;
         Ok(Some(PreparedImage {
             rgba,
             width: prepared.width,
@@ -105,6 +169,43 @@ pub(super) fn prepare_image_with_helper(
             cache_path: prepared.cache_path,
             cache_extension: prepared.cache_extension,
         }))
+    }
+}
+
+fn read_helper_output(mut pipe: impl Read) -> Result<Vec<u8>, String> {
+    const MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
+    let mut bytes = Vec::new();
+    pipe.by_ref()
+        .take(MAX_OUTPUT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("failed to read imageprep helper output: {error}"))?;
+    std::io::copy(&mut pipe, &mut std::io::sink())
+        .map_err(|error| format!("failed to drain imageprep helper output: {error}"))?;
+    if bytes.len() as u64 > MAX_OUTPUT_BYTES {
+        return Err("imageprep helper output exceeded 1 MiB".to_owned());
+    }
+    Ok(bytes)
+}
+
+struct HelperOutputFiles {
+    rgba_path: PathBuf,
+    keep_cache: bool,
+}
+
+impl Drop for HelperOutputFiles {
+    fn drop(&mut self) {
+        if self.keep_cache {
+            let _ = std::fs::remove_file(&self.rgba_path);
+        } else {
+            cleanup_helper_files(&self.rgba_path);
+        }
+    }
+}
+
+fn cleanup_helper_files(rgba_path: &Path) {
+    let _ = std::fs::remove_file(rgba_path);
+    for encoding in super::cache_encoding::CanvasImageCacheEncoding::ALL {
+        let _ = std::fs::remove_file(rgba_path.with_extension(encoding.extension()));
     }
 }
 
@@ -142,7 +243,6 @@ pub(super) fn install_prepared_canvas_cache(
     }
 }
 
-#[cfg(not(test))]
 fn unique_imageprep_rgba_path() -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

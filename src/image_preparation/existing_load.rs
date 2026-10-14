@@ -11,7 +11,7 @@ use crate::image_preparation::image_formats::{
 };
 use crate::library::storage::Library;
 
-use super::decode::{install_prepared_canvas_cache, prepare_image_with_helper};
+use super::decode::{ImagePrepHelper, install_prepared_canvas_cache};
 use super::preview_texture::build_preview_texture;
 use super::{
     CanvasImageSettings, ExistingLoadDiagnostics, ExistingLoadSourceKind, ImagePrepPreviewTexture,
@@ -33,6 +33,32 @@ pub(crate) fn load_existing(
     target_lod: CanvasImageLod,
     trace: Option<ImagePrepTrace>,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
+) -> ImagePrepResult {
+    load_existing_with_helper(
+        library,
+        target_board_id,
+        queue_id,
+        placement,
+        max_texture_side,
+        canvas_image_settings,
+        target_lod,
+        trace,
+        wgpu_render_state,
+        &ImagePrepHelper::default(),
+    )
+}
+
+pub(super) fn load_existing_with_helper(
+    library: &Library,
+    target_board_id: i64,
+    queue_id: Option<u64>,
+    placement: Placement,
+    max_texture_side: usize,
+    canvas_image_settings: CanvasImageSettings,
+    target_lod: CanvasImageLod,
+    trace: Option<ImagePrepTrace>,
+    wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
+    helper: &ImagePrepHelper,
 ) -> ImagePrepResult {
     let worker_started_at = Instant::now();
     let mut trace = trace;
@@ -74,10 +100,12 @@ pub(crate) fn load_existing(
                 }));
             }
             Err(error) => {
-                return ImagePrepResult::Failed {
-                    target_board_id: Some(target_board_id),
+                return ImagePrepResult::ExistingLoadFailed {
+                    asset_id: placement.asset_id(),
+                    target_board_id,
                     queue_id,
-                    placement_id: Some(placement.state.id),
+                    placement_id: placement.state.id,
+                    lod: target_lod,
                     context: placement
                         .require_loaded_asset()
                         .original_path
@@ -97,6 +125,7 @@ pub(crate) fn load_existing(
         canvas_image_settings,
         target_lod,
         max_texture_side,
+        helper,
     ) {
         Ok((preview, animated_preview, diagnostics)) => {
             let decode_or_load = decode_started_at.elapsed();
@@ -106,10 +135,12 @@ pub(crate) fn load_existing(
                 match build_preview_texture(wgpu_render_state, &preview) {
                     Ok(preview_texture) => preview_texture,
                     Err(error) => {
-                        return ImagePrepResult::Failed {
-                            target_board_id: Some(target_board_id),
+                        return ImagePrepResult::ExistingLoadFailed {
+                            asset_id: placement.asset_id(),
+                            target_board_id,
                             queue_id,
-                            placement_id: Some(placement.state.id),
+                            placement_id: placement.state.id,
+                            lod: target_lod,
                             context: placement
                                 .require_loaded_asset()
                                 .original_path
@@ -140,10 +171,12 @@ pub(crate) fn load_existing(
                 trace,
             }))
         }
-        Err(error) => ImagePrepResult::Failed {
-            target_board_id: Some(target_board_id),
+        Err(error) => ImagePrepResult::ExistingLoadFailed {
+            asset_id: placement.asset_id(),
+            target_board_id,
             queue_id,
-            placement_id: Some(placement.state.id),
+            placement_id: placement.state.id,
+            lod: target_lod,
             context: placement
                 .require_loaded_asset()
                 .original_path
@@ -177,6 +210,7 @@ fn load_existing_preview(
     canvas_image_settings: CanvasImageSettings,
     target_lod: CanvasImageLod,
     max_texture_side: usize,
+    helper: &ImagePrepHelper,
 ) -> Result<
     (
         PreviewImage,
@@ -267,14 +301,19 @@ fn load_existing_preview(
                 }
                 Err(_) => {
                     let _ = std::fs::remove_file(&cache_path);
-                    let (preview, diagnostics) =
-                        backfill_canvas_image_cache(library, placement, lod_settings, target_lod)?;
+                    let (preview, diagnostics) = backfill_canvas_image_cache(
+                        library,
+                        placement,
+                        lod_settings,
+                        target_lod,
+                        helper,
+                    )?;
                     (preview, None, diagnostics)
                 }
             }
         } else {
             let (preview, diagnostics) =
-                backfill_canvas_image_cache(library, placement, lod_settings, target_lod)?;
+                backfill_canvas_image_cache(library, placement, lod_settings, target_lod, helper)?;
             (preview, None, diagnostics)
         };
 
@@ -398,13 +437,12 @@ fn backfill_canvas_image_cache(
     placement: &Placement,
     canvas_image_settings: CanvasImageSettings,
     lod: CanvasImageLod,
+    helper: &ImagePrepHelper,
 ) -> Result<(PreviewImage, ExistingLoadDiagnostics), String> {
     let decode_path =
         preferred_backfill_source_path(library, placement, canvas_image_settings, lod)
             .unwrap_or_else(|| placement.require_loaded_asset().original_path.clone());
-    if let Some(prepared) =
-        prepare_image_with_helper(&decode_path, canvas_image_settings).unwrap_or(None)
-    {
+    if let Some(prepared) = helper.prepare(&decode_path, canvas_image_settings)? {
         let source_path = install_prepared_canvas_cache(
             library,
             placement.require_loaded_asset().id,
@@ -491,7 +529,13 @@ pub(super) fn backfill_cache_lod(
     lod: CanvasImageLod,
 ) -> ImagePrepResult {
     let lod_settings = lod_settings(canvas_image_settings, lod);
-    match backfill_canvas_image_cache(library, &placement, lod_settings, lod) {
+    match backfill_canvas_image_cache(
+        library,
+        &placement,
+        lod_settings,
+        lod,
+        &ImagePrepHelper::default(),
+    ) {
         Ok(_) => ImagePrepResult::CacheLodBackfilled {
             asset_id: placement.require_loaded_asset().id,
             lod,
@@ -501,5 +545,56 @@ pub(super) fn backfill_cache_lod(
             lod,
             error,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn helper_failure_does_not_retry_cache_backfill_in_process() {
+        let root = crate::test_support::TempRoot::new("helper-backfill-failure");
+        let library = Library::initialize(root.to_path_buf()).unwrap();
+        let source = root.join("crash.png");
+        image::RgbaImage::from_pixel(1, 1, image::Rgba([30, 100, 220, 255]))
+            .save(&source)
+            .unwrap();
+        let imported =
+            crate::image_preparation::import_path_sync(&library, source, eframe::egui::Pos2::ZERO)
+                .unwrap();
+        let helper = ImagePrepHelper {
+            executable: Some(crate::image_preparation::tests::helper_fixture().to_path_buf()),
+            timeout: std::time::Duration::from_secs(5),
+        };
+        let error = backfill_canvas_image_cache(
+            &library,
+            &imported.placement,
+            CanvasImageSettings::default(),
+            CanvasImageLod::Detail,
+            &helper,
+        )
+        .err()
+        .expect("helper crash must fail the cache backfill");
+        assert!(error.starts_with("imageprep helper failed"), "{error}");
+        let source = root.join("valid.png");
+        image::RgbaImage::from_pixel(1, 1, image::Rgba([10, 20, 30, 255]))
+            .save(&source)
+            .unwrap();
+        let imported =
+            crate::image_preparation::import_path_sync(&library, source, eframe::egui::Pos2::ZERO)
+                .unwrap();
+        let (preview, _) = backfill_canvas_image_cache(
+            &library,
+            &imported.placement,
+            CanvasImageSettings::default(),
+            CanvasImageLod::Detail,
+            &helper,
+        )
+        .unwrap();
+        assert_eq!(
+            (preview.width, preview.height, preview.rgba),
+            (1, 1, vec![30, 100, 220, 255])
+        );
     }
 }
