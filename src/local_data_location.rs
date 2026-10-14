@@ -127,7 +127,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn explicit_and_portable_roots_do_not_need_user_data_fallback() {
+    fn root_resolution_respects_overrides_portable_installs_and_platform_fallback() {
         const CHILD: &str = "SNAPPYREF_ROOT_TEST_CHILD";
         if let Ok(kind) = std::env::var(CHILD) {
             let root = PathBuf::from(std::env::var_os("SNAPPYREF_ROOT_TEST_PATH").unwrap());
@@ -158,7 +158,10 @@ mod tests {
                     assert_eq!(resolved.unwrap(), expected);
                 }
                 #[cfg(windows)]
-                "appdata" => assert_eq!(platform_user_data_root().unwrap(), root.join("SnappyRef")),
+                "appdata" => assert_eq!(
+                    resolve_data_root_from_install_root(&root.join("missing-install")).unwrap(),
+                    root.join("SnappyRef")
+                ),
                 _ => unreachable!(),
             }
             return;
@@ -171,7 +174,7 @@ mod tests {
         kinds.push("appdata");
         for kind in kinds {
             let mut child = std::process::Command::new(std::env::current_exe().unwrap());
-            child.args(["--exact", "local_data_location::tests::explicit_and_portable_roots_do_not_need_user_data_fallback"])
+            child.args(["--exact", "local_data_location::tests::root_resolution_respects_overrides_portable_installs_and_platform_fallback"])
                 .env(CHILD, kind).env("SNAPPYREF_ROOT_TEST_PATH", &*root);
             for name in [
                 "HOME",
