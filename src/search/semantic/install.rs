@@ -309,6 +309,8 @@ fn promote_staged_model_with_hooks(
     if let Err(error) = promote_result {
         let _ = remove_path_any(&final_model_root);
         if had_existing_model && backup_model_root.exists() {
+            remove_path_any(&installing_model_root)?;
+            remove_path_any(&preparing_model_root)?;
             let _ = fs::rename(&backup_model_root, &final_model_root).or_else(|_| {
                 copy_dir_recursive(&backup_model_root, &final_model_root)?;
                 remove_path_any(&backup_model_root)
@@ -645,7 +647,8 @@ mod tests {
             &staged_model_root,
             |from, to| fs::rename(from, to),
             || {
-                remove_path_any(&installing_model_root).unwrap();
+                fs::create_dir_all(&final_model_root).unwrap();
+                fs::write(final_model_root.join("onnx"), b"block-copy").unwrap();
             },
         )
         .unwrap_err();
@@ -655,6 +658,23 @@ mod tests {
             fs::read_to_string(final_model_root.join("tokenizer.json")).unwrap(),
             "old-tokenizer"
         );
+        assert_eq!(
+            super::super::model_store::initialize_local_model_store_status(
+                &root,
+                &descriptor.model_key,
+                &DEFAULT_SEMANTIC_SEARCH_MODEL.required_model_files()
+            ),
+            super::super::model_store::LocalModelStoreStatus::Installed
+        );
+        assert_eq!(
+            fs::read(final_model_root.join("tokenizer.json")).unwrap(),
+            b"old-tokenizer"
+        );
+        assert_eq!(
+            fs::read(final_model_root.join("onnx/vision_model_int8.onnx")).unwrap(),
+            b"old-vision"
+        );
+        assert!(!installing_model_root.exists());
         assert_eq!(
             fs::read_to_string(final_model_root.join("onnx/text_model_int8.onnx")).unwrap(),
             "old-text"
@@ -695,6 +715,7 @@ mod tests {
                     .join(format!("{}.installing", descriptor.model_key));
                 copy_dir_recursive(&recovery, &installing).unwrap();
                 fs::write(installing.join("tokenizer.json"), b"new-tokenizer").unwrap();
+                fs::write(installing.join(".promotion-ready"), b"ready").unwrap();
             }
             if partial_final {
                 fs::create_dir_all(&model).unwrap();
@@ -720,6 +741,18 @@ mod tests {
                         &DEFAULT_SEMANTIC_SEARCH_MODEL.required_model_files()
                     ),
                     LocalModelStoreStatus::Installed
+                );
+                assert_eq!(
+                    fs::read(model.join("tokenizer.json")).unwrap(),
+                    b"old-tokenizer"
+                );
+                assert_eq!(
+                    fs::read(model.join("onnx/text_model_int8.onnx")).unwrap(),
+                    b"old-text"
+                );
+                assert_eq!(
+                    fs::read(model.join("onnx/vision_model_int8.onnx")).unwrap(),
+                    b"old-vision"
                 );
             }
             let canceled = AtomicBool::new(true);
