@@ -6,6 +6,8 @@ import json
 import os
 import signal
 import subprocess
+import time
+import sys
 from unittest.mock import Mock, patch
 from pathlib import Path
 
@@ -171,20 +173,44 @@ class EvaluationTests(unittest.TestCase):
             with self.assertRaises(ProcessLookupError):
                 os.kill(started[0].pid, 0)
 
-    def test_timeout_kills_a_helper_that_ignores_termination(self):
+    def test_cleanup_kills_a_helper_that_ignores_termination(self):
         with tempfile.TemporaryDirectory() as scratch:
             directory = Path(scratch)
             binary = directory / 'hung-parent'
-            binary.write_text("#!/usr/bin/env python3\nimport os, signal, time\n"
+            binary.write_text(f"#!{sys.executable}\nimport os, pathlib, signal, time\n"
                               "child = os.fork()\n"
                               "if child == 0:\n    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                              "    pathlib.Path(os.environ['SNAPPYREF_DATA_ROOT']).joinpath('helper.pid').write_text(str(os.getpid()))\n"
                               "time.sleep(60)\n")
             binary.chmod(0o755)
-            trial = directory / 'trial'
-            with self.assertRaises(TimeoutError):
-                run_case(binary, directory, trial, directory, 'import-1', timeout=0.5, profile='fast')
-            self.assertFalse(json.loads((trial / 'result.json').read_text())['valid'])
-            self.assertGreater(json.loads((trial / 'timing.json').read_text())['cleanup_seconds'], 0)
+            process = subprocess.Popen([str(binary)], start_new_session=True,
+                                       env={**os.environ, 'SNAPPYREF_DATA_ROOT': str(directory)})
+            try:
+                pid_file = directory / 'helper.pid'
+                deadline = time.monotonic() + 30
+                while not pid_file.exists() or not pid_file.read_text():
+                    if process.poll() is not None or time.monotonic() > deadline:
+                        self.fail('helper fixture did not start')
+                    time.sleep(0.05)
+                pid = int(pid_file.read_text())
+                os.kill(pid, 0)
+                cleanup_process_group(process)
+                self.assertEqual(process.returncode, -15)
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(0.05)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+            finally:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                process.wait(timeout=5)
 
     def test_cleanup_handles_exited_macos_groups_but_rejects_live_permission_errors(self):
         process = Mock(pid=12345)
@@ -235,9 +261,6 @@ class SamplingTests(unittest.TestCase):
         )
         pids = {row["pid"] for row in select_descendants(rows, 100)}
         self.assertEqual(pids, {100, 200, 300, 500})
-
-    def test_select_descendants_unknown_root_returns_empty(self) -> None:
-        rows = parse_ps_axwo_output("100 1 100 0.0 main\n")
         self.assertEqual(select_descendants(rows, 999), [])
 
     def test_classify_helper(self) -> None:
@@ -287,8 +310,6 @@ class SamplingTests(unittest.TestCase):
             # must still account for tick 100's 500 MB.
         ]
         self.assertEqual(peak_tree_rss_bytes(rows), 500_000_000)
-
-    def test_peak_tree_rss_bytes_handles_empty(self) -> None:
         self.assertIsNone(peak_tree_rss_bytes([]))
 
     def test_per_helper_peaks_picks_per_role(self) -> None:
@@ -415,11 +436,10 @@ class SamplingTests(unittest.TestCase):
         self.assertAlmostEqual(durations["embedding_drain_ms"], 335.0)
         self.assertAlmostEqual(durations["all_placements_to_settled_idle_ms"], 500.0)
 
-    def test_phase_summary_missing_markers_yield_none(self) -> None:
         events = [event for event in self._events() if event["event"] != "settled_idle"]
-        summary = phase_summary_from_events(events)
-        self.assertIsNone(summary["markers_ms"]["settled_idle"])
-        self.assertIsNone(summary["durations_ms"]["all_placements_to_settled_idle_ms"])
+        missing = phase_summary_from_events(events)
+        self.assertIsNone(missing["markers_ms"]["settled_idle"])
+        self.assertIsNone(missing["durations_ms"]["all_placements_to_settled_idle_ms"])
 
     def test_per_format_groups_join_events(self) -> None:
         groups = per_format_groups_from_events(self._events())
