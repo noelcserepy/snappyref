@@ -114,7 +114,7 @@ Build Windows App and Build macOS App attach their app archive and descriptor to
 `windows_build_tag` and `macos_build_tag` to reuse those builds without compiling.
 Blank build tags use the target `release_tag`. Every successful Package Release Zips
 run attaches its final zips to that release, creating a draft if the tag has no release.
-Existing releases keep their publication state. Full Release uses the same packaging action,
+It refuses a published release, like Full Release. Full Release uses the same packaging action,
 attaches the zips to its draft, signs its manifest, and removes its temporary build
 handoff assets.
 
