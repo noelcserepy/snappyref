@@ -25,10 +25,32 @@ Scripts load private machine values from gitignored `.env.windows`, using
 `.env.windows.example` as the tracked template. If missing, ask for the SSH
 alias or host and Windows checkout path. Keep those details out of tracked docs.
 
-Use key-based SSH over Tailscale or another private network, with explicit
+Use key-based SSH over a private network, with explicit
 PowerShell commands. Test key-only SSH if connection state is uncertain. Do not
 install background sync tools unless asked. Explain security impact before
-changing firewall, SSH, or Tailscale settings.
+changing firewall or SSH settings.
+
+## Wake and sign-in
+
+If the PC is asleep, run:
+
+```sh
+scripts/windows-wake.sh
+```
+
+Set `SNAPPYREF_WINDOWS_WAKE_RELAY` and `SNAPPYREF_WINDOWS_MAC` in the private
+`.env.windows` first. The relay must stay awake, accept key-based SSH, have
+`python3`, and reach the PC's broadcast domain. It sends a Wake-on-LAN magic
+packet over UDP port 9. `SNAPPYREF_WINDOWS_WAKE_BROADCAST` optionally selects
+the subnet broadcast address. The script waits up to
+`SNAPPYREF_WINDOWS_WAKE_TIMEOUT_SECONDS`, default 120 seconds, for Windows SSH
+with bounded connection attempts. A missing wake value or unreachable PC fails.
+Keep real hosts, network addresses, MACs and account names in `.env.windows`.
+The tracked example contains placeholders only.
+
+Waking from sleep preserves a signed-in desktop and needs no new sign-in.
+After a reboot, including Windows Update, sign in at the PC first before GUI
+verification. SSH availability alone does not mean a desktop is signed in.
 
 ## Sync
 
@@ -110,8 +132,10 @@ scripts/windows-remote.sh 'Get-Process snappyref -ErrorAction SilentlyContinue |
 
 Notes:
 
-- `/IT` requires an active logged-in user session. If nobody is logged in, the
-  task may run but no visible window appears.
+- `/IT` requires a signed-in desktop for the SSH account. The launcher checks
+  for that account's user-owned `explorer.exe` in an interactive session before
+  stopping any app or creating a task. If absent, it fails with "Sign in at the
+  PC first."
 - The task name is `SnappyRefAgentLaunch`; the launcher deletes/recreates it,
   runs it, waits for SnappyRef to appear, then deletes the task before the
   one-shot scheduled time can fire a second GUI later.
