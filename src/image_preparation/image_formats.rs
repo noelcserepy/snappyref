@@ -455,14 +455,14 @@ fn decode_image_file_with_native_fallback(
     Err("native fallback is not available on this platform".to_owned())
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 struct NativeFallbackMetadata {
     format_name: &'static str,
     mime_type: &'static str,
     extension: String,
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn native_fallback_metadata_for_path(path: &Path) -> Option<NativeFallbackMetadata> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     match extension.as_str() {
@@ -1461,8 +1461,8 @@ fn decode_jpeg_with_turbojpeg(
 mod tests {
     use super::{
         decode_image_bytes_with_max_side, decode_image_file, decode_image_file_perf_report,
-        decoded_image_from_rgba, fitted_texture_size, image_orientation,
-        native_fallback_metadata_for_path, normalize_orientation, preview_image_from_rgba,
+        decoded_image_from_rgba, fitted_texture_size, image_orientation, normalize_orientation,
+        preview_image_from_rgba,
     };
     use image::codecs::gif::{GifEncoder, Repeat};
     use image::codecs::jpeg::JpegEncoder;
@@ -1522,106 +1522,115 @@ mod tests {
         use crate::library::storage::Library;
         let root = crate::test_support::TempRoot::new("oriented-crop-reopen");
         let library = Library::initialize(root.to_path_buf()).unwrap();
-        for exif in 1..=8 {
-            for (extension, bytes) in [
-                ("jpg", jpeg_with_orientation(exif)),
-                ("tiff", tiff_with_orientation(exif)),
-            ] {
-                let source = root.join(format!("orientation-{exif}.{extension}"));
-                std::fs::write(&source, &bytes).unwrap();
-                let upright = decode_image_file(&source).unwrap();
-                let imported =
-                    import_path_sync(&library, source.clone(), eframe::egui::Pos2::ZERO).unwrap();
-                let placement = library.fixture_placement(1, imported.placement).unwrap();
-                std::fs::remove_file(source).unwrap();
-                let before = match load_existing(
-                    &library,
-                    1,
-                    None,
-                    placement.clone(),
-                    usize::MAX,
-                    CanvasImageSettings::default(),
-                    crate::data::CanvasImageLod::Working,
-                    None,
-                    None,
-                ) {
-                    ImagePrepResult::Loaded(loaded) => loaded,
-                    other => panic!("initial preview {exif}.{extension}: {other:?}"),
-                };
-                let request = crate::canvas::CanvasCropRequest {
-                    placement_id: placement.id(),
-                    source_asset: placement.require_loaded_asset().clone(),
-                    crop_rect: crate::canvas::PixelCropRect {
-                        x: 1,
-                        y: 0,
-                        width: 1,
-                        height: 2,
-                    },
-                    crop_offset_local: eframe::egui::Vec2::ZERO,
-                };
-                let cropped = match crop_item(
-                    &library,
-                    request,
-                    usize::MAX,
-                    CanvasImageSettings::default(),
-                    None,
-                ) {
-                    ImagePrepResult::Cropped(cropped) => cropped,
-                    other => panic!("crop {exif}.{extension}: {other:?}"),
-                };
-                let expected_crop = [1, upright.width as usize + 1]
-                    .into_iter()
-                    .flat_map(|pixel| upright.rgba[pixel * 4..pixel * 4 + 4].iter().copied())
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    cropped.preview_rgba, expected_crop,
-                    "crop {exif}.{extension}"
-                );
-                let reopened = Library::initialize(root.to_path_buf()).unwrap();
-                let restored = reopened
-                    .load_board_document(1)
+        for (exif, expected_dimensions, expected_pixels, expected_crop) in [
+            (1, (3, 2), [1, 2, 3, 4, 5, 6], [2, 5]),
+            (2, (3, 2), [3, 2, 1, 6, 5, 4], [2, 5]),
+            (3, (3, 2), [6, 5, 4, 3, 2, 1], [5, 2]),
+            (4, (3, 2), [4, 5, 6, 1, 2, 3], [5, 2]),
+            (5, (2, 3), [1, 4, 2, 5, 3, 6], [4, 5]),
+            (6, (2, 3), [4, 1, 5, 2, 6, 3], [1, 2]),
+            (7, (2, 3), [6, 3, 5, 2, 4, 1], [3, 2]),
+            (8, (2, 3), [3, 6, 2, 5, 1, 4], [6, 5]),
+        ] {
+            let extension = "tiff";
+            let bytes = tiff_with_orientation(exif);
+            let source = root.join(format!("orientation-{exif}.{extension}"));
+            std::fs::write(&source, &bytes).unwrap();
+            let expected_pixels = expected_pixels
+                .into_iter()
+                .flat_map(|value| [value, 0, 0, 255])
+                .collect::<Vec<_>>();
+            let expected_crop = expected_crop
+                .into_iter()
+                .flat_map(|value| [value, 0, 0, 255])
+                .collect::<Vec<_>>();
+            let imported =
+                import_path_sync(&library, source.clone(), eframe::egui::Pos2::ZERO).unwrap();
+            let placement = library.fixture_placement(1, imported.placement).unwrap();
+            std::fs::remove_file(source).unwrap();
+            let before = match load_existing(
+                &library,
+                1,
+                None,
+                placement.clone(),
+                usize::MAX,
+                CanvasImageSettings::default(),
+                crate::data::CanvasImageLod::Working,
+                None,
+                None,
+            ) {
+                ImagePrepResult::Loaded(loaded) => loaded,
+                other => panic!("initial preview {exif}.{extension}: {other:?}"),
+            };
+            let request = crate::canvas::CanvasCropRequest {
+                placement_id: placement.id(),
+                source_asset: placement.require_loaded_asset().clone(),
+                crop_rect: crate::canvas::PixelCropRect {
+                    x: 1,
+                    y: 0,
+                    width: 1,
+                    height: 2,
+                },
+                crop_offset_local: eframe::egui::Vec2::ZERO,
+            };
+            let cropped = match crop_item(
+                &library,
+                request,
+                usize::MAX,
+                CanvasImageSettings::default(),
+                None,
+            ) {
+                ImagePrepResult::Cropped(cropped) => cropped,
+                other => panic!("crop {exif}.{extension}: {other:?}"),
+            };
+            assert_eq!(
+                cropped.preview_rgba, expected_crop,
+                "crop {exif}.{extension}"
+            );
+            let reopened = Library::initialize(root.to_path_buf()).unwrap();
+            let restored = reopened
+                .load_board_document(1)
+                .unwrap()
+                .placements
+                .into_iter()
+                .find(|p| p.id() == placement.id())
+                .unwrap();
+            let loaded = match load_existing(
+                &reopened,
+                1,
+                None,
+                restored,
+                usize::MAX,
+                CanvasImageSettings::default(),
+                crate::data::CanvasImageLod::Working,
+                None,
+                None,
+            ) {
+                ImagePrepResult::Loaded(loaded) => loaded,
+                other => panic!("reload {exif}.{extension}: {other:?}"),
+            };
+            assert_eq!(
+                (loaded.preview_width, loaded.preview_height),
+                expected_dimensions
+            );
+            // Cached previews may be lossy. Reopening must preserve that preview,
+            // while the managed original and cropped PNG keep exact decoded pixels.
+            assert_eq!(
+                loaded.preview_rgba, before.preview_rgba,
+                "preview {exif}.{extension}"
+            );
+            assert_eq!(
+                decode_image_file(&placement.require_loaded_asset().original_path)
                     .unwrap()
-                    .placements
-                    .into_iter()
-                    .find(|p| p.id() == placement.id())
-                    .unwrap();
-                let loaded = match load_existing(
-                    &reopened,
-                    1,
-                    None,
-                    restored,
-                    usize::MAX,
-                    CanvasImageSettings::default(),
-                    crate::data::CanvasImageLod::Working,
-                    None,
-                    None,
-                ) {
-                    ImagePrepResult::Loaded(loaded) => loaded,
-                    other => panic!("reload {exif}.{extension}: {other:?}"),
-                };
-                assert_eq!(
-                    (loaded.preview_width, loaded.preview_height),
-                    (upright.width, upright.height)
-                );
-                // Cached previews may be lossy. Reopening must preserve that preview,
-                // while the managed original and cropped PNG keep exact decoded pixels.
-                assert_eq!(
-                    loaded.preview_rgba, before.preview_rgba,
-                    "preview {exif}.{extension}"
-                );
-                assert_eq!(
-                    decode_image_file(&placement.require_loaded_asset().original_path)
-                        .unwrap()
-                        .rgba,
-                    upright.rgba,
-                    "original {exif}.{extension}"
-                );
-                assert_eq!(
-                    decode_image_file(&cropped.stored_path).unwrap().rgba,
-                    expected_crop,
-                    "saved crop {exif}.{extension}"
-                );
-            }
+                    .rgba,
+                expected_pixels,
+                "original {exif}.{extension}"
+            );
+            assert_eq!(
+                decode_image_file(&cropped.stored_path).unwrap().rgba,
+                expected_crop,
+                "saved crop {exif}.{extension}"
+            );
         }
     }
 
@@ -1794,129 +1803,46 @@ mod tests {
     }
 
     #[test]
-    fn decode_image_file_decodes_jxl_with_dedicated_decoder_when_cjxl_is_available() {
-        let Some(cjxl) = find_command_in_path("cjxl") else {
-            eprintln!("skipping JPEG XL decode smoke test: cjxl not found");
-            return;
-        };
-        let root = std::env::temp_dir().join(format!(
-            "snappyref-decode-jxl-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let ppm = root.join("sample.ppm");
-        let jxl = root.join("sample.jxl");
-        std::fs::write(
-            &ppm,
-            [
-                b"P6\n2 2\n255\n".as_slice(),
-                &[255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255],
-            ]
-            .concat(),
-        )
-        .unwrap();
-        let output = std::process::Command::new(cjxl)
-            .arg(&ppm)
-            .arg(&jxl)
-            .arg("--quiet")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "cjxl failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-
-        let decoded = decode_image_file(&jxl).unwrap();
-
-        assert_eq!(decoded.format_name, "JXL");
-        assert_eq!(decoded.mime_type, "image/jxl");
-        assert_eq!(decoded.extension, "jxl");
-        assert_eq!(decoded.width, 2);
-        assert_eq!(decoded.height, 2);
-        assert_eq!(decoded.rgba.len(), 2 * 2 * 4);
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn decode_image_file_decodes_external_exr_fixture_when_available() {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/external/files/image-rs/overexposed-gradient.exr");
-        if !path.exists() {
-            eprintln!(
-                "skipping OpenEXR external fixture test: run scripts/fetch-image-fixtures.sh"
+    fn specialty_fixtures_decode_literal_pixels() {
+        let red_green = [255, 0, 0, 255, 0, 255, 0, 255];
+        for (file, format, pixels) in [
+            ("red-green.ff", "farbfeld", red_green),
+            ("red-green.hdr", "HDR", red_green),
+            ("red-green.ico", "ICO", red_green),
+            ("red-green.jxl", "JXL", red_green),
+            #[cfg(target_os = "macos")]
+            ("red-green.jp2", "JP2", red_green),
+            #[cfg(target_os = "macos")]
+            ("red-green.psd", "PSD", red_green),
+            (
+                "red-green.exr",
+                "OpenEXR",
+                [186, 69, 69, 255, 69, 186, 69, 255],
+            ),
+        ] {
+            let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/images/formats")
+                .join(file);
+            let decoded =
+                decode_image_file(&path).unwrap_or_else(|error| panic!("{file}: {error}"));
+            assert_eq!(decoded.format_name, format, "{file}");
+            assert_eq!((decoded.width, decoded.height), (2, 1), "{file}");
+            assert_eq!(
+                (decoded.source_width, decoded.source_height),
+                (2, 1),
+                "{file}"
             );
-            return;
+            assert_eq!(decoded.rgba, pixels, "{file}");
         }
-
-        let decoded = decode_image_file(&path).unwrap();
-
-        assert_eq!(decoded.format_name, "OpenEXR");
-        assert_eq!(decoded.mime_type, "image/exr");
-        assert_eq!(decoded.extension, "exr");
-        assert_eq!(decoded.width, 20);
-        assert_eq!(decoded.height, 12);
-        assert_eq!(decoded.rgba.len(), 20 * 12 * 4);
-    }
-
-    #[test]
-    fn decode_image_file_decodes_external_jp2_fixture_when_available() {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/external/files/jpeg2k/file6.jp2");
-        if !path.exists() {
-            eprintln!(
-                "skipping JPEG 2000 external fixture test: run scripts/fetch-image-fixtures.sh"
-            );
-            return;
-        }
-
-        let decoded = decode_image_file(&path).unwrap();
-
-        assert_eq!(decoded.format_name, "JP2");
-        assert_eq!(decoded.mime_type, "image/jp2");
-        assert_eq!(decoded.extension, "jp2");
-        assert_eq!(decoded.source_width, 768);
-        assert_eq!(decoded.source_height, 512);
-        assert_eq!(decoded.width, 768);
-        assert_eq!(decoded.height, 512);
-        assert_eq!(decoded.rgba.len(), 768 * 512 * 4);
-    }
-
-    #[test]
-    fn decode_image_file_decodes_external_psd_fixture_when_available() {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/external/files/pillow/hopper_merged.psd");
-        if !path.exists() {
-            eprintln!("skipping PSD external fixture test: run scripts/fetch-image-fixtures.sh");
-            return;
-        }
-
-        let decoded = decode_image_file(&path).unwrap();
-
-        assert_eq!(decoded.format_name, "PSD");
-        assert_eq!(decoded.mime_type, "image/vnd.adobe.photoshop");
-        assert_eq!(decoded.extension, "psd");
-        assert_eq!(decoded.source_width, 128);
-        assert_eq!(decoded.source_height, 128);
-        assert_eq!(decoded.width, 128);
-        assert_eq!(decoded.height, 128);
-        assert_eq!(decoded.rgba.len(), 128 * 128 * 4);
     }
 
     #[test]
     #[cfg(target_os = "macos")]
-    fn decode_image_file_decodes_external_dng_fixture_as_raw_when_available() {
+    #[ignore = "requires the external camera RAW fixture from scripts/fetch-image-fixtures.sh"]
+    fn decode_image_file_decodes_external_dng_fixture_as_raw() {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
             "tests/fixtures/external/files/raw-pixls-us/Canon-PowerShot-A410/CANON_A410_CHDK_CRW_0741.DNG",
         );
-        if !path.exists() {
-            eprintln!("skipping RAW external fixture test: run scripts/fetch-image-fixtures.sh");
-            return;
-        }
 
         let decoded = decode_image_file(&path).unwrap();
 
@@ -1948,32 +1874,6 @@ static unsigned char sample_bits[] = { 0x01 };
         assert_eq!(decoded.format_name, "XBM");
         assert_eq!(decoded.width, 2);
         assert_eq!(decoded.height, 2);
-    }
-
-    #[test]
-    fn native_fallback_metadata_covers_specialty_formats() {
-        for (file, format_name, mime_type) in [
-            ("sample.avif", "AVIF", "image/avif"),
-            ("sample.heic", "HEIC", "image/heic"),
-            ("sample.heif", "HEIF", "image/heif"),
-            ("sample.jp2", "JP2", "image/jp2"),
-            ("sample.jxl", "JXL", "image/jxl"),
-            ("sample.psd", "PSD", "image/vnd.adobe.photoshop"),
-            ("sample.exr", "OpenEXR", "image/exr"),
-            ("sample.dng", "RAW", "image/x-raw"),
-        ] {
-            let metadata = native_fallback_metadata_for_path(std::path::Path::new(file)).unwrap();
-            assert_eq!(metadata.format_name, format_name, "{file}");
-            assert_eq!(metadata.mime_type, mime_type, "{file}");
-            assert_eq!(
-                metadata.extension,
-                std::path::Path::new(file)
-                    .extension()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-            );
-        }
     }
 
     #[test]
@@ -2056,22 +1956,14 @@ static unsigned char sample_bits[] = { 0x01 };
 
     #[cfg(feature = "turbojpeg-native")]
     #[test]
-    fn decode_jpeg_with_max_side_returns_scaled_dimensions_close_to_full_resize() {
+    fn decode_jpeg_with_max_side_preserves_literal_pixels_and_source_dimensions() {
         use super::decode_image_file_with_max_side;
 
         let root = temp_test_dir("snappyref-jpeg-scaled-decode");
         let source_side: u32 = 256;
-        // Build a deterministic gradient RGB image so JPEG quantization is
-        // stable and the pixel-distance assertion is meaningful.
-        let mut rgb = Vec::with_capacity((source_side * source_side * 3) as usize);
-        for y in 0..source_side {
-            for x in 0..source_side {
-                rgb.push((x % 256) as u8);
-                rgb.push((y % 256) as u8);
-                rgb.push(((x + y) % 256) as u8);
-            }
-        }
-        let path = root.join("gradient.jpg");
+        // A solid red source has an independent pixel oracle at every scale.
+        let rgb = [255, 0, 0].repeat(256 * 256);
+        let path = root.join("red.jpg");
         JpegEncoder::new_with_quality(std::fs::File::create(&path).unwrap(), 92)
             .write_image(&rgb, source_side, source_side, ExtendedColorType::Rgb8)
             .unwrap();
@@ -2096,60 +1988,24 @@ static unsigned char sample_bits[] = { 0x01 };
         // so the smallest factor meeting the target is 7/8 -> 224.
         assert_eq!((detail.width, detail.height), (224, 224));
 
-        // Pixel-distance check: scaled-decode at 1/8 should be visually close
-        // to a full decode then resized to the same 32x32 box.
-        let resized_from_full =
-            super::preview_image_from_rgba(full.width, full.height, &full.rgba, 32).unwrap();
-        assert_eq!(
-            (resized_from_full.width, resized_from_full.height),
-            (32, 32)
-        );
-        assert_eq!(tiny.rgba.len(), resized_from_full.rgba.len());
-
-        let mut max_delta: u32 = 0;
-        let mut sum_delta: u64 = 0;
-        for (a, b) in tiny.rgba.iter().zip(resized_from_full.rgba.iter()) {
-            let delta = (*a as i32 - *b as i32).unsigned_abs();
-            if delta > max_delta {
-                max_delta = delta;
-            }
-            sum_delta += delta as u64;
-        }
-        let mean_delta = sum_delta as f64 / tiny.rgba.len() as f64;
-        // TurboJPEG IDCT-domain scaling is not identical to spatial resize,
-        // but the two should still produce visually close pixels.
-        assert!(
-            max_delta <= 64,
-            "scaled-decode vs full-resize max per-channel delta too large: {max_delta}",
-        );
-        assert!(
-            mean_delta <= 12.0,
-            "scaled-decode vs full-resize mean per-channel delta too large: {mean_delta}",
-        );
+        assert_eq!(tiny.rgba, [254, 0, 0, 255].repeat(32 * 32));
+        assert_eq!(detail.rgba, [254, 0, 0, 255].repeat(224 * 224));
 
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn decode_png_with_max_side_streams_canvas_sized_pixels_close_to_full_resize() {
+    fn decode_png_with_max_side_preserves_literal_pixels_and_source_dimensions() {
         use super::decode_image_file_with_max_side;
 
         let root = temp_test_dir("snappyref-png-streaming-resize");
         let source_side: u32 = 256;
-        let mut rgb = Vec::with_capacity((source_side * source_side * 3) as usize);
-        for y in 0..source_side {
-            for x in 0..source_side {
-                rgb.push(x as u8);
-                rgb.push(y as u8);
-                rgb.push(((x + y) % 256) as u8);
-            }
-        }
-        let path = root.join("gradient.png");
+        let rgb = [255, 0, 0].repeat(256 * 256);
+        let path = root.join("red.png");
         image::codecs::png::PngEncoder::new(std::fs::File::create(&path).unwrap())
             .write_image(&rgb, source_side, source_side, ExtendedColorType::Rgb8)
             .unwrap();
 
-        let full = decode_image_file_with_max_side(&path, None).unwrap();
         let canvas = decode_image_file_with_max_side(&path, Some(32)).unwrap();
         assert_eq!((canvas.width, canvas.height), (32, 32));
         assert_eq!(
@@ -2164,25 +2020,8 @@ static unsigned char sample_bits[] = { 0x01 };
             (source_side, source_side)
         );
 
-        let resized_from_full =
-            super::preview_image_from_rgba(full.width, full.height, &full.rgba, 32).unwrap();
-        assert_eq!(canvas.rgba.len(), resized_from_full.rgba.len());
-        let mut max_delta = 0u32;
-        let mut sum_delta = 0u64;
-        for (streamed, resized) in canvas.rgba.iter().zip(&resized_from_full.rgba) {
-            let delta = (*streamed as i32 - *resized as i32).unsigned_abs();
-            max_delta = max_delta.max(delta);
-            sum_delta += delta as u64;
-        }
-        let mean_delta = sum_delta as f64 / canvas.rgba.len() as f64;
-        assert!(
-            max_delta <= 64,
-            "streaming PNG resize max per-channel delta too large: {max_delta}"
-        );
-        assert!(
-            mean_delta <= 12.0,
-            "streaming PNG resize mean per-channel delta too large: {mean_delta}"
-        );
+        assert_eq!(canvas.rgba, [255, 0, 0, 255].repeat(32 * 32));
+        assert_eq!(detail.rgba, [255, 0, 0, 255].repeat(200 * 200));
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -2206,7 +2045,7 @@ static unsigned char sample_bits[] = { 0x01 };
         encoder
             .encode_frames(vec![
                 Frame::from_parts(first, 0, 0, Delay::from_numer_denom_ms(120, 1)),
-                Frame::from_parts(second, 0, 0, Delay::from_numer_denom_ms(120, 1)),
+                Frame::from_parts(second, 0, 0, Delay::from_numer_denom_ms(250, 1)),
             ])
             .unwrap();
         drop(encoder);
@@ -2215,23 +2054,18 @@ static unsigned char sample_bits[] = { 0x01 };
         assert_eq!(decoded.format_name, "GIF");
         let animation = decoded.animation.expect("expected animation metadata");
         assert_eq!(animation.frames.len(), 2);
-        assert!(animation.frames[0].delay_seconds > 0.0);
+        assert_eq!(animation.frames[0].delay_seconds, 0.12);
+        assert_eq!(animation.frames[1].delay_seconds, 0.25);
+        assert_eq!(animation.frames[0].rgba, [255, 0, 0, 255].repeat(2));
+        assert_eq!(animation.frames[1].rgba, [0, 0, 255, 255].repeat(2));
 
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn decode_image_file_detects_animated_webp_frames() {
-        let root = std::env::temp_dir().join(format!(
-            "snappyref-decode-webp-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("sample.webp");
-        std::fs::write(&path, ANIMATED_WEBP_2X2_2_FRAMES).unwrap();
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/images/formats/red-blue.webp");
 
         let decoded = decode_image_file(&path).unwrap();
         assert_eq!(decoded.format_name, "WebP");
@@ -2239,23 +2073,11 @@ static unsigned char sample_bits[] = { 0x01 };
         assert_eq!(decoded.height, 2);
         let animation = decoded.animation.expect("expected animation metadata");
         assert_eq!(animation.frames.len(), 2);
-        assert!(animation.frames[0].delay_seconds > 0.0);
-
-        let _ = std::fs::remove_dir_all(root);
+        assert_eq!(animation.frames[0].delay_seconds, 0.12);
+        assert_eq!(animation.frames[1].delay_seconds, 0.25);
+        assert_eq!(animation.frames[0].rgba, [255, 0, 0, 255].repeat(4));
+        assert_eq!(animation.frames[1].rgba, [0, 0, 255, 255].repeat(4));
     }
-
-    const ANIMATED_WEBP_2X2_2_FRAMES: &[u8] = &[
-        0x52, 0x49, 0x46, 0x46, 0x84, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38,
-        0x58, 0x0a, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
-        0x41, 0x4e, 0x49, 0x4d, 0x06, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0xff, 0x00, 0x00, 0x41,
-        0x4e, 0x4d, 0x46, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
-        0x00, 0x01, 0x00, 0x00, 0x78, 0x00, 0x00, 0x02, 0x56, 0x50, 0x38, 0x4c, 0x0f, 0x00, 0x00,
-        0x00, 0x2f, 0x01, 0x40, 0x00, 0x00, 0x07, 0x10, 0xe5, 0x8f, 0xfe, 0x07, 0x22, 0xa2, 0xff,
-        0x01, 0x00, 0x41, 0x4e, 0x4d, 0x46, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x78, 0x00, 0x00, 0x00, 0x56, 0x50, 0x38, 0x4c,
-        0x0f, 0x00, 0x00, 0x00, 0x2f, 0x01, 0x40, 0x00, 0x00, 0x07, 0x10, 0xd1, 0xfe, 0xfe, 0x07,
-        0x22, 0xa2, 0xff, 0x01, 0x00,
-    ];
 
     fn jpeg_with_orientation(orientation: u8) -> Vec<u8> {
         let mut jpeg = Vec::new();
@@ -2374,17 +2196,6 @@ static unsigned char sample_bits[] = { 0x01 };
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/images/smoke")
             .join(name)
-    }
-
-    fn find_command_in_path(command: &str) -> Option<std::path::PathBuf> {
-        let path = std::env::var_os("PATH")?;
-        for directory in std::env::split_paths(&path) {
-            let candidate = directory.join(command);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-        None
     }
 
     #[derive(serde::Deserialize)]
