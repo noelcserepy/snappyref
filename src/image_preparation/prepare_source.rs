@@ -451,14 +451,28 @@ fn downloaded_url_image_is_svg(downloaded: &DownloadedUrlImage) -> bool {
 }
 
 fn download_remote_image(url: &str) -> Result<DownloadedUrlImage, String> {
+    download_remote_image_with_limits(
+        url,
+        URL_IMPORT_MAX_BYTES,
+        URL_IMPORT_CONNECT_TIMEOUT,
+        URL_IMPORT_REQUEST_TIMEOUT,
+    )
+}
+
+fn download_remote_image_with_limits(
+    url: &str,
+    max_bytes: u64,
+    connect_timeout: Duration,
+    request_timeout: Duration,
+) -> Result<DownloadedUrlImage, String> {
     let parsed = url::Url::parse(url).map_err(|error| format!("invalid image URL: {error}"))?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err("only http and https image URLs are supported".to_owned());
     }
 
     let client = reqwest::blocking::Client::builder()
-        .connect_timeout(URL_IMPORT_CONNECT_TIMEOUT)
-        .timeout(URL_IMPORT_REQUEST_TIMEOUT)
+        .connect_timeout(connect_timeout)
+        .timeout(request_timeout)
         .build()
         .map_err(|error| format!("failed to build HTTP client: {error}"))?;
     let mut response = client
@@ -469,10 +483,10 @@ fn download_remote_image(url: &str) -> Result<DownloadedUrlImage, String> {
 
     let content_length = response.content_length();
     if let Some(content_length) = content_length
-        && content_length > URL_IMPORT_MAX_BYTES
+        && content_length > max_bytes
     {
         return Err(format!(
-            "remote image is too large ({content_length} bytes > {URL_IMPORT_MAX_BYTES} byte limit)"
+            "remote image is too large ({content_length} bytes > {max_bytes} byte limit)"
         ));
     }
 
@@ -483,14 +497,14 @@ fn download_remote_image(url: &str) -> Result<DownloadedUrlImage, String> {
         .map(str::to_owned);
 
     let mut bytes = Vec::new();
-    let limit = URL_IMPORT_MAX_BYTES + 1;
+    let limit = max_bytes + 1;
     std::io::Read::take(&mut response, limit)
         .read_to_end(&mut bytes)
         .map_err(|error| format!("failed to read downloaded image: {error}"))?;
-    if bytes.len() as u64 > URL_IMPORT_MAX_BYTES {
+    if bytes.len() as u64 > max_bytes {
         return Err(format!(
             "remote image exceeded the {} byte download limit",
-            URL_IMPORT_MAX_BYTES
+            max_bytes
         ));
     }
 
@@ -518,4 +532,105 @@ fn remote_image_source_name(url: &url::Url) -> String {
         let host = url.host_str().unwrap_or("remote-image").replace('.', "-");
         format!("{host}-image")
     })
+}
+
+#[cfg(test)]
+mod download_tests {
+    use super::download_remote_image_with_limits;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    fn serve_once(
+        response: &'static [u8],
+        hold_body: bool,
+    ) -> (String, mpsc::Sender<()>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let url = format!(
+            "http://{}/reference.png?source=board",
+            listener.local_addr().unwrap()
+        );
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                stream.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            stream.write_all(response).unwrap();
+            if hold_body {
+                let _ = release_rx.recv_timeout(Duration::from_secs(2));
+            }
+        });
+        (url, release_tx, server)
+    }
+
+    #[test]
+    fn url_download_returns_bytes_and_metadata_and_rejects_oversized_responses() {
+        let (url, _, server) = serve_once(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nContent-Type: image/png\r\nConnection: close\r\n\r\nPNG!",
+            false,
+        );
+        let downloaded = download_remote_image_with_limits(
+            &url,
+            4,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        server.join().unwrap();
+        assert_eq!(downloaded.bytes, b"PNG!");
+        assert_eq!(downloaded.mime_type.as_deref(), Some("image/png"));
+        assert_eq!(downloaded.url.as_str(), url);
+
+        for (response, expected) in [
+            (
+                b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n".as_slice(),
+                "remote image is too large (5 bytes > 4 byte limit)",
+            ),
+            (
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nPNG\r\n2\r\n!!\r\n0\r\n\r\n".as_slice(),
+                "remote image exceeded the 4 byte download limit",
+            ),
+        ] {
+            let (url, _, server) = serve_once(response, false);
+            let error = download_remote_image_with_limits(
+                &url, 4, Duration::from_secs(1), Duration::from_secs(1),
+            ).err().expect("oversized response must fail");
+            server.join().unwrap();
+            assert_eq!(error, expected);
+        }
+    }
+
+    #[test]
+    fn url_download_times_out_while_waiting_for_the_response_body() {
+        let (url, release, server) = serve_once(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n",
+            true,
+        );
+        let started = Instant::now();
+        let error = download_remote_image_with_limits(
+            &url,
+            4,
+            Duration::from_secs(1),
+            Duration::from_millis(250),
+        )
+        .err()
+        .expect("stalled body must time out");
+        let elapsed = started.elapsed();
+        let _ = release.send(());
+        server.join().unwrap();
+        assert!(
+            error.starts_with("failed to read downloaded image:"),
+            "{error}"
+        );
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+    }
 }

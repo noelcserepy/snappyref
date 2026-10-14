@@ -537,8 +537,33 @@ fn import_worker_drains_ready_results_in_capped_batches() {
     let first_batch = worker.try_recv_up_to(4);
     let second_batch = worker.try_recv_up_to(4);
 
-    assert_eq!(first_batch.len(), 4);
-    assert_eq!(second_batch.len(), 1);
+    let identities = |batch: Vec<ImagePrepResult>| {
+        batch
+            .into_iter()
+            .map(|result| match result {
+                ImagePrepResult::Failed {
+                    placement_id,
+                    context,
+                    error,
+                    ..
+                } => (placement_id, context, error),
+                other => panic!("expected failed completion, got {other:?}"),
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        identities(first_batch),
+        vec![
+            (Some(0), "item-0".to_owned(), "synthetic".to_owned()),
+            (Some(1), "item-1".to_owned(), "synthetic".to_owned()),
+            (Some(2), "item-2".to_owned(), "synthetic".to_owned()),
+            (Some(3), "item-3".to_owned(), "synthetic".to_owned()),
+        ]
+    );
+    assert_eq!(
+        identities(second_batch),
+        vec![(Some(4), "item-4".to_owned(), "synthetic".to_owned()),]
+    );
 }
 
 #[test]
@@ -778,6 +803,10 @@ fn load_existing_preserves_animated_webp_in_downscale_mode() {
     assert_eq!(animation.frames.len(), 2);
     assert_eq!(animation.width, 2);
     assert_eq!(animation.height, 2);
+    assert_eq!(animation.frames[0].rgba, [252, 0, 0, 255].repeat(4));
+    assert_eq!(animation.frames[1].rgba, [0, 0, 252, 255].repeat(4));
+    assert_eq!(animation.frames[0].delay_seconds, 0.12);
+    assert_eq!(animation.frames[1].delay_seconds, 0.12);
 }
 
 #[test]
