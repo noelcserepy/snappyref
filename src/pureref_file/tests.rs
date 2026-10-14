@@ -6,7 +6,6 @@ use rusqlite::{Connection, MAIN_DB};
 
 use super::qt_stream::QtReader;
 use super::read_v2::embedded_database;
-use super::write_v2::{APPLICATION_ID, USER_VERSION};
 use super::{
     PureRefBoard, PureRefImage, PureRefImageItem, PureRefNote, PureRefPixelRect, PureRefTransform,
     read_board, write_board,
@@ -52,8 +51,8 @@ fn written_file_has_pureref_container_layout() {
             .query_row(&format!("PRAGMA {name}"), [], |row| row.get(0))
             .unwrap()
     };
-    assert_eq!(pragma("application_id"), APPLICATION_ID);
-    assert_eq!(pragma("user_version"), USER_VERSION);
+    assert_eq!(pragma("application_id"), 940_753_918);
+    assert_eq!(pragma("user_version"), 200_101);
     assert_eq!(pragma("page_size"), 4096);
     assert_eq!(pragma("auto_vacuum"), 1);
 
@@ -307,4 +306,164 @@ fn collect_pur_files(directory: &Path, files: &mut Vec<PathBuf>) {
             files.push(path);
         }
     }
+}
+
+fn independent_v2() -> Vec<u8> {
+    include_bytes!("../../tests/fixtures/pureref/minimal-v2.pur").to_vec()
+}
+
+fn modified_v2(sql: &str) -> Vec<u8> {
+    let mut file = independent_v2();
+    let database = embedded_database(&file, "2.1").unwrap();
+    let header_len = file.len() - database.len();
+    let mut connection = Connection::open_in_memory().unwrap();
+    connection
+        .deserialize_read_exact(MAIN_DB, database.as_slice(), database.len(), false)
+        .unwrap();
+    connection.execute_batch(sql).unwrap();
+    let database = connection.serialize(MAIN_DB).unwrap();
+    file[14..22].copy_from_slice(&(database.len() as u64).to_be_bytes());
+    file.truncate(header_len);
+    file.extend_from_slice(&database[header_len..]);
+    file.extend_from_slice(&database[..header_len]);
+    file
+}
+
+#[test]
+fn cyclic_parent_graph_is_rejected_instead_of_losing_board_items() {
+    assert_eq!(
+        read_board(&modified_v2("UPDATE items SET parent=11 WHERE id=10")).unwrap_err(),
+        "PureRef item parent graph contains a cycle"
+    );
+    assert_eq!(
+        read_board(&modified_v2("UPDATE items SET parent=10 WHERE id=10")).unwrap_err(),
+        "PureRef item parent graph contains a cycle"
+    );
+    assert_eq!(
+        read_board(&modified_v2("UPDATE items SET parent=99 WHERE id=10")).unwrap_err(),
+        "PureRef item refers to missing parent 99"
+    );
+    let board = read_board(&independent_v2()).unwrap();
+    assert_eq!(
+        board,
+        PureRefBoard {
+            images: vec![PureRefImage {
+                bytes: None,
+                source: Some("/refs/card.png".to_owned()),
+                width: 8,
+                height: 4
+            }],
+            image_items: vec![PureRefImageItem {
+                image: 0,
+                name: Some("card".to_owned()),
+                transform: PureRefTransform {
+                    m11: 2.0,
+                    m12: 0.0,
+                    m21: 0.0,
+                    m22: 2.0,
+                    dx: 12.0,
+                    dy: 26.0
+                },
+                crop: PureRefPixelRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 8.0,
+                    height: 4.0
+                },
+                opacity: 0.25,
+            }],
+            notes: vec![PureRefNote {
+                text: "A & B\nSecond\nline".to_owned(),
+                transform: PureRefTransform {
+                    m11: 2.0,
+                    m12: 0.0,
+                    m21: 0.0,
+                    m22: 2.0,
+                    dx: 20.0,
+                    dy: 30.0
+                }
+            }],
+        }
+    );
+}
+
+#[test]
+fn independent_v1_reads_linked_image_and_note() {
+    let board = read_board(include_bytes!(
+        "../../tests/fixtures/pureref/minimal-v1.pur"
+    ))
+    .unwrap();
+    assert_eq!(
+        board,
+        PureRefBoard {
+            images: vec![PureRefImage {
+                bytes: None,
+                source: Some("/refs/card.png".to_owned()),
+                width: 8,
+                height: 4
+            }],
+            image_items: vec![PureRefImageItem {
+                image: 0,
+                name: Some("card".to_owned()),
+                transform: PureRefTransform {
+                    m11: 1.0,
+                    m12: 0.0,
+                    m21: 0.0,
+                    m22: 1.0,
+                    dx: 16.0,
+                    dy: 28.0
+                },
+                crop: PureRefPixelRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 8.0,
+                    height: 4.0
+                },
+                opacity: 1.0,
+            }],
+            notes: vec![PureRefNote {
+                text: "Legacy note".to_owned(),
+                transform: PureRefTransform {
+                    m11: 1.0,
+                    m12: 0.0,
+                    m21: 0.0,
+                    m22: 1.0,
+                    dx: -10.0,
+                    dy: 5.0
+                }
+            }],
+        }
+    );
+}
+
+#[test]
+fn malformed_container_and_missing_image_are_rejected() {
+    assert_eq!(
+        read_board(&[0, 0, 0, 3, 0, 50, 0]).unwrap_err(),
+        "string has an odd UTF-16 byte length"
+    );
+    assert_eq!(
+        read_board(&[0, 0, 1, 0]).unwrap_err(),
+        "data ends early at offset 4"
+    );
+    let mut damaged = independent_v2();
+    let database_len = u64::from_be_bytes(damaged[14..22].try_into().unwrap()) as usize;
+    damaged[database_len..database_len + 16].fill(0);
+    assert_eq!(
+        read_board(&damaged).unwrap_err(),
+        "PureRef database: file is not a database"
+    );
+    assert_eq!(
+        read_board(&modified_v2("UPDATE items_images SET image=99")).unwrap_err(),
+        "image item 11 refers to missing image 99"
+    );
+    assert_eq!(
+        read_board(&independent_v2()).unwrap().images,
+        vec![PureRefImage {
+            bytes: None,
+            source: Some("/refs/card.png".to_owned()),
+            width: 8,
+            height: 4,
+        }]
+    );
 }

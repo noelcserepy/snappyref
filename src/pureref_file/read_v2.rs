@@ -121,7 +121,36 @@ pub(super) fn read(bytes: &[u8], format: &str) -> Result<PureRefBoard, String> {
         },
     )?;
     for (item, parent_id) in stored.iter_mut().zip(parent_ids) {
-        item.parent = index_by_id.get(&parent_id).copied();
+        item.parent = if parent_id == ROOT_PARENT {
+            None
+        } else {
+            Some(
+                *index_by_id
+                    .get(&parent_id)
+                    .ok_or_else(|| format!("PureRef item refers to missing parent {parent_id}"))?,
+            )
+        };
+    }
+    // Every item must reach a root. A cycle otherwise disappears during flattening.
+    let mut visited = vec![false; stored.len()];
+    let mut complete = vec![false; stored.len()];
+    for start in 0..stored.len() {
+        let mut current = Some(start);
+        let mut path = Vec::new();
+        while let Some(index) = current {
+            if complete[index] {
+                break;
+            }
+            if visited[index] {
+                return Err("PureRef item parent graph contains a cycle".to_owned());
+            }
+            visited[index] = true;
+            path.push(index);
+            current = stored[index].parent;
+        }
+        for index in path {
+            complete[index] = true;
+        }
     }
     Ok(flatten(images, stored))
 }
