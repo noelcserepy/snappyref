@@ -13,6 +13,8 @@ pub(crate) use install_controller::{
 };
 pub use model::DEFAULT_SEMANTIC_SEARCH_MODEL;
 pub(crate) use model::default_local_model_store_status;
+#[cfg(not(test))]
+pub(crate) use model::initialize_default_local_model_store_status;
 pub(crate) use model_store::LocalModelStoreStatus;
 pub use service::{
     IndexResult, SearchQueryResult, SearchResultAssetEntry, SemanticSearchConfig,

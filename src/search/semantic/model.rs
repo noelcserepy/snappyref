@@ -135,6 +135,19 @@ where
     resolve_assets_in_store(spec, &model_store_root(&data_root))
 }
 
+#[cfg(not(test))]
+pub(crate) fn initialize_default_local_model_store_status() -> LocalModelStoreStatus {
+    let data_root = match crate::local_data_location::resolve_data_root() {
+        Ok(root) => root,
+        Err(error) => return LocalModelStoreStatus::Failed(error),
+    };
+    super::model_store::initialize_local_model_store_status(
+        &data_root,
+        DEFAULT_SEMANTIC_SEARCH_MODEL.model_key,
+        &DEFAULT_SEMANTIC_SEARCH_MODEL.required_model_files(),
+    )
+}
+
 pub(crate) fn default_local_model_store_status() -> LocalModelStoreStatus {
     let data_root = match crate::local_data_location::resolve_data_root() {
         Ok(root) => root,
