@@ -232,3 +232,178 @@ pub(super) fn ensure_embedding_helper(
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FIXTURE_ENV: &str = "SNAPPYREF_EMBED_PROTOCOL_FIXTURE";
+    const READY: &str = r#"{"model_load_timing":{"assets_resolved_ms":1,"tokenizer_loaded_ms":2,"text_session_loaded_ms":3,"vision_session_loaded_ms":4,"total_ms":10}}"#;
+
+    fn fixture(scenario: &str) -> EmbeddingHelperClient {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "search::semantic::service::helper::tests::protocol_fixture_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env(FIXTURE_ENV, scenario)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        // The test runner prints a header before the fixture owns stdout.
+        loop {
+            let mut line = String::new();
+            assert_ne!(
+                stdout.read_line(&mut line).unwrap(),
+                0,
+                "fixture did not start"
+            );
+            if line.trim() == "embedding-protocol-fixture" {
+                break;
+            }
+        }
+        EmbeddingHelperClient {
+            child,
+            stdin,
+            stdout,
+        }
+    }
+
+    #[test]
+    #[ignore = "spawned by the offline embedding protocol tests"]
+    fn protocol_fixture_child() {
+        let scenario = std::env::var(FIXTURE_ENV).expect("fixture scenario");
+        // A missing request newline or flush must fail rather than hang CI.
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            std::process::exit(86);
+        });
+        let mut stdout = std::io::stdout().lock();
+        writeln!(stdout, "embedding-protocol-fixture").unwrap();
+        stdout.flush().unwrap();
+        match scenario.as_str() {
+            "exit-ready" => std::process::exit(0),
+            "malformed-ready" => writeln!(stdout, "not json").unwrap(),
+            "missing-ready" => writeln!(stdout, "{{}}").unwrap(),
+            _ => writeln!(stdout, "{READY}").unwrap(),
+        }
+        stdout.flush().unwrap();
+        if scenario.ends_with("ready") {
+            std::process::exit(0);
+        }
+        let mut stdin = std::io::stdin().lock();
+        let mut request = String::new();
+        stdin.read_line(&mut request).unwrap();
+        match scenario.as_str() {
+            "consecutive" => {
+                assert_eq!(request, "\"folder/quoted\\\"name\\\\line\\n.png\"\n");
+                writeln!(stdout, r#"{{"embedding":[0.25,-0.5]}}"#).unwrap();
+                stdout.flush().unwrap();
+                request.clear();
+                stdin.read_line(&mut request).unwrap();
+                assert_eq!(request, "\"second image.png\"\n");
+                writeln!(stdout, r#"{{"embedding":[1.0,0.0]}}"#).unwrap();
+            }
+            "malformed-result" => writeln!(stdout, "not json").unwrap(),
+            "missing-result" => writeln!(stdout, "{{}}").unwrap(),
+            "error-result" => {
+                writeln!(stdout, r#"{{"error":"image could not be decoded"}}"#).unwrap()
+            }
+            "exit-result" => std::process::exit(0),
+            _ => panic!("unknown fixture scenario"),
+        }
+        stdout.flush().unwrap();
+        std::process::exit(0);
+    }
+
+    #[test]
+    fn helper_sends_escaped_paths_and_reads_consecutive_embeddings() {
+        let mut client = fixture("consecutive");
+        let timing = client.read_ready_timing().unwrap();
+        assert_eq!(timing.assets_resolved, std::time::Duration::from_millis(1));
+        assert_eq!(timing.tokenizer_loaded, std::time::Duration::from_millis(2));
+        assert_eq!(
+            timing.text_session_loaded,
+            std::time::Duration::from_millis(3)
+        );
+        assert_eq!(
+            timing.vision_session_loaded,
+            std::time::Duration::from_millis(4)
+        );
+        assert_eq!(timing.total, std::time::Duration::from_millis(10));
+        assert_eq!(
+            client.embed_image(&PathBuf::from("folder/quoted\"name\\line\n.png")),
+            Ok(vec![0.25, -0.5])
+        );
+        assert_eq!(
+            client.embed_image(&PathBuf::from("second image.png")),
+            Ok(vec![1.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn helper_rejects_malformed_or_incomplete_protocol_messages() {
+        for (scenario, expected) in [
+            (
+                "malformed-ready",
+                "failed to decode embedding helper ready output: expected ident at line 1 column 2",
+            ),
+            (
+                "missing-ready",
+                "embedding helper ready output missing model timing",
+            ),
+        ] {
+            let mut client = fixture(scenario);
+            assert_eq!(client.read_ready_timing().err().as_deref(), Some(expected));
+        }
+        for (scenario, expected) in [
+            (
+                "malformed-result",
+                "failed to decode embedding helper output: expected ident at line 1 column 2",
+            ),
+            (
+                "missing-result",
+                "embedding helper output missing embedding",
+            ),
+            ("error-result", "image could not be decoded"),
+        ] {
+            let mut client = fixture(scenario);
+            client.read_ready_timing().unwrap();
+            assert_eq!(
+                client.embed_image(&PathBuf::from("image.png")),
+                Err(expected.to_owned())
+            );
+        }
+    }
+
+    #[test]
+    fn helper_reports_child_exit_before_ready_or_result() {
+        let mut client = fixture("exit-ready");
+        // Reap first so the exit status is deterministic rather than a race
+        // between closed stdout and try_wait observing process termination.
+        let status = client.child.wait().unwrap();
+        assert!(status.success());
+        assert_eq!(
+            client.read_ready_timing().err(),
+            Some(format!(
+                "embedding helper exited before ready output with {status}"
+            ))
+        );
+
+        let mut client = fixture("exit-result");
+        client.read_ready_timing().unwrap();
+        let error = client.embed_image(&PathBuf::from("image.png")).unwrap_err();
+        let status = client.child.wait().unwrap();
+        assert!(status.success());
+        assert!(
+            error == format!("embedding helper exited before output with {status}")
+                || error == "embedding helper closed stdout before output",
+            "{error}"
+        );
+    }
+}
