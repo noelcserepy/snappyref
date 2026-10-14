@@ -137,7 +137,16 @@ fn inspect_group_picker_selection_writes_artifact() {
     harness.state_mut().flush_persistence();
     scenario.assertion(
         "both image memberships persist",
-        library.load_groups().unwrap() == harness.state().canvas.groups(),
+        library
+            .load_groups()
+            .unwrap()
+            .iter()
+            .map(|g| (g.name.clone(), g.members.clone()))
+            .collect::<Vec<_>>()
+            == vec![
+                ("Group 1".to_owned(), ids[..2].to_vec()),
+                ("Mixed references".to_owned(), ids[2..].to_vec()),
+            ],
     );
     let report = scenario.finish();
     assert!(report.passed, "{}", report.artifact_dir.display());
