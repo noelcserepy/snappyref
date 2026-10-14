@@ -9,8 +9,8 @@ arrange them, and find them again across every board with on-device search.
 
 - Boards. Each named Board keeps its own placements, annotations, groups,
   viewport, background, and undo history.
-- Import. Drag files or browser image URLs onto the canvas, or paste. Pasting
-  PureRef clipboard content imports the images it references.
+- Import. Drag files or browser image URLs onto the canvas, or paste.
+  On Windows, pasting PureRef clipboard content imports the images it references.
 - Formats. JPEG, PNG, WebP, GIF, TIFF, BMP, SVG, OpenEXR, and JPEG XL on both
   platforms. macOS also decodes AVIF, HEIC, PSD, and JPEG 2000 through the
   system decoders.
@@ -64,7 +64,7 @@ choose a level:
 
 - Ask. AI clients on this computer can read and edit your boards. You confirm
   in the app before they remove library images or change the search model.
-- Full access. Nothing asks.
+- Full. Nothing asks.
 
 Then press Copy MCP config and paste it into your AI client's MCP settings. It
 looks like this, with the path to your install:
