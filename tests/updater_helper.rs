@@ -128,6 +128,10 @@ fn write_relaunch_override_script(install_root: &Path, marker: &Path) -> PathBuf
     script
 }
 
+/// A ceiling, not a delay: `wait_for_marker` returns as soon as the relaunch
+/// marker appears. Five seconds timed out on a machine running many builds.
+const RELAUNCH_DEADLINE: Duration = Duration::from_secs(30);
+
 fn wait_for_marker(marker: &Path, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -220,7 +224,7 @@ fn helper_swaps_bundle_and_relaunches_after_parent_exits() {
 
     // Relaunch fired with the swapped current_bundle path and launch args.
     assert!(
-        wait_for_marker(&fixture.relaunch_marker, Duration::from_secs(5)),
+        wait_for_marker(&fixture.relaunch_marker, RELAUNCH_DEADLINE),
         "relaunch override did not run within timeout"
     );
     let marker = fs::read_to_string(&fixture.relaunch_marker).unwrap();
@@ -363,7 +367,7 @@ fn helper_restores_current_bundle_when_promotion_fails() {
     );
     // The restored app relaunches in place of the new one.
     assert!(
-        wait_for_marker(&fixture.relaunch_marker, Duration::from_secs(5)),
+        wait_for_marker(&fixture.relaunch_marker, RELAUNCH_DEADLINE),
         "restored app was not relaunched"
     );
     assert!(!fixture.backup_path().exists());
