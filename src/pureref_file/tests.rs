@@ -5,7 +5,6 @@ use md5::{Digest, Md5};
 use rusqlite::{Connection, MAIN_DB};
 
 use super::qt_stream::QtReader;
-use super::read_v2::embedded_database;
 use super::{
     PureRefBoard, PureRefImage, PureRefImageItem, PureRefNote, PureRefPixelRect, PureRefTransform,
     read_board, write_board,
@@ -39,7 +38,8 @@ fn written_file_has_pureref_container_layout() {
     assert_eq!(header.byte_array().unwrap(), Some(&[][..]));
     assert_eq!(file.len(), database_len + header.position());
 
-    let database = embedded_database(&file, &format).unwrap();
+    let mut database = file[database_len..].to_vec();
+    database.extend_from_slice(&file[header.position()..database_len]);
     assert!(database.starts_with(b"SQLite format 3\0"));
     assert_eq!(database[18..20], [1, 1], "rollback journal, not WAL");
     let mut connection = Connection::open_in_memory().unwrap();
@@ -314,8 +314,12 @@ fn independent_v2() -> Vec<u8> {
 
 fn modified_v2(sql: &str) -> Vec<u8> {
     let mut file = independent_v2();
-    let database = embedded_database(&file, "2.1").unwrap();
-    let header_len = file.len() - database.len();
+    // The known fixture has a 44-byte Qt envelope. Its displaced SQLite prefix
+    // lives after the database body. Unpack it without using the reader under test.
+    let header_len = 44;
+    let database_len = u64::from_be_bytes(file[14..22].try_into().unwrap()) as usize;
+    let mut database = file[database_len..].to_vec();
+    database.extend_from_slice(&file[header_len..database_len]);
     let mut connection = Connection::open_in_memory().unwrap();
     connection
         .deserialize_read_exact(MAIN_DB, database.as_slice(), database.len(), false)
