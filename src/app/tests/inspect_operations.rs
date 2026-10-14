@@ -24,12 +24,20 @@ fn seed_loaded_placement(
     size: (u32, u32),
     center: egui::Pos2,
 ) -> Placement {
+    // Direct fixture writes must follow queued board creation and session saves.
+    harness
+        .state_mut()
+        .board_editing
+        .persistence
+        .flush()
+        .unwrap();
+    let board_id = harness.state().active_board_id;
     let path = library
         .store_rgba_image(name, &solid_rgba(color, size.0, size.1), size.0, size.1)
         .unwrap();
     let placement = library
         .fixture_placement(
-            library.load_user_session().unwrap().active_board_id,
+            board_id,
             crate::data::Placement::loaded(
                 crate::data::PlacementState::new(
                     library.allocate_document_id(),
@@ -52,7 +60,6 @@ fn seed_loaded_placement(
             ),
         )
         .unwrap();
-    let board_id = harness.state().active_board_id;
     harness
         .state_mut()
         .board_editing
@@ -627,6 +634,39 @@ fn inspect_canvas_navigation_and_boards_writes_artifact() {
     );
 
     finish(scenario);
+}
+
+#[test]
+fn seeded_placement_uses_the_open_board_when_the_saved_session_lags() {
+    let root = TempRoot::new("inspect-seed-open-board");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut harness = app_full_harness(test_app(Some(library.clone())));
+    shortcut(&mut harness, CMD, egui::Key::N);
+    harness
+        .state_mut()
+        .board_editing
+        .persistence
+        .flush()
+        .unwrap();
+    let board_b = harness.state().active_board_id;
+    let mut stale_session = library.load_user_session().unwrap();
+    stale_session.active_board_id = 1;
+    library.save_user_session(&stale_session).unwrap();
+    let blue = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "blue-on-open-board",
+        [60, 100, 220, 255],
+        (120, 80),
+        egui::pos2(75.0, -55.0),
+    );
+    assert!(library.load_placements_for_board(1).unwrap().is_empty());
+    let stored = library.load_placements_for_board(board_b).unwrap();
+    assert_eq!(
+        stored.iter().map(Placement::id).collect::<Vec<_>>(),
+        vec![blue.id()]
+    );
+    assert_eq!(stored[0].state.geometry.center, egui::pos2(75.0, -55.0));
 }
 
 #[test]
