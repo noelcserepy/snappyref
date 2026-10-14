@@ -37,6 +37,11 @@ fn embedding_phase_markers_report_summary_durations() {
 
 #[test]
 fn first_launch_semantic_search_prompt_waits_for_storage_and_missing_assets() {
+    let mut detached = test_app(None);
+    detached
+        .search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Missing);
+    assert!(!detached.should_show_semantic_search_first_launch_prompt());
     let root = TempRoot::new("snappyref-semantic-prompt");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library));
@@ -48,15 +53,6 @@ fn first_launch_semantic_search_prompt_waits_for_storage_and_missing_assets() {
     assert!(app.should_show_semantic_search_first_launch_prompt());
 
     app.settings.semantic_search_first_launch_prompt_seen = true;
-    assert!(!app.should_show_semantic_search_first_launch_prompt());
-}
-
-#[test]
-fn first_launch_semantic_search_prompt_skips_without_storage() {
-    let mut app = test_app(None);
-    app.search
-        .set_local_model_store_status_for_test(LocalModelStoreStatus::Missing);
-
     assert!(!app.should_show_semantic_search_first_launch_prompt());
 }
 
@@ -491,21 +487,14 @@ fn search_asset_preview_uses_known_asset_dimensions_without_decoding_original_pa
         })
         .collect::<Vec<_>>();
     assert_eq!(layout.len(), 2);
-    let import_size_world = |asset: &crate::data::Asset| {
-        crate::placement::creation::display_size_for_dimensions(
-            asset.width,
-            asset.height,
-            harness.state().settings.placement_target_area,
-        )
-    };
-    let first_size = import_size_world(first.require_loaded_asset());
-    let second_size = import_size_world(second.require_loaded_asset());
-    assert!(layout.iter().any(|item| {
-        (item.width() - first_size.x).abs() < 0.1 && (item.height() - first_size.y).abs() < 0.1
-    }));
-    assert!(layout.iter().any(|item| {
-        (item.width() - second_size.x).abs() < 0.1 && (item.height() - second_size.y).abs() < 0.1
-    }));
+    let sizes = layout
+        .iter()
+        .map(|item| (item.width(), item.height()))
+        .collect::<Vec<_>>();
+    assert!((sizes[0].0 - 10.0).abs() < 0.01);
+    assert!((sizes[0].1 - 10.0).abs() < 0.01);
+    assert!((sizes[1].0 - 20.0).abs() < 0.01);
+    assert!((sizes[1].1 - 10.0).abs() < 0.01);
 }
 
 #[test]
@@ -748,6 +737,19 @@ fn submitted_search_is_saved_to_recent_searches() {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let mut app = test_app(Some(library.clone()));
     app.search.overlay.open = true;
+    let mut empty = app_harness(test_app(Some(library.clone())), |ctx, app| {
+        app.search.overlay.open = true;
+        app.show_search_overlay(ctx, test_screen_rect());
+    });
+    empty.key_press(egui::Key::Enter);
+    empty.step();
+    empty.state_mut().flush_persistence();
+    assert_eq!(empty.state().search.overlay.query, "");
+    assert_eq!(
+        library.load_user_session().unwrap().recent_searches,
+        Vec::<String>::new()
+    );
+    drop(empty);
     app.search.overlay.query = "brutalist chair".to_owned();
     app.search.overlay.last_query_edit_at = Some(Instant::now() - Duration::from_millis(200));
     let mut harness = app_harness(app, |ctx, app| {
@@ -761,29 +763,6 @@ fn submitted_search_is_saved_to_recent_searches() {
     assert_eq!(
         library.load_user_session().unwrap().recent_searches,
         vec!["brutalist chair".to_owned()]
-    );
-}
-
-#[test]
-fn empty_recent_searches_do_not_submit_boilerplate_query() {
-    let root = TempRoot::new("snappyref-search-no-boilerplate-recent");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    let mut app = test_app(Some(library.clone()));
-    app.search.overlay.open = true;
-    let mut harness = app_harness(app, |ctx, app| {
-        app.show_search_overlay(ctx, test_screen_rect());
-    });
-
-    harness.key_press(egui::Key::Enter);
-    harness.step();
-
-    assert!(harness.state().search.overlay.query.is_empty());
-    assert!(
-        library
-            .load_user_session()
-            .unwrap()
-            .recent_searches
-            .is_empty()
     );
 }
 
