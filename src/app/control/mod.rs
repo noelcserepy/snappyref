@@ -247,6 +247,10 @@ impl SnappyRefApp {
     }
 
     pub(super) fn drive_control(&mut self, ctx: &egui::Context) {
+        self.drive_control_at(ctx, Instant::now());
+    }
+
+    fn drive_control_at(&mut self, ctx: &egui::Context, now: Instant) {
         while let Some(request) = self
             .control
             .server
@@ -259,7 +263,7 @@ impl SnappyRefApp {
                 }
                 Ok(Step::Wait(timeout, on)) => self.control.waiting.push(Waiting {
                     responder: request.responder,
-                    deadline: Instant::now() + timeout,
+                    deadline: now + timeout,
                     on,
                 }),
                 Err(error) => request
@@ -268,7 +272,7 @@ impl SnappyRefApp {
             }
         }
         for waiting in std::mem::take(&mut self.control.waiting) {
-            if let Some(waiting) = self.poll_waiting(waiting) {
+            if let Some(waiting) = self.poll_waiting(waiting, now) {
                 self.control.waiting.push(waiting);
             }
         }
@@ -920,8 +924,8 @@ impl SnappyRefApp {
     }
 
     /// Answers the call and returns None, or hands it back to keep waiting.
-    fn poll_waiting(&mut self, mut waiting: Waiting) -> Option<Waiting> {
-        let timed_out = Instant::now() >= waiting.deadline;
+    fn poll_waiting(&mut self, mut waiting: Waiting, now: Instant) -> Option<Waiting> {
+        let timed_out = now >= waiting.deadline;
         let result = match &mut waiting.on {
             // `answer_screenshots` sends the image. This arm only gives up.
             WaitingOn::Screenshot(_) => {

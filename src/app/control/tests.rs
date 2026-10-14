@@ -153,9 +153,8 @@ fn search_calls_complete_fail_retry_model_pending_and_expire() {
     };
     assert_eq!(next, previous + 1);
     assert!(!client.is_finished());
-    waiting.deadline = Instant::now() - Duration::from_secs(1);
     app.control.waiting.push(waiting);
-    app.drive_control(&ctx);
+    app.drive_control_at(&ctx, Instant::now() + Duration::from_secs(31));
     assert_eq!(
         reply(client),
         json!({"content":[{"type":"text","text":"The search model is still loading. Try again in a moment."}],"isError":true})
@@ -201,7 +200,7 @@ fn cancelling_ask_preserves_the_asset_and_revoking_access_answers_waiting_calls(
         |ui| app.show_library_remove_confirmation(ui.ctx()),
     );
     assert!(app.pending_library_remove.is_none());
-    assert!(app.poll_waiting(waiting).is_none());
+    assert!(app.poll_waiting(waiting, Instant::now()).is_none());
     assert_eq!(
         reply(client),
         json!({"content":[{"type":"text","text":"The user declined in SnappyRef."}],"isError":true})
