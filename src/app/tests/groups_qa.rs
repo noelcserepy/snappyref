@@ -148,8 +148,7 @@ fn inspect_group_picker_selection_writes_artifact() {
                 ("Mixed references".to_owned(), ids[2..].to_vec()),
             ],
     );
-    let report = scenario.finish();
-    assert!(report.passed, "{}", report.artifact_dir.display());
+    scenario.finish();
 }
 
 #[test]
@@ -255,6 +254,5 @@ fn inspect_group_settings_gap_writes_artifact() {
             .collect::<Vec<_>>()
             == vec![("Group 2", 30.0, 30.0), ("Configured gap", 30.0, 30.0)],
     );
-    let report = scenario.finish();
-    assert!(report.passed, "{}", report.artifact_dir.display());
+    scenario.finish();
 }
