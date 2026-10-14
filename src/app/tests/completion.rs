@@ -42,24 +42,6 @@ fn preparation_without_diagnostics_updates_the_accepted_edit_and_survives_restar
 }
 
 #[test]
-fn cancelled_reservation_rejects_its_late_result() {
-    let ctx = egui::Context::default();
-    let mut app = test_app(None);
-    let reservation =
-        app.placement_creation
-            .reserve_placement(app.active_board_id, -1, egui::Pos2::ZERO);
-    app.placement_creation.cancel(reservation);
-    let mut loaded = test_loaded_item(-1, app.active_board_id);
-    loaded.queue_id = Some(reservation.queue_id);
-    app.accept_preparation_result(
-        &ctx,
-        crate::image_preparation::ImagePrepResult::Loaded(Box::new(loaded)),
-    );
-    assert!(app.canvas.placement_for_id(-1).is_none());
-    assert_eq!(app.placement_creation.pending_len(), 0);
-}
-
-#[test]
 fn batch_completion_persists_empty_textbox_cleanup_without_an_extra_history_entry() {
     let root = TempRoot::new("snappyref-batch-textbox-cleanup");
     let library = Library::initialize(root.to_path_buf()).unwrap();
@@ -207,6 +189,20 @@ fn batch_completion_persists_empty_textbox_cleanup_without_an_extra_history_entr
 
 #[test]
 fn first_load_fits_latest_placeholder_area_and_rejects_deleted_placement() {
+    let mut cancelled_app = test_app(None);
+    let cancelled = cancelled_app
+        .placement_creation
+        .reserve_placement(1, -1, egui::Pos2::ZERO);
+    cancelled_app.placement_creation.cancel(cancelled);
+    let mut late = test_loaded_item(-1, 1);
+    late.queue_id = Some(cancelled.queue_id);
+    cancelled_app.accept_preparation_result(
+        &egui::Context::default(),
+        crate::image_preparation::ImagePrepResult::Loaded(Box::new(late)),
+    );
+    assert!(cancelled_app.canvas.placement_for_id(-1).is_none());
+    assert_eq!(cancelled_app.placement_creation.pending_len(), 0);
+
     let root = TempRoot::new("snappyref-first-load-latest-geometry");
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let ctx = egui::Context::default();

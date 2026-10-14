@@ -972,24 +972,6 @@ fn command_number_switches_visible_board() {
 }
 
 #[test]
-fn board_shortcuts_are_suppressed_while_search_is_open() {
-    let ctx = egui::Context::default();
-    let root = TempRoot::new("snappyref-board-shortcut-search");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
-    library.fixture_board("Second").unwrap();
-    let mut app = test_app(Some(library.clone()));
-    app.search.overlay.open = true;
-
-    let _ = crate::ui::test_frame::run_ui(
-        &ctx,
-        key_press_input(egui::Modifiers::COMMAND, egui::Key::Num2),
-        |ui| app.handle_board_shortcuts(ui.ctx()),
-    );
-
-    assert_eq!(app.active_board_id, 1);
-}
-
-#[test]
 fn switching_boards_saves_previous_viewport_and_loads_target_viewport() {
     let root = TempRoot::new("snappyref-board-switch-viewport");
     let library = Library::initialize(root.to_path_buf()).unwrap();

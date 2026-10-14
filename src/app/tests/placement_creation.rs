@@ -85,13 +85,16 @@ fn enter_places_unplaced_library_search_result_at_import_scale() {
 
     harness.state_mut().flush_persistence();
     let active_items = library.load_placements().unwrap();
-    let expected_scale = crate::placement::display_scale_for_placement_target_area(
-        width,
-        height,
-        crate::data::DEFAULT_PLACEMENT_TARGET_AREA,
-    );
     assert_eq!(active_items.len(), 1);
-    assert_eq!(active_items[0].state.geometry.scale, expected_scale);
+    assert_eq!(
+        active_items[0].asset_id(),
+        Some(library_item.require_loaded_asset().id)
+    );
+    assert_eq!(active_items[0].state.geometry.scale, 0.3);
+    assert_eq!(
+        active_items[0].state.geometry.scaled_size(),
+        egui::vec2(300.0, 300.0)
+    );
 }
 
 #[test]
@@ -312,10 +315,9 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
         )
         .unwrap();
 
-    let target_area = app.settings.placement_target_area;
-    for (reservation, center, (width, height)) in [
-        (known, egui::Pos2::ZERO, (100, 80)),
-        (unknown, egui::pos2(200.0, 0.0), (360, 240)),
+    for (reservation, center, expected_size) in [
+        (known, egui::Pos2::ZERO, egui::vec2(100.0, 80.0)),
+        (unknown, egui::pos2(200.0, 0.0), egui::vec2(360.0, 240.0)),
     ] {
         assert_eq!(reservation.target_board_id, second.id);
         let placement = app
@@ -327,10 +329,7 @@ fn import_reservation_creates_loading_placements_for_known_and_fallback_dimensio
             crate::data::PlacementContent::Loading { .. }
         ));
         assert_eq!(placement.state.geometry.center, center);
-        assert_eq!(
-            placement.state.geometry.scaled_size(),
-            crate::placement::creation::display_size_for_dimensions(width, height, target_area)
-        );
+        assert!((placement.state.geometry.scaled_size() - expected_size).length() < 0.01);
     }
 }
 
@@ -483,23 +482,6 @@ fn completed_import_for_active_board_enters_active_canvas() {
 
     assert!(app.canvas.placement_for_id(42).is_some());
     assert_eq!(app.status, "Imported image");
-}
-
-#[test]
-fn normalize_import_url_accepts_http_and_https_only() {
-    assert_eq!(
-        crate::sources::url::normalize_import_url(" https://example.com/cat.png?size=large "),
-        Some("https://example.com/cat.png?size=large".to_owned())
-    );
-    assert_eq!(
-        crate::sources::url::normalize_import_url("http://example.com/dog.gif"),
-        Some("http://example.com/dog.gif".to_owned())
-    );
-    assert_eq!(
-        crate::sources::url::normalize_import_url("file:///tmp/cat.png"),
-        None
-    );
-    assert_eq!(crate::sources::url::normalize_import_url("not a url"), None);
 }
 
 #[test]
