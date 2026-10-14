@@ -4,21 +4,6 @@
   "first_failure": null,
   "assertions": [
     {
-      "name": "Undo while typing preserves the previous Coral style edit",
-      "passed": true,
-      "type": "assertion"
-    },
-    {
-      "name": "the focused editor undoes its text",
-      "passed": true,
-      "type": "assertion"
-    },
-    {
-      "name": "the focused editor redoes hello",
-      "passed": true,
-      "type": "assertion"
-    },
-    {
       "name": "plain Enter commits hello",
       "passed": true,
       "type": "assertion"
@@ -70,6 +55,36 @@
     },
     {
       "name": "exit stores one Undo step back to hello",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "Undo while typing preserves the previous Coral style edit",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "the focused editor undoes its text",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "the focused editor redoes its text",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "committed focused-editor changes undo in one step",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "Redo while typing preserves the new draft and Default style",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "the draft committed after stale Redo undoes to hello",
       "passed": true,
       "type": "assertion"
     },
