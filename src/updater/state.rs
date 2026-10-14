@@ -175,250 +175,211 @@ impl UpdateState {
         }
         *self = UpdateState::Ready { version };
     }
-
-    #[cfg(test)]
-    pub(crate) fn is_available(&self) -> bool {
-        matches!(self, UpdateState::Available { .. })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_downloading(&self) -> bool {
-        matches!(self, UpdateState::Downloading { .. })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_ready(&self) -> bool {
-        matches!(self, UpdateState::Ready { .. })
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn newer(version: &str) -> CheckOutcome {
-        CheckOutcome::NewerAvailable {
-            release: super::super::tests::manifest_with(version),
+    fn release(version: &str) -> super::super::manifest::Manifest {
+        super::super::tests::manifest_with(version)
+    }
+
+    #[test]
+    fn discovery_retains_the_available_package_until_a_newer_release_arrives() {
+        let mut state = UpdateState::Hidden;
+        state.apply(CheckOutcome::NewerAvailable {
+            release: release("1.2.3"),
+        });
+        assert_eq!(
+            state,
+            UpdateState::Available {
+                release: release("1.2.3")
+            }
+        );
+        for outcome in [
+            CheckOutcome::Failed,
+            CheckOutcome::UpToDate,
+            CheckOutcome::NewerAvailable {
+                release: release("1.2.2"),
+            },
+        ] {
+            state.apply(outcome);
+            assert_eq!(
+                state,
+                UpdateState::Available {
+                    release: release("1.2.3")
+                }
+            );
         }
-    }
-
-    #[test]
-    fn hidden_to_available_on_newer() {
-        let mut state = UpdateState::Hidden;
-        state.apply(newer("1.2.3"));
-        assert!(state.is_available());
-    }
-
-    #[test]
-    fn hidden_stays_hidden_on_up_to_date() {
-        let mut state = UpdateState::Hidden;
-        state.apply(CheckOutcome::UpToDate);
-        assert_eq!(state, UpdateState::Hidden);
-    }
-
-    #[test]
-    fn hidden_to_failed_on_failure() {
-        let mut state = UpdateState::Hidden;
-        state.apply(CheckOutcome::Failed);
-        assert!(matches!(state, UpdateState::Failed { .. }));
-    }
-
-    #[test]
-    fn failure_does_not_clobber_available() {
-        let mut state = UpdateState::Hidden;
-        state.apply(newer("1.2.3"));
-        state.apply(CheckOutcome::Failed);
-        assert!(
-            state.is_available(),
-            "Available must survive a transient failure"
+        state.apply(CheckOutcome::NewerAvailable {
+            release: release("1.2.4"),
+        });
+        assert_eq!(
+            state,
+            UpdateState::Available {
+                release: release("1.2.4")
+            }
         );
     }
 
     #[test]
-    fn up_to_date_clears_failed() {
-        let mut state = UpdateState::Failed {
-            reason: "discovery".into(),
-            version: None,
-        };
+    fn discovery_failure_reports_its_reason_and_recovery_clears_it() {
+        let mut state = UpdateState::Hidden;
+        state.apply(CheckOutcome::UpToDate);
+        assert_eq!(state, UpdateState::Hidden);
+        state.apply(CheckOutcome::Failed);
+        assert_eq!(
+            state,
+            UpdateState::Failed {
+                reason: "Release discovery failed".into(),
+                version: None
+            }
+        );
         state.apply(CheckOutcome::UpToDate);
         assert_eq!(state, UpdateState::Hidden);
     }
 
     #[test]
-    fn up_to_date_does_not_retract_available() {
+    fn install_progress_keeps_the_version_clamps_percent_and_finishes_ready() {
         let mut state = UpdateState::Hidden;
-        state.apply(newer("1.2.3"));
-        state.apply(CheckOutcome::UpToDate);
-        assert!(state.is_available());
-    }
-
-    #[test]
-    fn available_can_be_replaced_with_newer_available() {
-        let mut state = UpdateState::Hidden;
-        state.apply(newer("1.2.3"));
-        state.apply(newer("1.2.4"));
-        match state {
-            UpdateState::Available { release } => assert_eq!(release.version, "1.2.4"),
-            _ => panic!("expected Available"),
-        }
-    }
-
-    #[test]
-    fn progress_updates_percent_during_download() {
-        let mut state = UpdateState::Downloading {
-            version: "1.0.0".to_owned(),
-            percent: 0,
-        };
+        state.begin_install("1.0.0".into());
+        assert_eq!(
+            state,
+            UpdateState::Downloading {
+                version: "1.0.0".into(),
+                percent: 0
+            }
+        );
         state.apply_progress(InstallProgress::Progress {
-            version: "1.0.0".to_owned(),
+            version: "1.0.0".into(),
             percent: 42,
         });
         assert_eq!(
             state,
             UpdateState::Downloading {
-                version: "1.0.0".to_owned(),
-                percent: 42,
+                version: "1.0.0".into(),
+                percent: 42
             }
         );
-    }
-
-    #[test]
-    fn progress_clamps_percent_to_100() {
-        let mut state = UpdateState::Downloading {
-            version: "1.0.0".to_owned(),
-            percent: 0,
-        };
+        for event in [
+            InstallProgress::Progress {
+                version: "0.9.0".into(),
+                percent: 99,
+            },
+            InstallProgress::Staged {
+                version: "0.9.0".into(),
+            },
+        ] {
+            state.apply_progress(event);
+            assert_eq!(
+                state,
+                UpdateState::Downloading {
+                    version: "1.0.0".into(),
+                    percent: 42
+                }
+            );
+        }
         state.apply_progress(InstallProgress::Progress {
-            version: "1.0.0".to_owned(),
+            version: "1.0.0".into(),
             percent: 250,
         });
-        assert!(matches!(
+        assert_eq!(
             state,
-            UpdateState::Downloading { percent: 100, .. }
-        ));
-    }
-
-    #[test]
-    fn progress_for_different_version_is_ignored() {
-        let mut state = UpdateState::Downloading {
-            version: "1.0.0".to_owned(),
-            percent: 50,
-        };
-        state.apply_progress(InstallProgress::Progress {
-            version: "0.9.0".to_owned(),
-            percent: 99,
-        });
-        assert!(matches!(
-            state,
-            UpdateState::Downloading { percent: 50, .. }
-        ));
-    }
-
-    #[test]
-    fn staged_event_promotes_downloading_to_ready() {
-        let mut state = UpdateState::Downloading {
-            version: "1.0.0".to_owned(),
-            percent: 100,
-        };
+            UpdateState::Downloading {
+                version: "1.0.0".into(),
+                percent: 100
+            }
+        );
         state.apply_progress(InstallProgress::Staged {
-            version: "1.0.0".to_owned(),
+            version: "1.0.0".into(),
         });
         assert_eq!(
             state,
             UpdateState::Ready {
-                version: "1.0.0".to_owned()
+                version: "1.0.0".into()
+            }
+        );
+        state.apply_progress(InstallProgress::Failed {
+            reason: "late failure".into(),
+        });
+        assert_eq!(
+            state,
+            UpdateState::Ready {
+                version: "1.0.0".into()
             }
         );
     }
 
     #[test]
-    fn failed_event_transitions_to_failed_only_when_downloading() {
+    fn install_failure_retains_the_download_version_and_worker_reason() {
         let mut state = UpdateState::Downloading {
-            version: "1.0.0".to_owned(),
+            version: "1.0.0".into(),
             percent: 30,
         };
         state.apply_progress(InstallProgress::Failed {
-            reason: "boom".to_owned(),
+            reason: "Package checksum mismatch".into(),
         });
-        assert!(matches!(state, UpdateState::Failed { .. }));
-    }
-
-    #[test]
-    fn failed_event_does_not_clobber_ready() {
-        let mut state = UpdateState::Ready {
-            version: "1.0.0".to_owned(),
-        };
-        state.apply_progress(InstallProgress::Failed {
-            reason: "irrelevant".to_owned(),
-        });
-        assert!(state.is_ready());
-    }
-
-    #[test]
-    fn discovery_does_not_clobber_in_flight_download_for_same_version() {
-        let mut state = UpdateState::Downloading {
-            version: "1.0.0".to_owned(),
-            percent: 30,
-        };
-        state.apply(newer("1.0.0"));
-        assert!(state.is_downloading());
-    }
-
-    #[test]
-    fn discovery_does_not_clobber_ready_for_same_version() {
-        let mut state = UpdateState::Ready {
-            version: "1.0.0".to_owned(),
-        };
-        state.apply(newer("1.0.0"));
-        assert!(state.is_ready());
-    }
-
-    #[test]
-    fn discovery_replaces_ready_when_a_newer_version_appears() {
-        let mut state = UpdateState::Ready {
-            version: "1.0.0".to_owned(),
-        };
-        state.apply(newer("1.1.0"));
-        assert!(state.is_available());
-    }
-
-    #[test]
-    fn mark_ready_promotes_directly_from_hidden() {
-        // Used at startup when a verified staged bundle is already on disk
-        // and discovery hasn't run yet.
-        let mut state = UpdateState::Hidden;
-        state.mark_ready("1.2.3".to_owned());
         assert_eq!(
             state,
-            UpdateState::Ready {
-                version: "1.2.3".to_owned()
+            UpdateState::Failed {
+                reason: "Package checksum mismatch".into(),
+                version: Some("1.0.0".into())
             }
         );
     }
 
     #[test]
-    fn mark_ready_does_not_clobber_in_flight_download_for_same_version() {
-        // A discovery cycle landing mid-download could see a structurally
-        // valid (but in-flight) staging dir and try to promote it. The
-        // install worker still owns transitions for this download.
+    fn discovery_and_existing_staging_preserve_a_download_until_a_newer_version_is_ready() {
         let mut state = UpdateState::Downloading {
-            version: "1.0.0".to_owned(),
+            version: "1.0.0".into(),
             percent: 30,
         };
-        state.mark_ready("1.0.0".to_owned());
-        assert!(state.is_downloading());
-    }
-
-    #[test]
-    fn mark_ready_promotes_when_a_newer_version_is_already_staged() {
-        // A newer manifest replaced an older Downloading via apply(); on
-        // the next pass we may discover that the newer version is already
-        // staged on disk. That promotion is legitimate.
-        let mut state = UpdateState::Downloading {
-            version: "1.0.0".to_owned(),
-            percent: 30,
-        };
-        state.mark_ready("1.1.0".to_owned());
-        assert!(state.is_ready());
+        for version in ["0.9.0", "1.0.0"] {
+            state.apply(CheckOutcome::NewerAvailable {
+                release: release(version),
+            });
+            state.mark_ready(version.into());
+            assert_eq!(
+                state,
+                UpdateState::Downloading {
+                    version: "1.0.0".into(),
+                    percent: 30
+                }
+            );
+        }
+        state.mark_ready("1.1.0".into());
+        assert_eq!(
+            state,
+            UpdateState::Ready {
+                version: "1.1.0".into()
+            }
+        );
+        state.apply(CheckOutcome::NewerAvailable {
+            release: release("1.1.0"),
+        });
+        assert_eq!(
+            state,
+            UpdateState::Ready {
+                version: "1.1.0".into()
+            }
+        );
+        state.apply(CheckOutcome::NewerAvailable {
+            release: release("1.2.0"),
+        });
+        assert_eq!(
+            state,
+            UpdateState::Available {
+                release: release("1.2.0")
+            }
+        );
+        let mut hidden = UpdateState::Hidden;
+        hidden.mark_ready("1.2.3".into());
+        assert_eq!(
+            hidden,
+            UpdateState::Ready {
+                version: "1.2.3".into()
+            }
+        );
     }
 }

@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn six_hours_after_success_runs_again() {
         let last = 100;
-        let now = last + POLL_INTERVAL.as_secs();
+        let now = last + 21_600;
         assert_eq!(
             decide(input(true, now, Some(last), 0)),
             NextAction::CheckNow
@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn before_six_hours_after_success_waits_remaining() {
         let last = 0;
-        let now = POLL_INTERVAL.as_secs() - 60;
+        let now = 21_540;
         assert_eq!(
             decide(input(true, now, Some(last), 0)),
             NextAction::WaitFor(Duration::from_secs(60))
@@ -162,7 +162,7 @@ mod tests {
         let last = 0u64;
         // A pile of failures must not push the wait above POLL_INTERVAL.
         let action = decide(input(true, last, Some(last), 100));
-        assert_eq!(action, NextAction::WaitFor(POLL_INTERVAL));
+        assert_eq!(action, NextAction::WaitFor(Duration::from_secs(21_600)));
     }
 
     #[test]
