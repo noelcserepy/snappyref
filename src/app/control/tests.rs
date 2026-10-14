@@ -253,12 +253,41 @@ fn cancelling_ask_preserves_the_asset_and_revoking_access_answers_waiting_calls(
     );
     let (waiting, client) = pending(&mut app, &ctx, &root, "screenshot", json!({}));
     app.control.waiting.push(waiting);
+    app.search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+    app.search
+        .sync_service(app.library.as_ref(), &mut app.status, 8192);
+    let (search_waiting, search_client) = pending(
+        &mut app,
+        &ctx,
+        &root,
+        "search_library",
+        json!({"similar_to":asset.id}),
+    );
+    let revoked_search = search_request(&search_waiting);
+    app.control.waiting.push(search_waiting);
     app.settings.ai_control = AiControlAccess::Off;
     app.sync_control_server(&ctx);
     let refused = reply(client);
     assert_eq!(
         refused,
         json!({"content":[{"type":"text","text":"SnappyRef dropped the request."}],"isError":true})
+    );
+    assert_eq!(
+        reply(search_client),
+        json!({"content":[{"type":"text","text":"SnappyRef dropped the request."}],"isError":true})
+    );
+    let barrier = app
+        .search
+        .start_direct_search(None, Some(asset.id), 1)
+        .unwrap();
+    let result = take_search_result(&mut app, barrier);
+    assert_unindexed_result(result, barrier);
+    assert!(
+        app.search
+            .take_direct_search_result(revoked_search)
+            .is_none(),
+        "revoked search is still tracked after its late result arrived"
     );
     assert!(app.control.waiting.is_empty());
     assert!(!root.join("control.json").exists());
