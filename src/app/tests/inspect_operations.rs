@@ -1403,26 +1403,31 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
         egui::PointerButton::Primary,
     );
     let moved = snapshot(&harness);
-    assert!((moved[0].center - before[0].center).length() > 50.0);
-    assert!(
-        (moved[0].center - before[0].center - (moved[1].center - before[1].center)).length() < 0.01
+    scenario.assertion(
+        "selected image moves with the drag",
+        (moved[0].center - before[0].center).length() > 50.0,
     );
-    assert_eq!(
-        harness
+    scenario.assertion(
+        "multi-drag moves both images by the same delta",
+        (moved[0].center - before[0].center - (moved[1].center - before[1].center)).length() < 0.01,
+    );
+    scenario.assertion(
+        "multi-drag preserves the unselected image",
+        (harness
             .state()
             .canvas
             .placement_for_id(other.id())
             .unwrap()
             .state
-            .geometry,
-        other.state.geometry
+            .geometry)
+            == (other.state.geometry),
     );
-    scenario.assertion(
-        "multi-selection drag preserves relative geometry and unselected image",
-        true,
-    );
+
     shortcut(&mut harness, CMD, egui::Key::Z);
-    assert_eq!(snapshot(&harness), before);
+    scenario.assertion(
+        "one Undo restores the multi-drag",
+        (snapshot(&harness)) == (before),
+    );
     harness.state_mut().canvas.select_placements(&ids);
     let view = harness.state().canvas.viewport_state();
     drag_with_modifiers(
@@ -1434,19 +1439,23 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
     );
     let scaled = snapshot(&harness);
     let factor = scaled[0].scale / before[0].scale;
-    assert!(factor > 1.05);
-    assert!((scaled[1].scale / before[1].scale - factor).abs() < 0.001);
-    assert!(
+    scenario.assertion("Mod-Alt drag enlarges the selected images", factor > 1.05);
+    scenario.assertion(
+        "multi-scale uses the same factor for both images",
+        (scaled[1].scale / before[1].scale - factor).abs() < 0.001,
+    );
+    scenario.assertion(
+        "multi-scale scales the separation by the same factor",
         (scaled[0].center.distance(scaled[1].center) / before[0].center.distance(before[1].center)
             - factor)
             .abs()
-            < 0.001
+            < 0.001,
     );
-    assert_eq!(harness.state().canvas.viewport_state(), view);
     scenario.assertion(
-        "Mod-Alt scales sizes and spacing uniformly without panning",
-        true,
+        "multi-scale leaves the viewport fixed",
+        (harness.state().canvas.viewport_state()) == (view),
     );
+
     shortcut(&mut harness, CMD, egui::Key::Z);
     harness.state_mut().canvas.select_placements(&ids);
     harness.state_mut().settings.rotation_snap_degrees = 15.0;
@@ -1469,18 +1478,22 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
     harness.step();
     let rotated = snapshot(&harness);
     let steps = rotated[0].rotation / 15.0_f32.to_radians();
-    assert!(steps.abs() >= 1.0 && (steps - steps.round()).abs() < 0.001);
-    assert!((rotated[0].rotation - rotated[1].rotation).abs() < 0.001);
-    assert!(
+    scenario.assertion(
+        "R-handle produces a nonzero snapped rotation",
+        steps.abs() >= 1.0 && (steps - steps.round()).abs() < 0.001,
+    );
+    scenario.assertion(
+        "multi-rotation applies the same angle to both images",
+        (rotated[0].rotation - rotated[1].rotation).abs() < 0.001,
+    );
+    scenario.assertion(
+        "multi-rotation preserves separation",
         (rotated[0].center.distance(rotated[1].center)
             - before[0].center.distance(before[1].center))
         .abs()
-            < 0.01
+            < 0.01,
     );
-    scenario.assertion(
-        "R-handle rotation snaps both images in15degree steps and preserves separation",
-        true,
-    );
+
     shortcut(&mut harness, CMD, egui::Key::Z);
     harness.state_mut().canvas.select_placements(&ids);
     harness.key_down(egui::Key::R);
@@ -1514,8 +1527,11 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
     harness.key_up(egui::Key::R);
     harness.step();
     let precise = snapshot(&harness)[0].rotation / 15.0_f32.to_radians();
-    assert!((precise - precise.round()).abs() > 0.05);
-    scenario.assertion("Alt added during active rotation bypasses snap", true);
+    scenario.assertion(
+        "Alt rotation bypasses the snap angles",
+        (precise - precise.round()).abs() > 0.05,
+    );
+
     shortcut(&mut harness, CMD, egui::Key::Z);
     harness.state_mut().canvas.select_placements(&ids);
     drag_with_modifiers(
@@ -1537,19 +1553,25 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
         egui::PointerButton::Primary,
     );
     let after_normal = snapshot(&harness);
-    assert_eq!(after_normal[0].scale, before_normal[0].scale);
-    assert!(after_normal[0].center.distance(before_normal[0].center) > 20.0);
     scenario.assertion(
-        "release outside canvas ends scaling; next ordinary drag moves without scaling",
-        true,
+        "ordinary drag after outside release leaves scale fixed",
+        (after_normal[0].scale) == (before_normal[0].scale),
     );
+    scenario.assertion(
+        "ordinary drag after outside release moves the image",
+        after_normal[0].center.distance(before_normal[0].center) > 20.0,
+    );
+
     shortcut(&mut harness, CMD, egui::Key::Z);
     scenario.capture_screen("screen-000-after-transforms", &mut harness);
     for gap in [0.0, 24.0] {
         let before_setting = snapshot(&harness);
         harness.state_mut().settings.placement_gap = gap;
         harness.step();
-        assert_eq!(snapshot(&harness), before_setting);
+        scenario.assertion(
+            "changing the gap setting leaves geometry fixed",
+            (snapshot(&harness)) == (before_setting),
+        );
         for key in [egui::Key::W, egui::Key::E] {
             harness.state_mut().canvas.select_placements(&ids);
             let original = snapshot(&harness);
@@ -1573,20 +1595,27 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
             } else {
                 (ra.top().max(rb.top()) - ra.bottom().min(rb.bottom())).abs()
             };
-            assert!((actual - gap).abs() < 0.01, "gap {gap} actual {actual}");
-            assert_eq!(
-                [arranged[0].size, arranged[1].size],
-                [original[0].size, original[1].size]
+            scenario.assertion(
+                "row and column commands use the requested gap",
+                (actual - gap).abs() < 0.01,
             );
-            assert_eq!(
-                [arranged[0].scale, arranged[1].scale],
-                [original[0].scale, original[1].scale]
+            scenario.assertion(
+                "row and column keep image dimensions",
+                ([arranged[0].size, arranged[1].size]) == ([original[0].size, original[1].size]),
+            );
+            scenario.assertion(
+                "row and column keep image scales",
+                ([arranged[0].scale, arranged[1].scale])
+                    == ([original[0].scale, original[1].scale]),
             );
             shortcut(&mut harness, CMD, egui::Key::Z);
-            assert_eq!(snapshot(&harness), original);
+            scenario.assertion(
+                "one Undo restores row and column arrangements",
+                (snapshot(&harness)) == (original),
+            );
         }
     }
-    scenario.assertion("row and column respect gap0/24 and proportions, undo restores, setting alone does not rearrange", true);
+
     for modifiers in [CMD, egui::Modifiers { shift: true, ..CMD }] {
         harness.state_mut().canvas.select_placements(&ids);
         let original = snapshot(&harness);
@@ -1601,13 +1630,22 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
         };
         shortcut(&mut harness, modifiers, egui::Key::L);
         for (after, before) in snapshot(&harness).iter().zip(original) {
-            assert!((after.size.x * after.size.y * after.scale * after.scale - target).abs() < 1.0);
-            assert_eq!(after.size, before.size);
+            scenario.assertion(
+                "area shortcut hits the selected target area",
+                (after.size.x * after.size.y * after.scale * after.scale - target).abs() < 1.0,
+            );
+            scenario.assertion(
+                "area shortcut preserves source dimensions",
+                (after.size) == (before.size),
+            );
         }
         shortcut(&mut harness, CMD, egui::Key::Z);
-        assert_eq!(snapshot(&harness), original);
+        scenario.assertion(
+            "one Undo restores area normalization",
+            (snapshot(&harness)) == (original),
+        );
     }
-    scenario.assertion("default and selection average-area shortcuts hit their targets, preserve aspect ratios and undo", true);
+
     // Start with overlapping images so a disabled settle command cannot pass.
     for (key, expected) in [
         (

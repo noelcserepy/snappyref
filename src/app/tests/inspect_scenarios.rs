@@ -2399,15 +2399,10 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
     scenario.capture_screen("screen-006-redone", &mut harness);
 
     harness.state_mut().flush_persistence();
-    let durable = &library.load_placements().unwrap()[0];
-    assert!(
-        durable.is_loaded(),
-        "crop durability lost loaded content: {durable:?}; status={}",
-        harness.state().status
-    );
+    let durable = library.load_placements().unwrap();
     scenario.assertion(
-        "explicit flush preserves the cropped Asset relation",
-        durable.require_loaded_asset().id == cropped_asset_id,
+        "explicit flush preserves exactly the loaded cropped Asset relation",
+        durable.iter().map(|p| p.asset_id()).collect::<Vec<_>>() == vec![Some(cropped_asset_id)],
     );
 
     let report = scenario.finish();
