@@ -305,7 +305,10 @@ mod tests {
         assert_eq!(completion.target_board_id, Some(3));
         assert_eq!(completion.queue_id, Some(2));
         assert_eq!(completion.placement_id, Some(9));
-        assert_eq!(runtime.pending_len(), 0);
+        let repeated = runtime.resolve_completion(Some(retained.queue_id), None, None);
+        assert_eq!(repeated.queue_id, Some(2));
+        assert_eq!(repeated.target_board_id, None);
+        assert_eq!(repeated.placement_id, None);
     }
 
     #[test]
