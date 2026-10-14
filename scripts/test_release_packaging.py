@@ -60,11 +60,14 @@ class ReleasePackagingTests(unittest.TestCase):
                     validate_archive(archive_path, 'macos')
             with zipfile.ZipFile(archive_path, 'w') as archive:
                 archive.writestr('SnappyRef/snappyref.exe', b'fixture')
+                archive.writestr('SnappyRef/THIRD_PARTY_NOTICES.txt', b'fixture')
+            validate_archive(archive_path, 'windows')
+            with zipfile.ZipFile(archive_path, 'a') as archive:
                 link = zipfile.ZipInfo('SnappyRef/link')
                 link.create_system = 3
                 link.external_attr = 0o120777 << 16
                 archive.writestr(link, '../outside')
-            with self.assertRaises(ValueError):
+            with self.assertRaisesRegex(ValueError, "^unsafe or non-current archive path: 'SnappyRef/link'$"):
                 validate_archive(archive_path, 'windows')
 
     def test_macos_archive_rejects_bundled_models_and_windows_rejects_updater(self):
@@ -96,8 +99,15 @@ class ReleasePackagingTests(unittest.TestCase):
             subprocess.run(['python3', str(ROOT / 'scripts/semantic-search-descriptor.py'), 'resolve', '--output', str(root / 'descriptor.env'), '--github-env', str(root / 'github.env')], env=env, check=True)
             values = dict(line.split('=', 1) for line in (root / 'descriptor.env').read_text().splitlines())
             compiled = dict(line.split('=', 1) for line in (root / 'github.env').read_text().splitlines())
-            self.assertEqual(compiled, {'SNAPPYREF_' + key.upper(): value for key, value in values.items()})
-            self.assertEqual(values['semantic_search_size'], '42')
+            self.assertEqual(compiled, {
+                'SNAPPYREF_SEMANTIC_SEARCH_URL': 'https://example.com/model.zip',
+                'SNAPPYREF_SEMANTIC_SEARCH_SHA256': 'a' * 64,
+                'SNAPPYREF_SEMANTIC_SEARCH_SIZE': '42',
+            })
+            self.assertEqual(values, {
+                'semantic_search_url': 'https://example.com/model.zip',
+                'semantic_search_sha256': 'a' * 64, 'semantic_search_size': '42',
+            })
 
 
 class DescriptorUrlTests(unittest.TestCase):
@@ -167,8 +177,16 @@ class ModelBundleTests(unittest.TestCase):
             semantic_model.check(output)
             with zipfile.ZipFile(output) as archive:
                 entries = {name: archive.read(name) for name in archive.namelist()}
-            for name in ('LICENSE', 'NOTICE'):
-                self.assertTrue(entries[f'models/{semantic_model.MODEL_KEY}/{name}'])
+            self.assertEqual(entries['models/siglip2_base_patch16_224_int8/LICENSE'],
+                             (ROOT / 'assets/licenses/Apache-2.0.txt').read_bytes())
+            self.assertEqual(entries['models/siglip2_base_patch16_224_int8/NOTICE'].decode(),
+                             'SigLIP 2 base patch16-224, int8 ONNX export\n\n'
+                             'The model weights are google/siglip2-base-patch16-224 by Google, released under\n'
+                             'the Apache License, Version 2.0.\n'
+                             'https://huggingface.co/google/siglip2-base-patch16-224\n\n'
+                             'The ONNX conversion and int8 quantization are unmodified files from\n'
+                             'onnx-community/siglip2-base-patch16-224-ONNX at revision ba1f3b0843f24bc5417d38e19c37b287d719b2f4.\n'
+                             'https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX\n')
             asset = f'models/{semantic_model.MODEL_KEY}/tokenizer.json'
             for replacement in (None, b'changed'):
                 with zipfile.ZipFile(output, 'w') as archive:
