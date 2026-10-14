@@ -402,11 +402,22 @@ impl UpdateService {
                         "result outcome={:?} state_before={:?}",
                         result, self.state
                     ));
+                    let discovered_version_during_download = match (&self.state, &result) {
+                        (
+                            UpdateState::Downloading { .. },
+                            CheckOutcome::NewerAvailable { release },
+                        ) => Some(release.version.clone()),
+                        _ => None,
+                    };
                     self.state.apply(result);
                     self.write_diagnostic(&format!("state_after={:?}", self.state));
                     if let UpdateState::Available { release } = &self.state {
                         let release = release.clone();
                         self.detect_existing_staging(&release);
+                    } else if let Some(version) = discovered_version_during_download
+                        && let Some(root) = self.resolved_install_root()
+                    {
+                        self.sweep_stale_staging(&root, &version);
                     }
                 }
                 Err(TryRecvError::Empty) => {
@@ -1167,5 +1178,207 @@ mod tests {
             Some(Duration::from_millis(250)),
             "startup discovery must keep ticking until settled idle can be observed"
         );
+    }
+    /// A bounded loopback HTTP peer. Each response records the request target.
+    fn http_peer(
+        responses: Vec<(String, Vec<u8>)>,
+    ) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::{Ipv4Addr, TcpListener};
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let peer = std::thread::spawn(move || {
+            let mut targets = Vec::new();
+            for (headers, body) in responses {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "HTTP request never arrived");
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("accept: {error}"),
+                    }
+                };
+                // Accepted sockets inherit the listener's nonblocking mode on macOS.
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                targets.push(line.split_whitespace().nth(1).unwrap().to_owned());
+                loop {
+                    line.clear();
+                    assert!(reader.read_line(&mut line).unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                }
+                write!(
+                    stream,
+                    "HTTP/1.1 {headers}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .unwrap();
+                stream.write_all(&body).unwrap();
+            }
+            targets
+        });
+        (url, peer)
+    }
+
+    #[test]
+    fn manifest_fetch_follows_redirect_and_rejects_non_success_status() {
+        let (url, peer) = http_peer(vec![
+            ("302 Found\r\nLocation: /signed/latest.json".into(), vec![]),
+            ("200 OK".into(), b"signed manifest bytes\n".to_vec()),
+            ("503 Service Unavailable".into(), b"unavailable".to_vec()),
+        ]);
+        assert_eq!(
+            fetch_manifest(&format!("{url}/latest.json")).unwrap(),
+            b"signed manifest bytes\n"
+        );
+        assert_eq!(
+            fetch_manifest(&format!("{url}/unavailable")).unwrap_err(),
+            "status: 503 Service Unavailable"
+        );
+        assert_eq!(
+            peer.join().unwrap(),
+            ["/latest.json", "/signed/latest.json", "/unavailable"]
+        );
+    }
+
+    #[test]
+    fn install_downloads_verifies_stages_payload_and_rejects_bad_hash() {
+        use sha2::{Digest, Sha256};
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(
+            "SnappyRef/snappyref.exe",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(b"new executable bytes").unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        let sha = hex::encode(Sha256::digest(&bytes));
+        let (url, peer) = http_peer(vec![
+            ("200 OK".into(), bytes.clone()),
+            ("200 OK".into(), bytes.clone()),
+        ]);
+        let root = TempRoot::new("install-handoff");
+        for (version, hash) in [
+            ("1.2.3", sha.as_str()),
+            (
+                "1.2.4",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+        ] {
+            let (tx, rx) = channel();
+            run_install(
+                InstallContext {
+                    version: version.into(),
+                    url: format!("{url}/package.zip"),
+                    sha256: hash.into(),
+                    size: bytes.len() as u64,
+                    install_root: root.to_path_buf(),
+                    platform: TargetPlatform::Windows,
+                },
+                tx,
+            );
+            let events: Vec<_> = rx.into_iter().collect();
+            let staging = install_paths::staging_dir(&root, version);
+            if version == "1.2.3" {
+                assert_eq!(
+                    events.last(),
+                    Some(&InstallProgress::Staged {
+                        version: "1.2.3".into()
+                    })
+                );
+                assert_eq!(
+                    std::fs::read(staging.join("SnappyRef/snappyref.exe")).unwrap(),
+                    b"new executable bytes"
+                );
+                assert_eq!(
+                    std::fs::read_to_string(staging.join(".staged-sha256")).unwrap(),
+                    sha
+                );
+                assert!(events.contains(&InstallProgress::Progress {
+                    version: "1.2.3".into(),
+                    percent: 100
+                }));
+            } else {
+                assert_eq!(
+                    events.last(),
+                    Some(&InstallProgress::Failed {
+                        reason: format!(
+                            "sha256 mismatch: expected 0000000000000000000000000000000000000000000000000000000000000000, got {sha}"
+                        ),
+                    })
+                );
+                assert_eq!(std::fs::read_dir(root.join("updates")).unwrap().count(), 1);
+                assert!(!staging.exists());
+            }
+            assert!(!install_paths::download_file_path(&root, version).exists());
+        }
+        assert_eq!(peer.join().unwrap(), ["/package.zip", "/package.zip"]);
+    }
+
+    #[test]
+    fn discovery_preserves_the_active_install_and_both_staging_versions() {
+        let root = TempRoot::new("in-flight-staging");
+        let mut service = UpdateService::new(UpdateConfig {
+            current_version: "0.1.0".into(),
+            install_root: Some(root.to_path_buf()),
+            ..UpdateConfig::for_tests()
+        });
+        let mut releases = std::collections::VecDeque::from([
+            CheckOutcome::NewerAvailable {
+                release: manifest_with("2.0.0"),
+            },
+            CheckOutcome::NewerAvailable {
+                release: manifest_with("3.0.0"),
+            },
+        ]);
+        service.fetch_override = Some(Box::new(move || releases.pop_front().unwrap()));
+        drive_until_quiescent(&mut service);
+        let (started_tx, started_rx) = channel();
+        service.install_override = Some(Box::new(move |context, progress| {
+            started_tx.send((context, progress)).unwrap();
+        }));
+        service.start_install();
+        let (context, _in_flight_worker) = started_rx.recv().unwrap();
+        assert_eq!(context.version, "2.0.0");
+        for (version, bytes) in [
+            ("3.0.0", b"manifest".as_slice()),
+            ("2.0.0", b"downloading".as_slice()),
+            ("0.9.0", b"stale".as_slice()),
+        ] {
+            let dir = install_paths::staging_dir(&root, version);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("marker"), bytes).unwrap();
+        }
+        service.request_check_now();
+        drive_until_quiescent(&mut service);
+        assert_eq!(
+            service.state(),
+            &UpdateState::Downloading {
+                version: "2.0.0".into(),
+                percent: 0
+            }
+        );
+        assert_eq!(
+            std::fs::read(install_paths::staging_dir(&root, "3.0.0").join("marker")).unwrap(),
+            b"manifest"
+        );
+        assert_eq!(
+            std::fs::read(install_paths::staging_dir(&root, "2.0.0").join("marker")).unwrap(),
+            b"downloading"
+        );
+        assert_eq!(std::fs::read_dir(root.join("updates")).unwrap().count(), 2);
+        assert!(!install_paths::staging_dir(&root, "0.9.0").exists());
     }
 }

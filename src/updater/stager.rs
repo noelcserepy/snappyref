@@ -251,10 +251,14 @@ mod tests {
 
         assert_eq!(outcome.staging_root, staging);
         assert_eq!(outcome.bundle_root, staging.join("SnappyRef"));
-        assert!(
-            staging
-                .join("SnappyRef/SnappyRef.app/Contents/MacOS/snappyref")
-                .is_file()
+        assert_eq!(
+            fs::read(staging.join("SnappyRef/SnappyRef.app/Contents/MacOS/snappyref")).unwrap(),
+            b"fake-binary"
+        );
+        assert_eq!(
+            fs::read(staging.join("SnappyRef/SnappyRef.app/Contents/MacOS/snappyref-updater"))
+                .unwrap(),
+            b"fake-helper"
         );
     }
 
@@ -268,7 +272,10 @@ mod tests {
         let outcome = extract_and_validate(&zip_path, &staging, TargetPlatform::Windows).unwrap();
 
         assert_eq!(outcome.bundle_root, staging.join("SnappyRef"));
-        assert!(staging.join("SnappyRef/snappyref.exe").is_file());
+        assert_eq!(
+            fs::read(staging.join("SnappyRef/snappyref.exe")).unwrap(),
+            b"fake-exe"
+        );
     }
 
     #[test]
@@ -439,9 +446,58 @@ mod tests {
 
         extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap();
 
+        assert_eq!(
+            fs::read(staging.join("SnappyRef/SnappyRef.app/Contents/MacOS/snappyref")).unwrap(),
+            b"fake-binary"
+        );
         assert!(
             !staging.join("stale-file.txt").exists(),
             "previous staging contents must be wiped before re-extract",
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn staging_preserves_executable_and_resource_bytes_and_permissions() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = TempRoot::new("staging-permissions");
+        let zip_path = root.join("package.zip");
+        let mut writer = ZipWriter::new(File::create(&zip_path).unwrap());
+        for (name, bytes, mode) in [
+            (
+                "SnappyRef/SnappyRef.app/Contents/MacOS/snappyref",
+                b"executable".as_slice(),
+                0o755,
+            ),
+            (
+                "SnappyRef/SnappyRef.app/Contents/MacOS/snappyref-updater",
+                b"helper".as_slice(),
+                0o755,
+            ),
+            (
+                "SnappyRef/SnappyRef.app/Contents/Resources/icon",
+                b"resource".as_slice(),
+                0o644,
+            ),
+        ] {
+            writer
+                .start_file(name, options().unix_permissions(mode))
+                .unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        writer.finish().unwrap();
+        let staging = root.join("staging");
+        extract_and_validate(&zip_path, &staging, TargetPlatform::Macos).unwrap();
+        let executable = staging.join("SnappyRef/SnappyRef.app/Contents/MacOS/snappyref");
+        let resource = staging.join("SnappyRef/SnappyRef.app/Contents/Resources/icon");
+        assert_eq!(fs::read(&executable).unwrap(), b"executable");
+        assert_eq!(
+            fs::metadata(executable).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert_eq!(fs::read(&resource).unwrap(), b"resource");
+        assert_eq!(
+            fs::metadata(resource).unwrap().permissions().mode() & 0o777,
+            0o644
         );
     }
 }

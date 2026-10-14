@@ -69,15 +69,14 @@ impl UpdateState {
         match outcome {
             CheckOutcome::NewerAvailable { release } => {
                 let version = &release.version;
-                // Discovery should never overwrite an in-flight download
-                // or a ready bundle for the same or newer version — the
-                // user is mid-install and the update UI must keep showing the
-                // current progress/ready state.
+                // The install worker owns Downloading until its terminal event.
+                // Discovery cannot relabel or orphan an active install.
+                // Available and Ready retain the same or newer known release.
                 match self {
+                    UpdateState::Downloading { .. } => {}
                     UpdateState::Available {
                         release: super::manifest::Manifest { version: v, .. },
                     }
-                    | UpdateState::Downloading { version: v, .. }
                     | UpdateState::Ready { version: v }
                         if !crate::updater::version::is_newer_than(version, v) =>
                     {
