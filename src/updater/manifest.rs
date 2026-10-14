@@ -243,9 +243,24 @@ mod tests {
         let key = fresh_keypair();
         let bytes = build_signed(&valid_unsigned(), &key);
         let manifest = parse_and_verify_with_key(&bytes, &key.verifying_key()).unwrap();
-        assert_eq!(manifest.version, "0.2.0");
-        assert_eq!(manifest.macos.url, "https://example/mac.zip");
-        assert_eq!(manifest.windows.size, 2048);
+        assert_eq!(
+            manifest,
+            Manifest {
+                version: "0.2.0".into(),
+                macos: PlatformEntry {
+                    url: "https://example/mac.zip".into(),
+                    sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+                        .into(),
+                    size: 1024
+                },
+                windows: PlatformEntry {
+                    url: "https://example/windows.zip".into(),
+                    sha256: "1111111111111111111111111111111111111111111111111111111111111111"
+                        .into(),
+                    size: 2048
+                },
+            }
+        );
     }
 
     #[test]
