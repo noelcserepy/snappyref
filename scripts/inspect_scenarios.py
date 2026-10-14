@@ -12,6 +12,8 @@ from inspect_artifact import load_report
 ROOT = Path(__file__).resolve().parents[1]
 # name: test filter, artifact scenario, network/ignored
 SCENARIOS = {
+    'group-picker-selection': ('inspect_group_picker_selection_writes_artifact', 'group-picker-selection', False),
+    'group-settings-gap': ('inspect_group_settings_gap_writes_artifact', 'group-settings-gap', False),
     'library-dedupe-shortcut': ('inspect_library_dedupe_shortcut_writes_artifact', 'library-dedupe-shortcut', False),
     'search-keyboard-placement': ('inspect_search_keyboard_placement_writes_artifact', 'search-keyboard-placement', False),
     'rotated-corner-resize': ('inspect_rotated_corner_resize_outside_canvas_writes_artifact', 'rotated-corner-resize', False),

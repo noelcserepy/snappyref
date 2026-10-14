@@ -427,9 +427,15 @@ impl CanvasState {
     pub(crate) fn group_picker_open(&self) -> bool {
         self.interaction.group_picker.is_some()
     }
-    pub fn open_group_picker(&mut self, create_id: GroupId) {
-        if self.selected_placement_ids().is_empty() && self.selected_annotation_ids().is_empty() {
-            return;
+    pub fn open_group_picker(&mut self, create_id: GroupId) -> bool {
+        let members: Vec<_> = self
+            .selected_placement_ids()
+            .into_iter()
+            .chain(self.selected_annotation_ids())
+            .filter(|&id| self.group_member_geometry(id).is_some())
+            .collect();
+        if members.is_empty() {
+            return false;
         }
         self.interaction.group_picker = Some(GroupPicker {
             query: String::new(),
@@ -440,14 +446,10 @@ impl CanvasState {
                 .or_else(|| self.groups().first().map(|g| g.id))
                 .map(GroupPickerChoice::Existing),
             focus: true,
-            members: self
-                .selected_placement_ids()
-                .into_iter()
-                .chain(self.selected_annotation_ids())
-                .filter(|&id| self.group_member_geometry(id).is_some())
-                .collect(),
+            members,
             create_id,
         });
+        true
     }
 
     fn remember_group_destination(&mut self, id: GroupId) {
