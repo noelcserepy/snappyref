@@ -1867,15 +1867,16 @@ fn inspect_library_dedupe_shortcut_writes_artifact() {
         .unwrap();
     scenario.assertion(
         "dedupe preserves all placement identities and literal geometry on disk",
-        stored
-            .iter()
-            .map(|p| (p.id(), p.asset_id(), p.state.geometry.center))
-            .collect::<Vec<_>>()
-            == vec![
-                (first.id(), Some(1), egui::pos2(-180.0, 0.0)),
-                (duplicate.id(), Some(1), egui::pos2(0.0, 0.0)),
-                (distinct.id(), Some(3), egui::pos2(180.0, 0.0)),
-            ],
+        stored.iter().all(Placement::is_loaded)
+            && stored
+                .iter()
+                .map(|p| (p.id(), p.asset_id(), p.state.geometry.center))
+                .collect::<Vec<_>>()
+                == vec![
+                    (first.id(), Some(1), egui::pos2(-180.0, 0.0)),
+                    (duplicate.id(), Some(1), egui::pos2(0.0, 0.0)),
+                    (distinct.id(), Some(3), egui::pos2(180.0, 0.0)),
+                ],
     );
     scenario.assertion(
         "duplicate file is removed while the canonical and distinct files remain",

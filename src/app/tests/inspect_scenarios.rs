@@ -2892,8 +2892,9 @@ fn inspect_search_keyboard_placement_writes_artifact() {
     let stored = library.load_placements().unwrap();
     scenario.assertion(
         "click places exactly the selected image identities",
-        stored.iter().map(|p| p.asset_id()).collect::<Vec<_>>()
-            == vec![Some(entries[1].asset_id), Some(entries[2].asset_id)],
+        stored.iter().all(Placement::is_loaded)
+            && stored.iter().map(|p| p.asset_id()).collect::<Vec<_>>()
+                == vec![Some(entries[1].asset_id), Some(entries[2].asset_id)],
     );
     scenario.assertion(
         "keyboard drop has the literal pointer-centered geometry",
@@ -2975,6 +2976,14 @@ fn inspect_search_keyboard_placement_writes_artifact() {
     inspect_click_at(&harness, egui::pos2(850.0, 580.0), egui::Modifiers::NONE);
     harness.step();
     harness.state_mut().flush_persistence();
+    scenario.assertion(
+        "all-results placements are durable loaded content",
+        library
+            .load_placements()
+            .unwrap()
+            .iter()
+            .all(Placement::is_loaded),
+    );
     scenario.assertion(
         "Mod-Enter and click commit each result once",
         library
