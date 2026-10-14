@@ -1,4 +1,5 @@
 """Source synchronization inventory protects machine files and tracks removals."""
+import os
 from pathlib import Path
 import runpy
 import subprocess
@@ -6,6 +7,15 @@ import tempfile
 import unittest
 
 source_paths = runpy.run_path(str(Path(__file__).with_name('windows-sync.py')))['source_paths']
+
+
+def setUpModule():
+    # Run git against the scratch repos only. A git hook or `rebase --exec`
+    # exports GIT_DIR, and `git init` under it rewrites the outer repo's config.
+    local_vars = subprocess.run(['git', 'rev-parse', '--local-env-vars'],
+                                capture_output=True, text=True, check=True).stdout.split()
+    for name in local_vars:
+        os.environ.pop(name, None)
 
 
 class WindowsSyncTests(unittest.TestCase):

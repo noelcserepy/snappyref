@@ -15,6 +15,11 @@ while read -r _ local_sha _ _; do
 done
 (( pushes_code )) || exit 0
 
+# Git exports repository variables such as GIT_DIR to hooks. Tests that run git
+# in a scratch repo would otherwise act on this one: in a worktree, `git init`
+# then sets core.bare=true in the shared config and breaks every checkout.
+unset $(git rev-parse --local-env-vars)
+
 echo "[pre-push] cargo fmt --check"
 cargo fmt --check
 
