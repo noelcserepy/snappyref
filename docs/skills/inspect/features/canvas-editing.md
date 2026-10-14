@@ -96,11 +96,10 @@ Preconditions:
 - C and R are hold keys. Hold them with `key_down` before the pointer press.
   A, L, and S arm a draw mode on a tap, and T places a label on a tap. See
   [Annotations](./annotations.md).
-- P "Dedupe library" has no scenario, and no test presses P.
-  `copied_group_survives_dedupe_and_reopen` in `src/app/tests/groups.rs`
-  reaches the dedupe a board switch runs, not the shortcut.
-  `exact_dedupe_relinks_placements_to_first_asset_and_deletes_duplicates` in
-  `src/library/storage/tests/assets.rs` checks the merge itself.
+- `library-dedupe-shortcut` presses P on two identical red assets and one
+  distinct blue asset. It checks the status, canonical asset links in the
+  reloaded canvas and reopened library, placement geometry, removed duplicate
+  file, surviving originals, and a second P that keeps the links intact.
 - A drag needs held steps. The app waits 90 ms and a small distance before a
   move starts.
 - Q, W, E, the arrow keys, and ⇧⌘L need 2 or more images selected.

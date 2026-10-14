@@ -97,8 +97,9 @@ Preconditions:
   `src/app/tests/control.rs` sends `add_images` over the socket with a worker.
 - A tool reply is sent before the app draws the result, and a board edit
   reaches the library through a write queue the reply does not wait for.
-  Neither route proves a tool edit reached the disk. For that, read the
-  library back after a flush in a scenario.
+  `ai-control` flushes after Redo and reads an independently reopened library.
+  It asserts the label text, rectangle and arrow identities, Group name and
+  members, and literal arrow endpoints. The reply alone is not durability.
 - `mcp-all-tools.json` takes its ids from earlier replies, as in
   `"$6.items.0.id"`. Do the same in a new calls file. Boards, items, and
   groups share one id sequence, and asset ids follow import completion order,

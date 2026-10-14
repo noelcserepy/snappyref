@@ -59,8 +59,9 @@ Preconditions:
 - **Sidebar pages.** Run `run-scenario.sh sidebar-pages`. It renders the
   "Boards", "General", and "Keys" pages with long board names.
 - **Restart.** Run `run-scenario.sh session-restart-restore`. It drives a drag,
-  a zoom, and ⌘B, then saves and flushes in code. A second app instance then
-  reopens the same library in code.
+  a zoom, and ⌘B on the first board, then creates and edits a second board.
+  A second app instance reopens the same library with the second board active.
+  Shortcuts switch to both boards and verify their distinct edits and views.
 - **Board tools in the real app.** Run
   `docs/skills/inspect/scripts/mcp-drive.py docs/skills/inspect/scripts/mcp-all-tools.json`
   after a debug build. It creates, renames,
@@ -72,8 +73,9 @@ Preconditions:
 - Rename by double-click has no scenario.
 - Switching by clicking a board row has no scenario. `sidebar-pages` only
   hovers a row, and `canvas-navigation-boards` switches with ⌘1.
-- Restoring the active board among several boards after a restart has no
-  scenario. The restart scenario has one board.
+- `session-restart-restore` saves and flushes explicitly before restarting.
+  The process-exit flush itself is covered by
+  `real_startup_and_exit_keep_pending_content_session_and_history`.
 - The last board cannot be deleted.
 - Deleting a board archives it. When it was the active board, the app moves
   to the previous board in the list, or the next one when the first board was
