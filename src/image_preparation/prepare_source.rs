@@ -14,7 +14,7 @@ use crate::image_preparation::image_formats::{
 };
 use crate::library::storage::{Library, sha256_bytes, sha256_file};
 
-use super::decode::{PreparedImage, install_prepared_canvas_cache, prepare_image_with_helper};
+use super::decode::{ImagePrepHelper, PreparedImage, install_prepared_canvas_cache};
 use super::preview_texture::build_preview_texture;
 use super::{
     CanvasImageSettings, ImagePrepPreviewTexture, ImagePrepResult, ImportRequest, ImportSource,
@@ -53,6 +53,7 @@ pub fn import_path_sync(
             },
         ),
         None,
+        &ImagePrepHelper::default(),
     )
 }
 
@@ -60,12 +61,13 @@ pub(crate) fn import(
     library: &Library,
     request: ImportRequest,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
+    helper: &ImagePrepHelper,
 ) -> ImagePrepResult {
     let target_board_id = request.target_board_id;
     let queue_id = request.queue_id;
     let placement_id = request.placement_id;
     let context = request.source.label();
-    match import_sync(library, request, wgpu_render_state) {
+    match import_sync(library, request, wgpu_render_state, helper) {
         Ok(loaded) => ImagePrepResult::Loaded(Box::new(loaded)),
         Err(error) => ImagePrepResult::Failed {
             target_board_id: Some(target_board_id),
@@ -81,6 +83,7 @@ pub(crate) fn import_sync(
     library: &Library,
     request: ImportRequest,
     wgpu_render_state: Option<&eframe::egui_wgpu::RenderState>,
+    helper: &ImagePrepHelper,
 ) -> Result<PreparedPlacementImage, String> {
     let worker_started_at = Instant::now();
     let ImportRequest {
@@ -100,7 +103,7 @@ pub(crate) fn import_sync(
     let origin = source.origin();
 
     let decode_started_at = Instant::now();
-    let decoded = decode_import_source(source, canvas_image_settings)?;
+    let decoded = decode_import_source(source, canvas_image_settings, helper)?;
     if let Some(trace) = &mut trace {
         trace.timings.decode_or_load = decode_started_at.elapsed();
     }
@@ -274,6 +277,7 @@ enum ImportPixels {
 fn decode_import_source(
     source: ImportSource,
     canvas_image_settings: CanvasImageSettings,
+    helper: &ImagePrepHelper,
 ) -> Result<DecodedImportSource, String> {
     match source {
         ImportSource::Path(source_path) => {
@@ -287,9 +291,7 @@ fn decode_import_source(
                     pixels: ImportPixels::Svg { bytes: svg.bytes },
                 });
             }
-            if let Some(prepared) =
-                prepare_image_with_helper(&source_path, canvas_image_settings).unwrap_or(None)
-            {
+            if let Some(prepared) = helper.prepare(&source_path, canvas_image_settings)? {
                 return Ok(DecodedImportSource {
                     source_width: prepared.source_width,
                     source_height: prepared.source_height,
