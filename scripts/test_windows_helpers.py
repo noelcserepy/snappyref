@@ -139,9 +139,11 @@ sys.exit(subprocess.run(shlex.split(sys.argv[-1])).returncode)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn('Set SNAPPYREF_WINDOWS_WAKE_CMD in .env.windows', result.stderr)
         self.assertFalse(self.log.exists())
-        self.env['SNAPPYREF_WINDOWS_WAKE_CMD'] = 'false'
+        # A failing command's own status, even 2, must not read as missing config.
+        self.env['SNAPPYREF_WINDOWS_WAKE_CMD'] = 'exit 2'
         result = self.run_script('windows-wake.sh')
         self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('The wake command failed.', result.stderr)
         self.assertFalse(self.log.exists())
         self.env['SNAPPYREF_WINDOWS_WAKE_CMD'] = 'true'
         self.env['SSH_RESULT'] = '255'

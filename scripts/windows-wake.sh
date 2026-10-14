@@ -17,7 +17,10 @@ if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
-bash -c "$SNAPPYREF_WINDOWS_WAKE_CMD"
+if ! bash -c "$SNAPPYREF_WINDOWS_WAKE_CMD"; then
+  echo 'The wake command failed.' >&2
+  exit 1
+fi
 
 echo 'Wake command ran. Waiting for Windows SSH.'
 python3 - "$SNAPPYREF_WINDOWS_HOST" "$timeout_seconds" <<'PYTHON'
