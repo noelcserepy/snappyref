@@ -29,7 +29,7 @@ on:
         default: true
         type: boolean
       publish_update:
-        description: Sign latest.json and draft the snappyref-dist bridge. Off for a dry run that only attaches zips
+        description: Sign latest.json. Off for a dry run that only attaches zips
         required: false
         default: true
         type: boolean
@@ -52,9 +52,6 @@ on:
 permissions:
   actions: read
   contents: write
-
-env:
-  DIST_REPO: noelcserepy/snappyref-dist
 
 jobs:
   resolve:
@@ -226,35 +223,6 @@ jobs:
             assets+=("${RUNNER_TEMP}/release-assets/latest.json")
           fi
           scripts/upload-release-assets.sh "${{ needs.resolve.outputs.tag }}" "${{ needs.resolve.outputs.sha }}" "${assets[@]}"
-
-      # Apps from v0.3.0 and older read latest.json from snappyref-dist. This
-      # copy's zip URLs point at this repo, so they update here once and then
-      # read this repo's manifest.
-      - name: Draft snappyref-dist bridge manifest
-        if: ${{ inputs.publish_update }}
-        env:
-          GH_TOKEN: ${{ secrets.DIST_REPO_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag="${{ needs.resolve.outputs.tag }}"
-
-          if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "DIST_REPO_TOKEN secret is not configured" >&2
-            exit 1
-          fi
-
-          if ! gh release view "$tag" --repo "$DIST_REPO" >/dev/null 2>&1; then
-            gh release create "$tag" \
-              --repo "$DIST_REPO" \
-              --title "SnappyRef $tag" \
-              --notes "SnappyRef releases moved to https://github.com/noelcserepy/snappyref/releases." \
-              --draft
-          fi
-
-          gh release upload "$tag" \
-            --repo "$DIST_REPO" \
-            "${RUNNER_TEMP}/release-assets/latest.json" \
-            --clobber
 
       - name: Refresh SnappyRef web release data
         if: ${{ inputs.publish_update }}

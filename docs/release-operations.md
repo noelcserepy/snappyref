@@ -11,8 +11,8 @@ into ordinary app release zips.
   follows the newest published release that is not a prerelease.
 - The standalone `snappyref-semantic-search.zip` lives on the `semantic-search`
   prerelease, which never takes the `latest` alias.
-- `snappyref-dist` is the old release host. Apps from v0.3.0 and older still read
-  its `latest.json` and its model package. See [Dist bridge](#dist-bridge).
+- `snappyref-dist` is the old release host, now archived. See
+  [Older apps](#older-apps).
 - App release zips contain a single top-level `SnappyRef/` folder.
 - macOS zips contain `SnappyRef/SnappyRef.app/`, including the macOS
   `snappyref-updater` helper and `Contents/Resources/THIRD_PARTY_NOTICES.txt`
@@ -34,8 +34,6 @@ into ordinary app release zips.
 
 - `MANIFEST_SIGNING_KEY`: ed25519 private key used by
   `publish-full-release.yml` to sign `latest.json`.
-- `DIST_REPO_TOKEN`: fine-grained token with Contents read/write access to
-  `noelcserepy/snappyref-dist`, used only for the [Dist bridge](#dist-bridge).
 - Public key: [keys/signing-key.pub.pem](keys/signing-key.pub.pem) is the single
   source for release verification and the app's trusted key. Cargo decodes and
   validates it during the build, then embeds its 32 key bytes. The installed app
@@ -59,15 +57,12 @@ by a key they do not know.
 8. Publish the draft release here. That makes its `latest.json` the update for
    current apps and creates the release tag on the commit the run built, which
    the patchnotes range starts from next time.
-9. Then publish the `snappyref-dist` bridge draft with the same tag. In the other
-   order, older apps read a manifest whose zips are still draft assets, and
-   their download fails until the release here is public.
-10. Run [update smokes](#update-smokes) only on explicit user request.
+9. Run [update smokes](#update-smokes) only on explicit user request.
 
 The run refuses to upload to a tag that is already published, because installed
 apps check those zips against the published `latest.json`. Bump the version
 first, even for a dry run. A dry run dispatches with `publish_update=false`. The
-zips land on the draft here, with no `latest.json` and no bridge draft. A dry run
+zips land on the draft here, with no `latest.json`. A dry run
 cannot replace the zips of a signed draft. Rerun with `publish_update` or delete
 the draft.
 
@@ -78,20 +73,15 @@ gh workflow run publish-full-release.yml --ref main -f ref=main -f publish_updat
 Before a release, walk the [feature list](release-functional-test-plan.md) on
 macOS and Windows. It excludes app updating.
 
-## Dist bridge
+## Older apps
 
 Apps from v0.3.0 and older check
-`snappyref-dist/releases/latest/download/latest.json` for updates. Their
-Semantic Search install downloads the model package from dist's
-`semantic-search` release. While `publish_update` is on, every release also
-drafts a dist release with the same tag that holds only the signed
-`latest.json`. Its zip URLs point here, so an older app updates once and then
-reads this repo's manifest.
-
-Retire the bridge in its own change once it has been stable for a while.
-Delete the bridge step and `DIST_REPO_TOKEN`, then archive `snappyref-dist` with
-a README pointing here. Archive it rather than deleting it. Installs that never
-updated still need the last bridge `latest.json` and the dist model package.
+`snappyref-dist/releases/latest/download/latest.json` for updates and download
+the Semantic Search model from dist's `semantic-search` release. The v0.3.1
+release published a copy of its signed `latest.json` there, with zip URLs
+pointing here, so an older app updates to v0.3.1 once and reads this repo's
+manifest from then on. `snappyref-dist` is archived and must stay online, not
+deleted, for installs that have not updated yet.
 
 ## Publish Semantic Search Asset
 
