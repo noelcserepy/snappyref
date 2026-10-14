@@ -94,7 +94,7 @@ fn inspect_rotated_corner_resize_outside_canvas_writes_artifact() {
         true,
     );
     scenario.capture_screen("screen-002-undone", &mut harness);
-    finish(scenario);
+    scenario.finish();
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn inspect_snapped_drag_release_and_command_bypass_writes_artifact() {
     assert_eq!(center_of(&harness, id), egui::pos2(-122.0, 0.0));
     scenario.assertion("Command release commits unsnapped center (-122,0)", true);
     scenario.capture_screen("screen-002-bypassed", &mut harness);
-    finish(scenario);
+    scenario.finish();
 }
 
 #[test]
@@ -280,5 +280,5 @@ fn inspect_marquee_clipped_group_and_shift_add_writes_artifact() {
         true,
     );
     scenario.capture_screen("screen-001-shift-added", &mut harness);
-    finish(scenario);
+    scenario.finish();
 }

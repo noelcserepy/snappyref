@@ -173,7 +173,6 @@ pub(super) struct InspectScenario {
 }
 
 pub(super) struct InspectReport {
-    pub(super) passed: bool,
     pub(super) artifact_dir: PathBuf,
 }
 
@@ -544,10 +543,12 @@ impl InspectScenario {
         )
         .unwrap();
 
-        InspectReport {
-            passed: self.passed,
-            artifact_dir,
-        }
+        assert!(
+            self.passed,
+            "inspect scenario failed; artifact={}",
+            artifact_dir.display()
+        );
+        InspectReport { artifact_dir }
     }
 }
 
@@ -1072,4 +1073,56 @@ impl SnappyRefApp {
             crate::image_preparation::ImagePrepResult::Loaded(Box::new(loaded)),
         );
     }
+}
+
+#[test]
+fn finish_reports_failure_before_panicking_and_returns_success_artifacts() {
+    let mut failed = InspectScenario::new("finish-failed-check");
+    failed.assertion("blue placement restores", false);
+    let artifact_dir = failed.artifact_dir.clone();
+    let panic = match std::panic::catch_unwind(|| failed.finish()) {
+        Ok(_) => panic!("finish accepted a failed inspect check"),
+        Err(panic) => panic,
+    };
+    let message = panic.downcast_ref::<String>().unwrap();
+    assert_eq!(
+        message,
+        &format!(
+            "inspect scenario failed; artifact={}",
+            artifact_dir.display()
+        )
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(artifact_dir.join("report.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["status"], "fail");
+    assert_eq!(report["first_failure"], "blue placement restores");
+    assert_eq!(
+        report["assertions"],
+        serde_json::json!([{
+            "type": "assertion",
+            "name": "blue placement restores",
+            "passed": false,
+        }])
+    );
+    assert_eq!(
+        fs::read_to_string(artifact_dir.parent().unwrap().join("latest.txt")).unwrap(),
+        artifact_dir.display().to_string()
+    );
+
+    let mut passed = InspectScenario::new("finish-passed-check");
+    passed.assertion("blue placement restores", true);
+    let report = passed.finish();
+    let saved: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(report.artifact_dir.join("report.json")).unwrap())
+            .unwrap();
+    assert_eq!(saved["status"], "pass");
+    assert_eq!(
+        saved["assertions"],
+        serde_json::json!([{
+            "type": "assertion",
+            "name": "blue placement restores",
+            "passed": true,
+        }])
+    );
 }

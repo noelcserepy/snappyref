@@ -346,8 +346,7 @@ fn inspect_pureref_import_writes_artifact() {
     );
     scenario.capture_screen("undone", &mut harness);
 
-    let report = scenario.finish();
-    assert!(report.passed, "{}", report.artifact_dir.display());
+    scenario.finish();
 }
 
 #[test]
@@ -507,6 +506,5 @@ fn inspect_pureref_export_writes_artifact() {
             ),
     );
 
-    let report = scenario.finish();
-    assert!(report.passed, "{}", report.artifact_dir.display());
+    scenario.finish();
 }

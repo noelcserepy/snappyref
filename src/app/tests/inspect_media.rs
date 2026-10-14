@@ -145,8 +145,7 @@ fn inspect_external_image_format_gallery_writes_artifact() {
                     == geometry,
         );
     }
-    let report = scenario.finish();
-    assert!(report.passed, "{}", report.artifact_dir.display());
+    scenario.finish();
 }
 
 /// README board screenshot: public-domain references in justified rows.
@@ -225,8 +224,7 @@ fn inspect_readme_board_writes_artifact() {
     let stats = scenario.capture_screen("board", &mut harness);
     scenario.assertion("all references placed", ids.len() == placed);
     scenario.assertion("board frame is opaque", stats.transparent_pixels == 0);
-    let report = scenario.finish();
-    assert!(report.passed, "{}", report.artifact_dir.display());
+    scenario.finish();
 }
 
 /// A tiny oriented RGB TIFF. The six colored pixels make rotations and mirrors visible.
@@ -439,10 +437,5 @@ fn inspect_image_format_gallery_writes_artifact() {
         );
         scenario.capture_screen(&format!("page-{page}-after-space"), &mut harness);
     }
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }

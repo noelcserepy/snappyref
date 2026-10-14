@@ -168,15 +168,6 @@ fn step_until_placement_loaded(harness: &mut Harness<'_, SnappyRefApp>, placemen
     false
 }
 
-fn finish(scenario: InspectScenario) {
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
-}
-
 #[test]
 fn inspect_canvas_edit_operations_writes_artifact() {
     let mut scenario = InspectScenario::new("canvas-edit-operations");
@@ -453,7 +444,7 @@ fn inspect_canvas_edit_operations_writes_artifact() {
             && stored_annotations[0].text == "Note",
     );
 
-    finish(scenario);
+    scenario.finish();
 }
 
 #[test]
@@ -633,7 +624,7 @@ fn inspect_canvas_navigation_and_boards_writes_artifact() {
         library.list_boards().unwrap().len() == 2,
     );
 
-    finish(scenario);
+    scenario.finish();
 }
 
 #[test]
@@ -844,7 +835,7 @@ fn inspect_session_restart_restore_writes_artifact() {
     );
     scenario.capture_screen("screen-004-second-board-restored", &mut harness);
 
-    finish(scenario);
+    scenario.finish();
 }
 
 #[test]
@@ -966,7 +957,7 @@ fn inspect_persistence_write_retry_writes_artifact() {
     );
     scenario.capture_screen("screen-002-recovered", &mut harness);
 
-    finish(scenario);
+    scenario.finish();
 }
 
 #[test]
@@ -1377,7 +1368,7 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
     );
 
     server.join().unwrap();
-    finish(scenario);
+    scenario.finish();
 }
 
 #[test]
@@ -1831,7 +1822,7 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
         );
     }
     scenario.capture_screen("screen-001-after-layouts", &mut harness);
-    finish(scenario);
+    scenario.finish();
 }
 
 #[path = "pointer_contracts.rs"]
@@ -1999,7 +1990,7 @@ fn inspect_library_dedupe_shortcut_writes_artifact() {
         serde_json::json!(harness.state().status),
     );
     scenario.capture_screen("screen-002-repeated", &mut harness);
-    finish(scenario);
+    scenario.finish();
 }
 
 #[cfg(target_os = "macos")]
@@ -2087,5 +2078,5 @@ fn inspect_browser_url_drop_writes_artifact() {
     );
     let _ = stop_tx.send(());
     server.join().unwrap();
-    finish(scenario);
+    scenario.finish();
 }

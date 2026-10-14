@@ -146,12 +146,7 @@ fn inspect_search_result_drag_to_canvas_writes_artifact() {
     );
     scenario.capture_screen("screen-after-release", &mut harness);
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -239,12 +234,7 @@ fn inspect_semantic_search_install_accepts_prompt() {
                 == LocalModelStoreStatus::Installed,
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -323,12 +313,7 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
     harness.run();
     scenario.capture_screen("screen-shortcuts-end", &mut harness);
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -530,12 +515,7 @@ fn inspect_sidebar_pages_writes_artifact() {
             && harness.get_by_label("New board").rect().bottom() < 360.0,
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -578,12 +558,7 @@ fn inspect_sample_image_import_writes_artifact() {
     ];
     scenario.drive_import_lifecycle(&mut harness, &samples);
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -674,12 +649,7 @@ fn inspect_delete_board_modal_flash_writes_artifact() {
                 .any(|board| board.id == second.id),
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -950,12 +920,7 @@ fn inspect_board_lifecycle_undo_redo_writes_artifact() {
                 .all(|board| board.id != created.id),
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -1072,12 +1037,7 @@ fn inspect_compact_windows_column_images_writes_artifact() {
             .is_some_and(|aspect| aspect <= 16.0 / 9.0),
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -1179,12 +1139,7 @@ fn inspect_compact_mixed_column_images_writes_artifact() {
             .is_some_and(|aspect| aspect <= 3.0),
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -1289,12 +1244,7 @@ fn inspect_compact_equal_size_images_writes_artifact() {
             .is_some_and(|count| count > 1),
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -1581,12 +1531,7 @@ fn inspect_search_composer_writes_artifact() {
 
     scenario.assertion("every composer frame is opaque", all_opaque);
     scenario.assertion("result previews decoded before capture", previews_ready);
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -1864,12 +1809,7 @@ fn inspect_blue_image_search_drag_writes_artifact() {
         harness.state().placement_creation.pending_len() == 0,
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -1999,12 +1939,7 @@ fn inspect_placement_click_hold_flash_writes_artifact() {
         selected == vec![placement_id],
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -2186,12 +2121,7 @@ fn inspect_delete_undo_redo_placement_writes_artifact() {
         library.load_placements().unwrap().is_empty(),
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -2468,12 +2398,7 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
                 == vec![Some(cropped_asset_id)],
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -2706,12 +2631,7 @@ fn inspect_pending_drop_batch_undo_writes_artifact() {
         library.load_placements().unwrap().is_empty(),
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 /// Downloads the real model bundle. Run via
@@ -2774,12 +2694,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
     if matches!(initial_status, LocalModelStoreStatus::Installed) {
         scenario.assertion("semantic search already installed", true);
         scenario.capture_screen("screen-001-installed", &mut harness);
-        let report = scenario.finish();
-        assert!(
-            report.passed,
-            "inspect scenario failed; artifact={}",
-            report.artifact_dir.display()
-        );
+        scenario.finish();
         return;
     }
 
@@ -2816,12 +2731,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
         |status| matches!(status, LocalModelStoreStatus::Installed),
     );
 
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -3138,12 +3048,7 @@ fn inspect_search_keyboard_placement_writes_artifact() {
                 == vec!["stone arches", "blue chairs"],
     );
     scenario.capture_screen("screen-008-clicked-recent", &mut harness);
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -3328,10 +3233,5 @@ fn inspect_sidebar_board_shortcuts_writes_artifact() {
         harness.state().active_board_id == first.id,
     );
     scenario.capture_screen("screen-004-renamed", &mut harness);
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }

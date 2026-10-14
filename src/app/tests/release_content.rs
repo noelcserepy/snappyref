@@ -582,12 +582,7 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
             .text
             == "edited after moving",
     );
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -660,12 +655,7 @@ fn inspect_annotation_endpoint_drag_writes_artifact() {
     }
 
     scenario.capture_screen("edited-endpoints", &mut harness);
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
 
 #[test]
@@ -1019,10 +1009,5 @@ fn inspect_annotation_text_sessions_writes_artifact() {
             .is_some_and(|a| a.text == "hello"),
     );
     scenario.capture_screen("undo-cleared-label", &mut restored);
-    let report = scenario.finish();
-    assert!(
-        report.passed,
-        "inspect scenario failed; artifact={}",
-        report.artifact_dir.display()
-    );
+    scenario.finish();
 }
