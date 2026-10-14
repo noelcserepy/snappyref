@@ -1288,26 +1288,42 @@ fn malformed_xpm_fails_its_import_and_the_worker_accepts_the_next_image() {
 }
 
 pub(super) fn helper_fixture() -> &'static Path {
-    static FIXTURE: std::sync::OnceLock<(TempRoot, PathBuf)> = std::sync::OnceLock::new();
-    &FIXTURE
-        .get_or_init(|| {
-            let root = TempRoot::new("imageprep-process-fixture");
-            let binary = root.join(format!("helper{}", std::env::consts::EXE_SUFFIX));
-            let result = std::process::Command::new("rustc")
-                .arg("--edition=2024")
-                .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/helper/process.rs"))
-                .arg("-o")
-                .arg(&binary)
-                .output()
-                .unwrap();
-            assert!(
-                result.status.success(),
-                "{}",
-                String::from_utf8_lossy(&result.stderr)
-            );
-            (root, binary)
-        })
-        .1
+    static FIXTURE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    FIXTURE.get_or_init(|| {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/imageprep-process-fixture")
+            .join(std::process::id().to_string());
+        fs::create_dir_all(&root).unwrap();
+        let binary = root.join(format!("helper{}", std::env::consts::EXE_SUFFIX));
+        let result = std::process::Command::new("rustc")
+            .arg("--edition=2024")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/helper/process.rs"))
+            .arg("-o")
+            .arg(&binary)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        // Warm the newly compiled executable before testing short deadlines.
+        let warmup = root.join("warmup.rgba");
+        let result = std::process::Command::new(&binary)
+            .arg("--imageprep")
+            .arg("--source=warmup.png")
+            .arg(format!("--rgba-output={}", warmup.display()))
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(fs::read(&warmup).unwrap(), [30, 100, 220, 255]);
+        fs::remove_file(warmup).unwrap();
+        binary
+    })
 }
 
 fn assert_helper_failure_then_success(mode: &str, expected_error: &str) {
@@ -1315,7 +1331,11 @@ fn assert_helper_failure_then_success(mode: &str, expected_error: &str) {
     let library = Library::initialize(root.to_path_buf()).unwrap();
     let helper = super::decode::ImagePrepHelper {
         executable: Some(helper_fixture().to_path_buf()),
-        timeout: Duration::from_millis(500),
+        timeout: if mode == "hang" {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs(5)
+        },
     };
     let worker_library = library.clone();
     let worker = ImagePrepWorker::new_with_processor(
@@ -1354,7 +1374,7 @@ fn assert_helper_failure_then_success(mode: &str, expected_error: &str) {
         .unwrap();
     let result = worker
         .receiver
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(15))
         .unwrap();
     match result {
         ImagePrepResult::Failed {
@@ -1397,7 +1417,7 @@ fn assert_helper_failure_then_success(mode: &str, expected_error: &str) {
         .unwrap();
     match worker
         .receiver
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(15))
         .unwrap()
     {
         ImagePrepResult::Loaded(loaded) => {

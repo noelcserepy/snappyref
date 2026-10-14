@@ -536,7 +536,7 @@ mod tests {
                 .unwrap();
         let helper = ImagePrepHelper {
             executable: Some(crate::image_preparation::tests::helper_fixture().to_path_buf()),
-            timeout: std::time::Duration::from_millis(300),
+            timeout: std::time::Duration::from_secs(5),
         };
         let error = backfill_canvas_image_cache(
             &library,

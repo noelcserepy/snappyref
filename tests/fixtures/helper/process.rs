@@ -10,7 +10,7 @@ fn main() {
     match mode {
         "crash" => { eprintln!("fixture crash"); std::process::exit(9); }
         "invalid" => { println!("invalid helper JSON"); return; }
-        "hang" => thread::sleep(Duration::from_secs(2)),
+        "hang" => thread::sleep(Duration::from_secs(3)),
         _ => {}
     }
     fs::write(&output, [30, 100, 220, 255]).unwrap();
