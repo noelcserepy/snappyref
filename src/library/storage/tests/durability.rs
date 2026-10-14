@@ -350,3 +350,46 @@ fn terminal_embedding_failures_are_not_automatic_retry_jobs() {
             .is_none()
     );
 }
+
+#[test]
+fn interrupted_pending_embedding_is_backfilled_after_reopen() {
+    let root = TempRoot::new("snappyref-interrupted-embedding");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let path = library
+        .store_rgba_image("pending", &[255, 0, 0, 255], 1, 1)
+        .unwrap();
+    let asset = library
+        .register_original(&path, "image/png", 1, 1, 4, None)
+        .unwrap();
+    library
+        .upsert_asset_embedding_status(asset.id, "model", 2, EmbeddingStatus::Pending, None)
+        .unwrap();
+    assert!(
+        library
+            .next_embedding_backfill_job_for_model("model", i64::MAX)
+            .unwrap()
+            .is_none()
+    );
+    drop(library);
+
+    let reopened = Library::initialize(root.to_path_buf()).unwrap();
+    let job = reopened
+        .next_embedding_backfill_job_for_model("model", i64::MAX)
+        .unwrap()
+        .unwrap();
+    assert_eq!(job.asset_id, asset.id);
+    assert_eq!(job.original_path, path);
+    reopened
+        .upsert_asset_embedding_blob(asset.id, "model", &[1.0, 0.0])
+        .unwrap();
+    assert_eq!(
+        reopened.load_asset_embedding(asset.id, "model").unwrap(),
+        Some(vec![0, 0, 128, 63, 0, 0, 0, 0])
+    );
+    assert!(
+        reopened
+            .next_embedding_backfill_job_for_model("model", i64::MAX)
+            .unwrap()
+            .is_none()
+    );
+}

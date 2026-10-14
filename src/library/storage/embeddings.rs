@@ -44,6 +44,22 @@ const EMBEDDABLE_ASSET: &str = "a.archived = 0 AND lower(trim(a.mime_type)) <> '
 const RETRY_PENDING: &str =
     "e.status = 'failed' AND e.failure_kind = 'retryable' AND e.next_retry_at IS NOT NULL";
 
+/// Pending work has no live helper after reopening the Library. Preserve the
+/// failure count so an interrupted retry does not restart its retry budget.
+pub(super) fn recover_interrupted_embeddings(
+    transaction: &rusqlite::Transaction<'_>,
+) -> Result<(), String> {
+    transaction
+        .execute(
+            "UPDATE asset_embeddings
+         SET status = 'failed', failure_kind = 'retryable', next_retry_at = 0
+         WHERE status = 'pending'",
+            [],
+        )
+        .map_err(|error| format!("failed to recover interrupted embeddings: {error}"))?;
+    Ok(())
+}
+
 fn encode_f32_slice(values: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(std::mem::size_of_val(values));
     for value in values {

@@ -618,6 +618,7 @@ impl Library {
         ensure_canvas_stack_items_populated(&transaction)?;
         migrate_current_representations(&transaction, should_migrate_default_board_viewport)?;
         migrate_board_history_owners(&transaction)?;
+        super::embeddings::recover_interrupted_embeddings(&transaction)?;
         transaction
             .commit()
             .map_err(|error| format!("failed to commit schema upgrade: {error}"))?;
