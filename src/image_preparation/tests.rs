@@ -14,7 +14,6 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 fn downscaled_canvas_settings(max_side: u32) -> CanvasImageSettings {
@@ -519,12 +518,7 @@ fn import_path_source(request: &super::ImagePrepRequest) -> PathBuf {
 
 #[test]
 fn import_worker_drains_ready_results_in_capped_batches() {
-    let (result_tx, result_rx) = mpsc::channel();
-    let worker = ImagePrepWorker {
-        queue: Arc::new(super::RequestQueue::default()),
-        receiver: result_rx,
-        workers: Vec::new(),
-    };
+    let (worker, result_tx) = ImagePrepWorker::controlled();
 
     for index in 0..5 {
         result_tx
@@ -1372,10 +1366,7 @@ fn assert_helper_failure_then_success(mode: &str, expected_error: &str) {
     worker
         .enqueue(super::ImagePrepRequest::Import(request))
         .unwrap();
-    let result = worker
-        .receiver
-        .recv_timeout(Duration::from_secs(15))
-        .unwrap();
+    let result = next_preparation(&worker);
     match result {
         ImagePrepResult::Failed {
             target_board_id,
@@ -1415,11 +1406,7 @@ fn assert_helper_failure_then_success(mode: &str, expected_error: &str) {
     worker
         .enqueue(super::ImagePrepRequest::Import(request))
         .unwrap();
-    match worker
-        .receiver
-        .recv_timeout(Duration::from_secs(15))
-        .unwrap()
-    {
+    match next_preparation(&worker) {
         ImagePrepResult::Loaded(loaded) => {
             assert_eq!(loaded.queue_id, Some(11));
             assert_eq!((loaded.preview_width, loaded.preview_height), (1, 1));

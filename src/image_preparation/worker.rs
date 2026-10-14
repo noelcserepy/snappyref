@@ -15,7 +15,7 @@ use super::{
 
 pub struct ImagePrepWorker {
     pub(super) queue: Arc<RequestQueue>,
-    pub(super) receiver: Receiver<ImagePrepResult>,
+    receiver: Receiver<ImagePrepResult>,
     pub(super) workers: Vec<JoinHandle<()>>,
 }
 
