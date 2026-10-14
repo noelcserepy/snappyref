@@ -228,7 +228,11 @@ impl SearchController {
             .clone()
             .unwrap_or(LocalModelStoreStatus::Missing);
         #[cfg(not(test))]
-        let model_store_status = crate::search::semantic::default_local_model_store_status();
+        let model_store_status = if self.local_model_store_status.is_none() {
+            crate::search::semantic::initialize_default_local_model_store_status()
+        } else {
+            crate::search::semantic::default_local_model_store_status()
+        };
         self.sync_model_store_status(model_store_status, status);
         if !self
             .local_model_store_status
