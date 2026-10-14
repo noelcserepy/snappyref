@@ -402,11 +402,22 @@ impl UpdateService {
                         "result outcome={:?} state_before={:?}",
                         result, self.state
                     ));
+                    let discovered_version_during_download = match (&self.state, &result) {
+                        (
+                            UpdateState::Downloading { .. },
+                            CheckOutcome::NewerAvailable { release },
+                        ) => Some(release.version.clone()),
+                        _ => None,
+                    };
                     self.state.apply(result);
                     self.write_diagnostic(&format!("state_after={:?}", self.state));
                     if let UpdateState::Available { release } = &self.state {
                         let release = release.clone();
                         self.detect_existing_staging(&release);
+                    } else if let Some(version) = discovered_version_during_download
+                        && let Some(root) = self.resolved_install_root()
+                    {
+                        self.sweep_stale_staging(&root, &version);
                     }
                 }
                 Err(TryRecvError::Empty) => {
@@ -1317,14 +1328,32 @@ mod tests {
     }
 
     #[test]
-    fn staging_sweep_keeps_manifest_and_in_flight_download_payloads() {
+    fn discovery_preserves_the_active_install_and_both_staging_versions() {
         let root = TempRoot::new("in-flight-staging");
         let mut service = UpdateService::new(UpdateConfig {
+            current_version: "0.1.0".into(),
             install_root: Some(root.to_path_buf()),
             ..UpdateConfig::for_tests()
         });
+        let mut releases = std::collections::VecDeque::from([
+            CheckOutcome::NewerAvailable {
+                release: manifest_with("2.0.0"),
+            },
+            CheckOutcome::NewerAvailable {
+                release: manifest_with("3.0.0"),
+            },
+        ]);
+        service.fetch_override = Some(Box::new(move || releases.pop_front().unwrap()));
+        drive_until_quiescent(&mut service);
+        let (started_tx, started_rx) = channel();
+        service.install_override = Some(Box::new(move |context, progress| {
+            started_tx.send((context, progress)).unwrap();
+        }));
+        service.start_install();
+        let (context, _in_flight_worker) = started_rx.recv().unwrap();
+        assert_eq!(context.version, "2.0.0");
         for (version, bytes) in [
-            ("1.0.0", b"manifest".as_slice()),
+            ("3.0.0", b"manifest".as_slice()),
             ("2.0.0", b"downloading".as_slice()),
             ("0.9.0", b"stale".as_slice()),
         ] {
@@ -1332,10 +1361,17 @@ mod tests {
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("marker"), bytes).unwrap();
         }
-        service.state.begin_install("2.0.0".into());
-        service.sweep_stale_staging(&root, "1.0.0");
+        service.request_check_now();
+        drive_until_quiescent(&mut service);
         assert_eq!(
-            std::fs::read(install_paths::staging_dir(&root, "1.0.0").join("marker")).unwrap(),
+            service.state(),
+            &UpdateState::Downloading {
+                version: "2.0.0".into(),
+                percent: 0
+            }
+        );
+        assert_eq!(
+            std::fs::read(install_paths::staging_dir(&root, "3.0.0").join("marker")).unwrap(),
             b"manifest"
         );
         assert_eq!(
