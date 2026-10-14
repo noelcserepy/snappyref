@@ -2818,25 +2818,25 @@ fn inspect_search_keyboard_placement_writes_artifact() {
     harness.step();
     scenario.assertion(
         "Right selects the second result",
-        harness.state().search.overlay.result_selection.selected() == &[1],
+        harness.state().search.overlay.result_selection.selected() == [1],
     );
     harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowRight);
     harness.step();
     scenario.assertion(
         "Shift-Right extends selection to second and third results",
-        harness.state().search.overlay.result_selection.selected() == &[1, 2],
+        harness.state().search.overlay.result_selection.selected() == [1, 2],
     );
     harness.key_press(egui::Key::ArrowDown);
     harness.step();
     scenario.assertion(
         "Down selects the final result on the second row",
-        harness.state().search.overlay.result_selection.selected() == &[5],
+        harness.state().search.overlay.result_selection.selected() == [5],
     );
     harness.key_press(egui::Key::ArrowUp);
     harness.step();
     scenario.assertion(
         "Up returns to the first row",
-        harness.state().search.overlay.result_selection.selected() == &[0],
+        harness.state().search.overlay.result_selection.selected() == [0],
     );
     harness.key_press(egui::Key::ArrowRight);
     harness.step();
