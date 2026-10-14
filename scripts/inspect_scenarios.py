@@ -12,6 +12,8 @@ from inspect_artifact import load_report
 ROOT = Path(__file__).resolve().parents[1]
 # name: test filter, artifact scenario, network/ignored
 SCENARIOS = {
+    'library-dedupe-shortcut': ('inspect_library_dedupe_shortcut_writes_artifact', 'library-dedupe-shortcut', False),
+    'search-keyboard-placement': ('inspect_search_keyboard_placement_writes_artifact', 'search-keyboard-placement', False),
     'rotated-corner-resize': ('inspect_rotated_corner_resize_outside_canvas_writes_artifact', 'rotated-corner-resize', False),
     'snapped-drag-commit': ('inspect_snapped_drag_release_and_command_bypass_writes_artifact', 'snapped-drag-commit', False),
     'marquee-clipped-group': ('inspect_marquee_clipped_group_and_shift_add_writes_artifact', 'marquee-clipped-group', False),

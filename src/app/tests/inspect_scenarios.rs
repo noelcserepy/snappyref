@@ -2762,3 +2762,284 @@ fn inspect_semantic_search_real_install_writes_artifact() {
         report.artifact_dir.display()
     );
 }
+
+#[test]
+fn inspect_search_keyboard_placement_writes_artifact() {
+    let mut scenario = InspectScenario::new("search-keyboard-placement");
+    let root = TempRoot::new("snappyref-search-keyboard-placement");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let entries = (0..6)
+        .map(|index| {
+            let path = library
+                .store_rgba_image(
+                    &format!("keyboard-{index}"),
+                    &solid_rgba([40 + index * 25, 100, 180, 255], 80, 60),
+                    80,
+                    60,
+                )
+                .unwrap();
+            let asset = library
+                .register_original(&path, "image/png", 80, 60, 19200, None)
+                .unwrap();
+            SearchResultAssetEntry {
+                asset_id: asset.id,
+                asset_preview_path: Some(path),
+                asset_width: 80,
+                asset_height: 60,
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut app = test_app(Some(library.clone()));
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+    app.search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+    app.canvas
+        .apply_viewport_state(&crate::data::ViewportState {
+            camera_pan_x: 0.0,
+            camera_pan_y: 0.0,
+            camera_zoom: 1.0,
+            ..Default::default()
+        });
+    let mut harness = app_full_harness(app);
+    harness.state_mut().search.overlay.open = true;
+    harness.state_mut().search.overlay.focus_requested = true;
+    harness.step();
+    harness.state_mut().search.overlay.results = entries.clone();
+    harness.state_mut().search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
+    harness
+        .state_mut()
+        .search
+        .overlay
+        .result_selection
+        .replace(0);
+    harness.step();
+    scenario.capture_screen("screen-000-results", &mut harness);
+    harness.key_press(egui::Key::ArrowRight);
+    harness.step();
+    scenario.assertion(
+        "Right selects the second result",
+        harness.state().search.overlay.result_selection.selected() == &[1],
+    );
+    harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowRight);
+    harness.step();
+    scenario.assertion(
+        "Shift-Right extends selection to second and third results",
+        harness.state().search.overlay.result_selection.selected() == &[1, 2],
+    );
+    harness.key_press(egui::Key::ArrowDown);
+    harness.step();
+    scenario.assertion(
+        "Down selects the final result on the second row",
+        harness.state().search.overlay.result_selection.selected() == &[5],
+    );
+    harness.key_press(egui::Key::ArrowUp);
+    harness.step();
+    scenario.assertion(
+        "Up returns to the first row",
+        harness.state().search.overlay.result_selection.selected() == &[0],
+    );
+    harness.key_press(egui::Key::ArrowRight);
+    harness.step();
+    harness.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowRight);
+    harness.step();
+    scenario.capture_screen("screen-001-keyboard-selection", &mut harness);
+    harness.hover_at(egui::pos2(900.0, 600.0));
+    harness.key_press(egui::Key::Enter);
+    harness.step();
+    let provisional = harness
+        .state()
+        .canvas
+        .provisional_placements_in_selection_order();
+    scenario.assertion(
+        "Enter picks up the selected second and third assets",
+        provisional.iter().map(|p| p.asset_id()).collect::<Vec<_>>()
+            == vec![Some(entries[1].asset_id), Some(entries[2].asset_id)],
+    );
+    scenario.capture_screen("screen-002-enter-provisional", &mut harness);
+    harness.key_press(egui::Key::Escape);
+    harness.step();
+    harness.state_mut().flush_persistence();
+    scenario.assertion(
+        "Escape cancels the picked-up batch without adding content",
+        harness.state().canvas.all_placement_ids().is_empty()
+            && library.load_placements().unwrap().is_empty(),
+    );
+    scenario.capture_screen("screen-003-canceled", &mut harness);
+
+    harness.state_mut().search.overlay.open = true;
+    harness.state_mut().search.overlay.focus_requested = true;
+    harness.step();
+    harness.state_mut().search.overlay.results = entries.clone();
+    harness.state_mut().search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
+    harness
+        .state_mut()
+        .search
+        .overlay
+        .result_selection
+        .replace(1);
+    harness
+        .state_mut()
+        .search
+        .overlay
+        .result_selection
+        .toggle(2);
+    harness.step();
+    harness.key_press(egui::Key::Enter);
+    harness.step();
+    inspect_click_at(&harness, egui::pos2(900.0, 600.0), egui::Modifiers::NONE);
+    harness.step();
+    harness.state_mut().flush_persistence();
+    let stored = library.load_placements().unwrap();
+    scenario.assertion(
+        "click places exactly the selected image identities",
+        stored.iter().map(|p| p.asset_id()).collect::<Vec<_>>()
+            == vec![Some(entries[1].asset_id), Some(entries[2].asset_id)],
+    );
+    scenario.assertion(
+        "keyboard drop has the literal pointer-centered geometry",
+        harness
+            .state()
+            .canvas
+            .selected_bounds_world()
+            .is_some_and(|b| b.center().distance(egui::pos2(300.0, 200.0)) < 0.1),
+    );
+    scenario.fact(
+        "keyboard.stored-placements",
+        serde_json::json!(stored.iter().map(inspect_placement).collect::<Vec<_>>()),
+    );
+    scenario.capture_screen("screen-004-placed", &mut harness);
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Z);
+    harness.step();
+    scenario.assertion(
+        "one Undo removes the committed batch",
+        harness.state().canvas.all_placement_ids().is_empty(),
+    );
+
+    harness.state_mut().search.overlay.open = true;
+    harness.state_mut().search.overlay.focus_requested = true;
+    harness.step();
+    harness.state_mut().search.overlay.results = entries.clone();
+    harness.state_mut().search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
+    harness
+        .state_mut()
+        .search
+        .overlay
+        .result_selection
+        .replace(0);
+    harness.step();
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Enter);
+    harness.step();
+    scenario.assertion(
+        "Mod-Enter picks up all six assets",
+        harness
+            .state()
+            .canvas
+            .provisional_placements_in_selection_order()
+            .iter()
+            .map(|p| p.asset_id())
+            .collect::<Vec<_>>()
+            == entries.iter().map(|e| Some(e.asset_id)).collect::<Vec<_>>(),
+    );
+    harness.key_press(egui::Key::Escape);
+    harness.step();
+    harness.key_press_modifiers(
+        egui::Modifiers {
+            shift: true,
+            ..inspect_command_modifier()
+        },
+        egui::Key::Z,
+    );
+    harness.step();
+    scenario.assertion(
+        "cancel adds no history entry and Redo restores the earlier committed batch",
+        harness
+            .state()
+            .canvas
+            .committed_placements()
+            .iter()
+            .map(|p| p.asset_id())
+            .collect::<Vec<_>>()
+            == vec![Some(entries[1].asset_id), Some(entries[2].asset_id)],
+    );
+    scenario.capture_screen("screen-005-redone-after-cancel", &mut harness);
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Z);
+    harness.step();
+    harness.state_mut().search.overlay.open = true;
+    harness.state_mut().search.overlay.focus_requested = true;
+    harness.step();
+    harness.state_mut().search.overlay.results = entries.clone();
+    harness.state_mut().search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
+    harness.step();
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Enter);
+    harness.step();
+    inspect_click_at(&harness, egui::pos2(850.0, 580.0), egui::Modifiers::NONE);
+    harness.step();
+    harness.state_mut().flush_persistence();
+    scenario.assertion(
+        "Mod-Enter and click commit each result once",
+        library
+            .load_placements()
+            .unwrap()
+            .iter()
+            .map(|p| p.asset_id())
+            .collect::<Vec<_>>()
+            == vec![Some(1), Some(2), Some(3), Some(4), Some(5), Some(6)],
+    );
+    scenario.assertion(
+        "all-results drop follows its literal pointer center",
+        harness
+            .state()
+            .canvas
+            .selected_bounds_world()
+            .is_some_and(|b| b.center().distance(egui::pos2(250.0, 180.0)) < 0.1),
+    );
+    scenario.capture_screen("screen-006-all-results-placed", &mut harness);
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::Z);
+    harness.step();
+    harness
+        .state_mut()
+        .search
+        .set_recent_searches(vec!["stone arches".into(), "blue chairs".into()]);
+    harness.state_mut().search.overlay.results.clear();
+    harness.state_mut().search.overlay.result_selection.clear();
+    harness.state_mut().search.overlay.query.clear();
+    harness
+        .state_mut()
+        .search
+        .overlay
+        .active_recent_search_index = 0;
+    harness.state_mut().search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
+    harness.state_mut().search.overlay.open = true;
+    harness.state_mut().search.overlay.focus_requested = true;
+    harness.step();
+    harness.key_press(egui::Key::ArrowDown);
+    harness.step();
+    harness.key_press(egui::Key::Enter);
+    harness.step();
+    scenario.assertion(
+        "recent arrows and Enter restore blue chairs",
+        harness.state().search.overlay.query == "blue chairs",
+    );
+    scenario.capture_screen("screen-007-keyboard-recent", &mut harness);
+    harness.key_press(egui::Key::Escape);
+    harness.step();
+    harness.state_mut().search.overlay.open = true;
+    harness.state_mut().search.overlay.focus_requested = true;
+    harness.step();
+    inspect_click_at(&harness, egui::pos2(350.0, 192.0), egui::Modifiers::NONE);
+    harness.step();
+    harness.state_mut().flush_persistence();
+    scenario.assertion(
+        "clicking the second recent restores stone arches and persists recency",
+        harness.state().search.overlay.query == "stone arches"
+            && library.load_user_session().unwrap().recent_searches
+                == vec!["stone arches", "blue chairs"],
+    );
+    scenario.capture_screen("screen-008-clicked-recent", &mut harness);
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
+}

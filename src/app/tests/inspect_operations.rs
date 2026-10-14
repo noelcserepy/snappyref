@@ -677,15 +677,51 @@ fn inspect_session_restart_restore_writes_artifact() {
         harness.step();
     }
     shortcut(&mut harness, CMD, egui::Key::B);
-    let saved_view = harness.state().canvas.viewport_state();
+    let first_view = harness.state().canvas.viewport_state();
     scenario.fact(
         "before-restart",
-        serde_json::json!({"center": [moved.x, moved.y], "zoom": saved_view.camera_zoom, "sidebar_open": harness.state().sidebar_open}),
+        serde_json::json!({"center": [moved.x, moved.y], "zoom": first_view.camera_zoom, "sidebar_open": harness.state().sidebar_open}),
     );
     scenario.capture_screen("screen-000-before-restart", &mut harness);
     harness.state_mut().persist_canvas_changes();
     harness.state_mut().save_user_session();
     harness.state_mut().flush_persistence();
+    let board_a = harness.state().active_board_id;
+    shortcut(&mut harness, CMD, egui::Key::N);
+    let board_b = harness.state().active_board_id;
+    harness
+        .state_mut()
+        .canvas
+        .apply_viewport_state(&crate::data::ViewportState {
+            camera_pan_x: 0.0,
+            camera_pan_y: 0.0,
+            camera_zoom: 1.0,
+            ..Default::default()
+        });
+    let blue = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "restart-blue",
+        [60, 100, 220, 255],
+        (120, 80),
+        egui::Pos2::ZERO,
+    );
+    drag_with_modifiers(
+        &mut harness,
+        screen.center(),
+        screen.center() + egui::vec2(75.0, -55.0),
+        egui::Modifiers::NONE,
+        egui::PointerButton::Primary,
+    );
+    scenario.assertion(
+        "second board gets its distinct blue edit",
+        center_of(&harness, blue.id()).distance(egui::pos2(75.0, -55.0)) < 0.1,
+    );
+    let saved_view = harness.state().canvas.viewport_state();
+    harness.state_mut().persist_canvas_changes();
+    harness.state_mut().save_user_session();
+    harness.state_mut().flush_persistence();
+    scenario.capture_screen("screen-001-second-board-before-restart", &mut harness);
     drop(harness);
 
     // Second instance: the real startup sequence (worker, session load,
@@ -706,12 +742,16 @@ fn inspect_session_restart_restore_writes_artifact() {
         app.board_lifecycle().restore().unwrap();
         app
     });
-    let loaded = step_until_placement_loaded(&mut harness, red.state.id);
+    let loaded = step_until_placement_loaded(&mut harness, blue.id());
+    scenario.assertion(
+        "restart restores the second board as active",
+        harness.state().active_board_id == board_b,
+    );
     let restored_view = harness.state().canvas.viewport_state();
     let restored_center = harness
         .state()
         .canvas
-        .placement_for_id(red.state.id)
+        .placement_for_id(blue.id())
         .map(|placement| placement.state.geometry.center);
     scenario.fact(
         "after-restart",
@@ -725,8 +765,8 @@ fn inspect_session_restart_restore_writes_artifact() {
     );
     scenario.assertion("restart loads the placement through the worker", loaded);
     scenario.assertion(
-        "restart restores the moved placement geometry",
-        restored_center.is_some_and(|c| approx(c, moved, 0.5)),
+        "restart restores the second board blue edit",
+        restored_center.is_some_and(|c| approx(c, egui::pos2(75.0, -55.0), 0.5)),
     );
     scenario.assertion(
         "restart restores zoom and pan",
@@ -738,7 +778,31 @@ fn inspect_session_restart_restore_writes_artifact() {
         "restart restores the open sidebar",
         harness.state().sidebar_open,
     );
-    scenario.capture_screen("screen-001-after-restart", &mut harness);
+    scenario.capture_screen("screen-002-second-board-after-restart", &mut harness);
+    shortcut(&mut harness, CMD, egui::Key::Num1);
+    let red_loaded = step_until_placement_loaded(&mut harness, red.id());
+    scenario.assertion(
+        "first board retains its distinct red edit after restart",
+        red_loaded
+            && harness.state().active_board_id == board_a
+            && center_of(&harness, red.id()).distance(egui::pos2(-120.0, 90.0)) < 0.1
+            && harness.state().canvas.all_placement_ids() == vec![red.id()],
+    );
+    scenario.assertion(
+        "first board retains its saved pan and zoom",
+        harness.state().canvas.viewport_state() == first_view,
+    );
+    scenario.capture_screen("screen-003-first-board-after-restart", &mut harness);
+    shortcut(&mut harness, CMD, egui::Key::Num2);
+    let blue_loaded = step_until_placement_loaded(&mut harness, blue.id());
+    scenario.assertion(
+        "switching back restores only the blue board content",
+        blue_loaded
+            && harness.state().active_board_id == board_b
+            && harness.state().canvas.all_placement_ids() == vec![blue.id()]
+            && center_of(&harness, blue.id()).distance(egui::pos2(75.0, -55.0)) < 0.1,
+    );
+    scenario.capture_screen("screen-004-second-board-restored", &mut harness);
 
     finish(scenario);
 }
@@ -1732,3 +1796,110 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
 
 #[path = "pointer_contracts.rs"]
 mod pointer_contracts;
+
+#[test]
+fn inspect_library_dedupe_shortcut_writes_artifact() {
+    let mut scenario = InspectScenario::new("library-dedupe-shortcut");
+    let root = TempRoot::new("snappyref-inspect-library-dedupe");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut harness = app_full_harness(test_app(Some(library.clone())));
+    let first = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "canonical",
+        [220, 60, 60, 255],
+        (120, 80),
+        egui::pos2(-180.0, 0.0),
+    );
+    let duplicate = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "duplicate",
+        [220, 60, 60, 255],
+        (120, 80),
+        egui::pos2(0.0, 0.0),
+    );
+    let distinct = seed_loaded_placement(
+        &library,
+        &mut harness,
+        "distinct",
+        [60, 100, 220, 255],
+        (120, 80),
+        egui::pos2(180.0, 0.0),
+    );
+    let ctx = harness.ctx.clone();
+    harness.state_mut().import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
+        library.clone(),
+        ctx,
+        None,
+    ));
+    let duplicate_asset = duplicate.require_loaded_asset();
+    scenario.assertion(
+        "fixture begins with three distinct asset identities",
+        [first.asset_id(), duplicate.asset_id(), distinct.asset_id()]
+            == [Some(1), Some(2), Some(3)],
+    );
+    scenario.capture_screen("screen-000-duplicates", &mut harness);
+    harness.key_press(egui::Key::P);
+    harness.step();
+    scenario.assertion(
+        "P reports the removed duplicate",
+        harness.state().status == "Removed 1 duplicate",
+    );
+    let loaded = step_until_placement_loaded(&mut harness, first.id())
+        && step_until_placement_loaded(&mut harness, duplicate.id())
+        && step_until_placement_loaded(&mut harness, distinct.id());
+    scenario.assertion(
+        "dedupe reloads both red placements using the canonical asset and keeps blue",
+        loaded
+            && [first.id(), duplicate.id(), distinct.id()].map(|id| {
+                harness
+                    .state()
+                    .canvas
+                    .placement_for_id(id)
+                    .and_then(|p| p.asset_id())
+            }) == [Some(1), Some(1), Some(3)],
+    );
+    harness.state_mut().flush_persistence();
+    let stored = Library::initialize(root.to_path_buf())
+        .unwrap()
+        .load_placements()
+        .unwrap();
+    scenario.assertion(
+        "dedupe preserves all placement identities and literal geometry on disk",
+        stored
+            .iter()
+            .map(|p| (p.id(), p.asset_id(), p.state.geometry.center))
+            .collect::<Vec<_>>()
+            == vec![
+                (first.id(), Some(1), egui::pos2(-180.0, 0.0)),
+                (duplicate.id(), Some(1), egui::pos2(0.0, 0.0)),
+                (distinct.id(), Some(3), egui::pos2(180.0, 0.0)),
+            ],
+    );
+    scenario.assertion(
+        "duplicate file is removed while the canonical and distinct files remain",
+        !duplicate_asset.original_path.exists()
+            && first.require_loaded_asset().original_path.exists()
+            && distinct.require_loaded_asset().original_path.exists(),
+    );
+    scenario.capture_screen("screen-001-deduped", &mut harness);
+    harness.key_press(egui::Key::P);
+    harness.step();
+    scenario.assertion(
+        "second P leaves the canonical asset links intact",
+        [first.id(), duplicate.id(), distinct.id()].map(|id| {
+            harness
+                .state()
+                .canvas
+                .placement_for_id(id)
+                .and_then(|p| p.asset_id())
+        }) == [Some(1), Some(1), Some(3)],
+    );
+    scenario.fact(
+        "dedupe.final-status",
+        serde_json::json!(harness.state().status),
+    );
+    scenario.capture_screen("screen-002-repeated", &mut harness);
+    finish(scenario);
+}
