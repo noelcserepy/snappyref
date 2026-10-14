@@ -1,7 +1,7 @@
 ---
 name: inspect
 description: |
-  Reproduce, inspect, diagnose, and verify SnappyRef app behavior with deterministic in-process scenarios, full-app screenshots, structured artifacts, and harness-driven clicks/drags/keyboard input. Use for UI behavior, visual state, app interaction, search palette workflows, imports, progress states, and screenshot-backed verification. Also drives the real app through its MCP tools with mcp-drive.py. features/ maps each user-facing feature to its entry points, scenarios, and coverage gaps.
+  Reproduce, inspect, diagnose, and verify SnappyRef app behavior with in-process scenarios, app screenshots, structured artifacts, and harness-driven clicks/drags/keyboard input. Use for UI behavior, visual state, app interaction, search palette workflows, imports, progress states, and screenshot-backed verification. Also drives the real app through its MCP tools with mcp-drive.py. features/ maps each user-facing feature to its entry points, scenarios, and coverage gaps.
 user-invocable: true
 argument-hint: "[behavior-or-scenario]"
 ---
@@ -24,7 +24,7 @@ Build every inspection scenario from four verbs:
   semantic widget actions.
 - `wait`: step the harness through async/progress/repaint work until the state
   is terminal or observably changed.
-- `capture`: save full-app screenshots and structured facts/assertions.
+- `capture`: save screenshots or state renders and structured facts/assertions.
 
 Invariant: use user-like actions for the behavior being tested; seed everything
 else when direct setup makes the scenario clearer and more deterministic.
@@ -32,8 +32,10 @@ else when direct setup makes the scenario clearer and more deterministic.
 ## Start Here
 
 Agents verify SnappyRef through these in-process scenarios, not by launching
-the GUI. A scenario builds the full app inside a `cargo test`, drives it with
-`egui_kittest`, and writes the artifact. There is no server to start or keep
+the GUI. Most scenarios build the full app inside a `cargo test`, drive it
+with `egui_kittest`, and write an artifact. `search-drag-to-canvas` builds
+only the search overlay and draws its board-state frame. It does not capture
+the app viewport. There is no server to start or keep
 alive. The first run compiles the test binary, which takes a few minutes. Later
 runs take seconds. The one exception in this skill is `mcp-drive.py`, under
 "Driving the real app through MCP" below.
@@ -92,8 +94,9 @@ Use `--list` for the current scenario catalogue. Useful starting examples:
 - `search-drag-to-canvas`: provisional and committed search-result placement.
 - `semantic-search-install`: first-launch installation with a test installer.
 
-`semantic-search-real-install` uses the real networked installer. Use it only
-when verifying that integration.
+The [AGENTS.md explicit-request rule](../../../AGENTS.md#donts) governs
+`semantic-search-real-install` and the update smokes.
+[Release operations](../../release-operations.md#update-smokes) owns the smoke procedure.
 
 ## Driving the real app through MCP
 
@@ -113,8 +116,10 @@ and `latest-artifact.sh mcp-drive` read it. Each call is `[tool, arguments]`,
 or `[tool, arguments, "refused"]` for a call the app must refuse. An argument
 of `"$3.board.id"` takes that value from the reply to call 3. A call's
 assertion says only that it answered or was refused, so read the replies in
-`events.ndjson`. A drive that dies adds one failed assertion, `the drive
-finishes`, with the error.
+`events.ndjson`. A caught drive error adds one failed assertion, `the drive finishes`, with
+the error. On this version, call-file parsing and cleanup errors can exit
+before `report.json` is written. Check for the report before using the
+latest artifact as evidence.
 
 The app opens behind the frontmost window and never takes focus. `screenshot`
 answers from there, and each image lands in `frames/`.
@@ -134,11 +139,12 @@ another.
 
 `mcp-drive.py` sets `SNAPPYREF_DATA_ROOT` to a fresh temp directory and removes
 it at the end. It points the update check at a dead local address, so the run
-stays off the network. It stops the app it started by PID, on a failed run too.
+stays off the network. It attempts to stop the app it started by PID, on a failed run too. A cleanup
+error can interrupt later cleanup and report writing.
 If it is killed first, `doctor.sh` lists the app left running from this
 checkout, and the temp directory stays.
 
-Apart from those two exceptions, nothing outlives a run except the artifact. If a run hangs, stop the
+After successful cleanup, nothing outlives a run except the artifact. If a run hangs, stop the
 `run-scenario.sh` or cargo process you started, using its PID. Never kill by
 process name, because the user may have a dev build of `snappyref` open.
 
@@ -183,10 +189,12 @@ state setup logic.
 
 ## Screenshot Rule
 
-Inspect screenshots are always full app viewport screenshots.
+Use full app viewport screenshots for new scenarios. If a scenario needs a
+detail, capture the full app and optionally add a derived crop later.
 
-Do not create component-only screenshots as inspect evidence. If a scenario
-needs a detail, capture the full app and optionally add a derived crop later.
+The existing `search-drag-to-canvas` scenario is an exception. It drives only
+the overlay and saves a drawn board-state rectangle. Report that frame as a
+state render, not an app screenshot.
 
 Current screenshot primitive:
 

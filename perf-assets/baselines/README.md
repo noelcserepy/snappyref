@@ -13,19 +13,9 @@ overlapped acquisition. Ordinary WindowServer, Zen and Codex activity remained.
 The JSON records observed conditions and each command. This pair is one session,
 not the ten-run, two-session runtime/noise calibration or a sub-minute guarantee.
 
-Compare a prepared candidate with the committed fast reference:
-
-```sh
-python3 scripts/perf_eval.py run --binary target/release/snappyref \
-  --output perf-assets/runs/fast-candidate
-python3 scripts/perf_eval.py compare \
-  perf-assets/baselines/macos-m4-pro-fast-2026-09-07.json \
-  perf-assets/runs/fast-candidate/evaluation.json
-```
-
-Supply `--models` and `--assets` when prerequisites are outside the default
-locations. Comparison requires the same machine, model, corpus, toolchain and
-measurement contract. Build the shipping release binary before prepared timing.
+Follow [perf-profiling](../../docs/skills/perf-profiling/SKILL.md#regular-profiling-and-refactors)
+for acquisition, prepared-candidate comparison, matching prerequisites, and
+regression decisions.
 
 `macos-m4-pro-2026-09-07.json` contains 51 valid trials across 17 scenarios,
 three trials per scenario. Measured on an Apple M4 Pro with 24 GiB RAM,
@@ -43,14 +33,9 @@ replay, and the remaining board/library repetitions. It preserves the failed
 report and lists all 51 selected trials. Future timeouts must remain failures,
 not performance passes.
 
-This is the full reference. Keep it unchanged. Regular profiling, including
-refactors, defaults to fast with five cases repeated three times. Fast requires
-a separately acquired matching reference; the full JSON cannot supply one.
-
-See [perf-profiling](../../docs/skills/perf-profiling/SKILL.md) for acquisition,
-measurement contracts, scenario coverage, and regression budgets. Fast compares
-latency only. These references do not establish a prepared-command runtime
-guarantee; the ten-run calibration remains outstanding.
+This is the full reference. Keep it unchanged. The fast and full references
+have separate measurement contracts. These references do not establish a
+prepared-command runtime guarantee; the ten-run calibration remains outstanding.
 
 The animated case keeps its imported image selected and animating. Its CPU
 is not a resting-board target. CPU readings of zero mean below the roughly
@@ -60,8 +45,7 @@ import trials stayed within 13 of 14 metric budgets. That calibration preceded
 the auto-layout feature; the final 51-trial baseline includes it. That replay's
 remaining RSS result overlapped its baseline's range, so the comparison reports inconclusive and
 exits 2. It does not label that a regression or allow an automatic pass.
-Preserve inconclusive results and investigate or acquire another complete
-repeated run of the same profile. The 200 ms process-tree sampler can miss brief peaks.
+The 200 ms process-tree sampler can miss brief peaks.
 
 This baseline covers startup, scripted import, embedding, and post-work CPU/RSS.
 Inspect tests cover editing, search interactions, undo/redo, restart, and write
