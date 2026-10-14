@@ -14,6 +14,5 @@ fi
 : "${SNAPPYREF_WINDOWS_HOST:?Set SNAPPYREF_WINDOWS_HOST in .env.windows or the environment.}"
 : "${SNAPPYREF_WINDOWS_REPO:?Set SNAPPYREF_WINDOWS_REPO in .env.windows or the environment.}"
 
-export SNAPPYREF_REPO_ROOT="$repo_root"
 export SNAPPYREF_WINDOWS_HOST
 export SNAPPYREF_WINDOWS_REPO
