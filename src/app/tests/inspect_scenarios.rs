@@ -3276,12 +3276,22 @@ fn inspect_sidebar_board_shortcuts_writes_artifact() {
         harness.get_by_label("Board References").rect().center(),
         egui::Modifiers::NONE,
     );
-    harness.run_steps(20);
-    // Seed an open rename editor; the behavior under test is its keyboard routing.
-    harness
-        .ctx
-        .data_mut(|d| d.insert_temp(egui::Id::new("board-renaming"), second.id));
-    crate::ui::card::focus_field(&harness.ctx, "Board name");
+    // Let the previous navigation click expire before the double-click.
+    harness.run_steps(45);
+    let pos = harness.get_by_label("Board References").rect().center();
+    harness.hover_at(pos);
+    harness.step();
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.step();
+    }
     harness.step();
     harness.get_by_label("Board name");
     harness.key_press_modifiers(inspect_command_modifier(), egui::Key::A);

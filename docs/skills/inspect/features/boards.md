@@ -62,9 +62,9 @@ Preconditions:
   including scrolling General to the update action.
 - **Sidebar board shortcuts.** Run `run-scenario.sh sidebar-board-shortcuts`.
   It clicks a board row, focuses a sidebar button with Tab, and drives all ten
-  board digits. It also switches boards from Settings and Keys. The rename
-  editor is seeded open, then typing, Command-1, and Enter prove it keeps its
-  keys and commits the name before board switching resumes.
+  board digits. It also switches boards from Settings and Keys. A double-click
+  opens the rename editor, then typing, Command-1, and Enter prove it keeps
+  its keys and commits the name before board switching resumes.
 - **Restart.** Run `run-scenario.sh session-restart-restore`. It drives a drag,
   a zoom, and ⌘B on the first board, then creates and edits a second board.
   A second app instance reopens the same library with the second board active.
@@ -77,9 +77,6 @@ Preconditions:
 
 ## Gotchas
 
-- Rename by double-click has no scenario.
-- `sidebar-board-shortcuts` clicks a board row. The sidebar rename editor is
-  seeded, so double-click entry still needs separate coverage.
 - `session-restart-restore` saves and flushes explicitly before restarting.
   The process-exit flush itself is covered by
   `real_startup_and_exit_keep_pending_content_session_and_history`.
