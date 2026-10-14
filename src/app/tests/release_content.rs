@@ -427,6 +427,32 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
         !harness.ctx.egui_wants_keyboard_input(),
     );
 
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    scenario.assertion(
+        "click-away session undoes to its original text",
+        harness
+            .state()
+            .canvas
+            .annotation_for_id(note_id)
+            .unwrap()
+            .text
+            == "Grüezi 日本語\nsecond line gqwe alt",
+    );
+    shortcut(
+        &mut harness,
+        egui::Modifiers { shift: true, ..CMD },
+        egui::Key::Z,
+    );
+    scenario.assertion(
+        "click-away session redoes its replacement and Backspace",
+        harness
+            .state()
+            .canvas
+            .annotation_for_id(note_id)
+            .unwrap()
+            .text
+            == "gqwe Åß\nreplacemen",
+    );
     scenario.capture_screen("text-edited", &mut harness);
     let from = center + egui::vec2(70., 100.);
     harness.key_down(egui::Key::S);
@@ -530,6 +556,32 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
         !harness.ctx.egui_wants_keyboard_input(),
     );
 
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    scenario.assertion(
+        "Escape session undoes to its original text",
+        harness
+            .state()
+            .canvas
+            .annotation_for_id(note_id)
+            .unwrap()
+            .text
+            == "gqwe Åß\nreplacemen",
+    );
+    shortcut(
+        &mut harness,
+        egui::Modifiers { shift: true, ..CMD },
+        egui::Key::Z,
+    );
+    scenario.assertion(
+        "Escape session redoes the moved label text",
+        harness
+            .state()
+            .canvas
+            .annotation_for_id(note_id)
+            .unwrap()
+            .text
+            == "edited after moving",
+    );
     let report = scenario.finish();
     assert!(
         report.passed,
@@ -706,4 +758,172 @@ fn group_picker_arrows_remember_destination_and_cancel_typed_shortcuts() {
         assert_eq!(harness.state().canvas.groups(), before);
         assert_eq!(harness.state().canvas.all_placement_ids().len(), 2);
     }
+}
+
+#[test]
+fn inspect_annotation_text_sessions_writes_artifact() {
+    let mut scenario = InspectScenario::new("annotation-text-sessions");
+    let root = TempRoot::new("snappyref-text-sessions");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let annotation = library
+        .fixture_annotation(
+            CanvasAnnotationKind::Textbox,
+            egui::pos2(-180., -40.),
+            egui::pos2(20., 40.),
+            "before",
+            CanvasTextSize::L,
+            CanvasStrokeWidth::M,
+            crate::data::CanvasAnnotationColor::Default,
+        )
+        .unwrap();
+    let id = annotation.id;
+    let mut app = test_app(Some(library.clone()));
+    app.canvas.add_annotation(annotation);
+    let mut harness = app_full_harness_with_step_dt(app, 1. / 60.);
+    harness.hover_at(test_screen_rect().center() + egui::vec2(300., 200.));
+    harness.step();
+    scenario.capture_screen("before-edit", &mut harness);
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Enter);
+    harness.step();
+    shortcut(&mut harness, CMD, egui::Key::A);
+    for character in ["h", "e", "l", "l", "o"] {
+        harness.event(egui::Event::Text(character.into()));
+        harness.step();
+    }
+    scenario.capture_screen("hello-editing", &mut harness);
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Enter);
+    scenario.assertion(
+        "plain Enter commits hello",
+        !harness.ctx.egui_wants_keyboard_input()
+            && harness.state().canvas.annotation_for_id(id).unwrap().text == "hello",
+    );
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    let undone = harness.state().canvas.annotation_for_id(id).unwrap().text;
+    scenario.fact("one-undo-text", serde_json::json!(undone));
+    scenario.assertion(
+        "one Undo restores before after five typing frames",
+        undone == "before",
+    );
+    scenario.capture_screen("one-undo", &mut harness);
+    shortcut(
+        &mut harness,
+        egui::Modifiers { shift: true, ..CMD },
+        egui::Key::Z,
+    );
+    scenario.assertion(
+        "Redo restores hello",
+        harness.state().canvas.annotation_for_id(id).unwrap().text == "hello",
+    );
+    harness.state_mut().persist_canvas_changes();
+    harness.state_mut().flush_persistence();
+    let reopened = Library::initialize(root.to_path_buf()).unwrap();
+    let mut restored = test_app(Some(reopened.clone()));
+    restored.board_editing.history = reopened.load_document_history().unwrap();
+    restored.canvas.add_annotation(
+        reopened
+            .load_canvas_annotations()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == id)
+            .unwrap(),
+    );
+    let mut restored = app_full_harness_with_step_dt(restored, 1. / 60.);
+    restored.hover_at(test_screen_rect().center() + egui::vec2(300., 200.));
+    restored.step();
+    shortcut(&mut restored, CMD, egui::Key::Z);
+    scenario.assertion(
+        "reopened history undoes the whole session to before",
+        restored.state().canvas.annotation_for_id(id).unwrap().text == "before",
+    );
+    shortcut(
+        &mut restored,
+        egui::Modifiers { shift: true, ..CMD },
+        egui::Key::Z,
+    );
+    scenario.assertion(
+        "reopened history redoes hello",
+        restored.state().canvas.annotation_for_id(id).unwrap().text == "hello",
+    );
+
+    restored.state_mut().flush_persistence();
+    drop(restored);
+    scenario.action(
+        "type two lines with Shift Enter",
+        test_screen_rect().center(),
+    );
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Enter);
+    harness.step();
+    shortcut(&mut harness, CMD, egui::Key::A);
+    harness.event(egui::Event::Text("first".into()));
+    harness.step();
+    shortcut(&mut harness, egui::Modifiers::SHIFT, egui::Key::Enter);
+    harness.event(egui::Event::Text("second".into()));
+    harness.step();
+    harness.step();
+    scenario.capture_screen("two-lines-editing", &mut harness);
+    scenario.assertion(
+        "Shift Enter inserts a newline and keeps editing",
+        harness.ctx.egui_wants_keyboard_input()
+            && harness.state().canvas.annotation_for_id(id).unwrap().text == "first\nsecond",
+    );
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Enter);
+    scenario.assertion(
+        "Enter commits the two lines",
+        !harness.ctx.egui_wants_keyboard_input()
+            && harness.state().canvas.annotation_for_id(id).unwrap().text == "first\nsecond",
+    );
+    harness.state_mut().persist_canvas_changes();
+    harness.state_mut().flush_persistence();
+    let stored = library
+        .load_canvas_annotations()
+        .unwrap()
+        .into_iter()
+        .find(|a| a.id == id)
+        .unwrap();
+    scenario.fact("stored-multiline-text", serde_json::json!(stored.text));
+    scenario.assertion(
+        "the stored text contains the typed newline",
+        stored.text == "first\nsecond",
+    );
+    scenario.capture_screen("two-lines-committed", &mut harness);
+    shortcut(&mut harness, CMD, egui::Key::Z);
+    scenario.assertion(
+        "one Undo of the second session restores hello",
+        harness.state().canvas.annotation_for_id(id).unwrap().text == "hello",
+    );
+    // Exit is an explicit submission even when the editor still has focus.
+    shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Enter);
+    harness.step();
+    shortcut(&mut harness, CMD, egui::Key::A);
+    for text in ["saved", " on exit"] {
+        harness.event(egui::Event::Text(text.into()));
+        harness.step();
+    }
+    scenario.capture_screen("uncommitted-at-exit", &mut harness);
+    eframe::App::on_exit(harness.state_mut());
+    let reopened = Library::initialize(root.to_path_buf()).unwrap();
+    let stored = reopened
+        .load_canvas_annotations()
+        .unwrap()
+        .into_iter()
+        .find(|a| a.id == id)
+        .unwrap();
+    scenario.assertion(
+        "exit saves the unfinished typing session",
+        stored.text == "saved on exit",
+    );
+    let mut restored = test_app(Some(reopened.clone()));
+    restored.canvas.add_annotation(stored);
+    restored.board_editing.history = reopened.load_document_history().unwrap();
+    restored.undo_document_history(&egui::Context::default());
+    scenario.assertion(
+        "exit stores one Undo step back to hello",
+        restored.canvas.annotation_for_id(id).unwrap().text == "hello",
+    );
+    let report = scenario.finish();
+    assert!(
+        report.passed,
+        "inspect scenario failed; artifact={}",
+        report.artifact_dir.display()
+    );
 }

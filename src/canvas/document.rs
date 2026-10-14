@@ -777,7 +777,7 @@ impl CanvasState {
         }
     }
 
-    pub(super) fn finish_textbox_edit(&mut self) {
+    pub(crate) fn finish_textbox_edit(&mut self) {
         let Some(annotation_id) = self.interaction.editing_text_annotation_id else {
             self.interaction.focus_text_editor = false;
             return;

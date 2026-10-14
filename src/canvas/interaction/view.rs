@@ -209,6 +209,10 @@ impl CanvasState {
         }
     }
 
+    pub(crate) fn textbox_editing(&self) -> bool {
+        self.interaction.editing_text_annotation_id.is_some()
+    }
+
     pub fn begin_textbox_edit(&mut self, annotation_id: i64) {
         if self.document.annotations.iter().any(|annotation| {
             annotation.id == annotation_id && annotation.kind == CanvasAnnotationKind::Textbox

@@ -21,6 +21,7 @@ SCENARIOS = {
     'group-dock': ('inspect_group_dock_writes_artifact', 'group-dock', False),
     'context-menu': ('inspect_context_menu_writes_artifact', 'context-menu', False),
     'member-dock': ('inspect_member_dock_writes_artifact', 'member-dock', False),
+    'annotation-text-sessions': ('inspect_annotation_text_sessions_writes_artifact', 'annotation-text-sessions', False),
     'annotation-editing': ('inspect_annotation_creation_editing_and_styles_writes_artifact', 'annotation-editing', False),
     'annotation-endpoint-drag': ('inspect_annotation_endpoint_drag_writes_artifact', 'annotation-endpoint-drag', False),
     'annotation-board': ('inspect_annotation_board_writes_artifact', 'annotation-board', False),

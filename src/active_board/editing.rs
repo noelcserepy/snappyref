@@ -18,6 +18,9 @@ impl BoardEditing {
         board_id: i64,
         label: &str,
     ) -> Result<bool, String> {
+        // Explicit submission, including board transitions and shutdown, ends
+        // a typing session before accepting its text as one Undo step.
+        canvas.finish_textbox_edit();
         self.record_pending_changes(canvas, library, board_id, label, false)
     }
 
