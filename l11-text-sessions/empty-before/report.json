@@ -1,0 +1,72 @@
+{
+  "scenario": "annotation-text-sessions",
+  "status": "fail",
+  "first_failure": "one Undo restores the label cleared during editing",
+  "assertions": [
+    {
+      "name": "plain Enter commits hello",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "one Undo restores before after five typing frames",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "Redo restores hello",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "reopened history undoes the whole session to before",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "reopened history redoes hello",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "Shift Enter inserts a newline and keeps editing",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "Enter commits the two lines",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "the stored text contains the typed newline",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "one Undo of the second session restores hello",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "exit saves the unfinished typing session",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "exit stores one Undo step back to hello",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "an empty committed label is removed",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "one Undo restores the label cleared during editing",
+      "passed": false,
+      "type": "assertion"
+    }
+  ]
+}

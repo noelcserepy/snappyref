@@ -57,6 +57,16 @@
       "name": "exit stores one Undo step back to hello",
       "passed": true,
       "type": "assertion"
+    },
+    {
+      "name": "an empty committed label is removed",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "one Undo restores the label cleared during editing",
+      "passed": true,
+      "type": "assertion"
     }
   ]
 }
