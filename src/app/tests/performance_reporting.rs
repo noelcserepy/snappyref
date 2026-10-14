@@ -31,7 +31,17 @@ fn perf_idle_hold_starts_when_idle_is_observed() {
         summary["import_worker"],
         serde_json::json!({"queued_startup":0,"queued_interactive":0,"queued_background":0,"in_flight":0})
     );
-    app.perf_scenario.as_mut().unwrap().settled_idle_at =
-        Some(Instant::now() - Duration::from_secs(60));
-    assert!(app.finish_perf_scenario_if_idle(&egui::Context::default()));
+    std::thread::sleep(Duration::from_millis(5_050));
+    let ctx = egui::Context::default();
+    let mut finished = false;
+    let output = crate::ui::test_frame::run_ui(&ctx, Default::default(), |ui| {
+        finished = app.finish_perf_scenario_if_idle(ui.ctx());
+    });
+    assert!(finished);
+    assert!(
+        output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::Close))
+    );
 }
