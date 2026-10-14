@@ -22,6 +22,7 @@ import selectors
 import shutil
 import signal
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
@@ -153,15 +154,32 @@ class McpSession:
 
 def expected_result(tool, arguments, reply):
     """Check deterministic fields without pinning generated IDs or viewport state."""
-    if tool == 'create_board' and 'name' in arguments:
+    if tool == 'create_board' and arguments.get('name') is not None:
         return isinstance(reply, dict) and reply.get('board', {}).get('name') == arguments['name'].strip()
     if tool == 'rename_board':
         return reply == {'board': {'id': arguments['board'], 'name': arguments['name'].strip()}}
     if tool == 'delete_board':
         return isinstance(reply, dict) and reply.get('deleted') == arguments['board']
     if tool == 'set_settings':
-        return isinstance(reply, dict) and all(reply.get(key) == value for key, value in arguments.items()
-                                               if key in ('sidebar_open', 'always_on_top', 'placement_gap'))
+        if not isinstance(reply, dict):
+            return False
+        for key, value in arguments.items():
+            # Optional null settings leave the current value unchanged.
+            if value is None:
+                continue
+            actual = reply.get(key)
+            if key in ('placement_gap', 'rotation_snap'):
+                limit = 128 if key == 'placement_gap' else 180
+                # The app clamps these settings and serializes their f32 value.
+                accepted = struct.unpack('!f', struct.pack('!f', min(max(value, 0), limit)))[0]
+                if type(actual) not in (int, float) or actual != accepted:
+                    return False
+            elif key in ('sidebar_open', 'always_on_top', 'pointer'):
+                if type(actual) is not type(value) or actual != value:
+                    return False
+            else:
+                return False
+        return True
     return True
 
 

@@ -59,7 +59,9 @@ def load_report(artifact, scenario):
             or not isinstance(report.get('frames'), list)
             or not all(isinstance(frame, str) for frame in report['frames'])):
         raise ValueError(f'invalid inspect report: {scenario}')
-    if report['status'] == 'pass' and (not report['frames'] or not all(item['passed'] for item in report['assertions'])):
+    # Rust scenarios capture screenshots; MCP tools can produce text-only evidence.
+    if report['status'] == 'pass' and ((not report['frames'] and scenario != 'mcp-drive')
+                                     or not all(item['passed'] for item in report['assertions'])):
         raise ValueError(f'incomplete inspect report: {scenario}')
     for frame in report['frames']:
         path = Path(frame).resolve()
