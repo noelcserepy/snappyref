@@ -1007,6 +1007,7 @@ mod tests {
     fn drag_snap_preview_respects_max_snap_distance() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 180, 140);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(0.0, 0.0), 180, 140);
         canvas.select_placements(&[2]);
@@ -1021,12 +1022,22 @@ mod tests {
         );
 
         assert!(snap_rect.is_none());
+
+        let snapped = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(82.0, 0.0),
+        )
+        .expect("nearby image must acquire a snap");
+        assert_eq!(snapped.center(), egui::pos2(84.0, 0.0));
     }
 
     #[test]
     fn drag_snap_preview_ignores_textbox_targets_for_guide_snapping() {
         let ctx = egui::Context::default();
         let mut canvas = CanvasState::default();
+        canvas.set_placement_gap(24.0);
         add_test_image(&mut canvas, &ctx, 2, egui::pos2(0.0, 0.0), 180, 140);
         canvas.add_annotation(CanvasAnnotation::new(
             10,
@@ -1051,6 +1062,16 @@ mod tests {
         );
 
         assert!(snap_rect.is_none());
+
+        add_test_image(&mut canvas, &ctx, 1, egui::pos2(-120.0, 0.0), 180, 140);
+        let snapped = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(82.0, 0.0),
+        )
+        .expect("nearby image must acquire a snap");
+        assert_eq!(snapped.center(), egui::pos2(84.0, 0.0));
     }
 
     #[test]
@@ -1096,6 +1117,15 @@ mod tests {
         );
 
         assert!(snap_rect.is_none());
+
+        let snapped = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(-53.0, 0.0),
+        )
+        .expect("nearby image must acquire a snap");
+        assert_eq!(snapped.center(), egui::pos2(124.0, 40.0));
     }
 
     #[test]
@@ -1145,6 +1175,15 @@ mod tests {
         );
 
         assert!(snap_rect.is_none());
+
+        let snapped = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(-33.0, -200.0),
+        )
+        .expect("nearby image must acquire a snap");
+        assert_eq!(snapped.center(), egui::pos2(124.0, 0.0));
     }
 
     #[test]
@@ -1166,6 +1205,15 @@ mod tests {
         );
 
         assert!(snap_rect.is_none());
+
+        let snapped = compute_drag_snap_preview(
+            &mut canvas,
+            test_screen_rect(),
+            &drag_state,
+            egui::vec2(-73.0, -300.0),
+        )
+        .expect("nearby image must acquire a snap");
+        assert_eq!(snapped.center(), egui::pos2(124.0, 0.0));
     }
 
     #[test]

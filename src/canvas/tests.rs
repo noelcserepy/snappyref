@@ -209,9 +209,39 @@ fn provisional_placements_are_filtered_from_document_changes() {
     state.add_provisional_unresolved_placement(placement);
     state.mark_dirty(-1);
 
+    let committed = test_record(7, 42, 120, 80);
+    state.add_unresolved_placement(committed);
+    state.mark_dirty(7);
     let changes = state.take_document_changes();
 
-    assert!(changes.updated_placements.is_empty());
+    assert_eq!(
+        changes
+            .updated_placements
+            .iter()
+            .map(|placement| (
+                placement.state.id,
+                placement.asset_id(),
+                placement.state.geometry.center,
+                placement.state.geometry.size,
+                placement.state.geometry.scale,
+                placement.state.geometry.rotation,
+                placement.state.geometry.z_index,
+                placement.state.archived,
+                placement.lifecycle,
+            ))
+            .collect::<Vec<_>>(),
+        vec![(
+            7,
+            Some(42),
+            eframe::egui::pos2(0.0, 0.0),
+            eframe::egui::vec2(120.0, 80.0),
+            1.0,
+            0.0,
+            7,
+            false,
+            PlacementLifecycle::Committed
+        )]
+    );
     assert!(changes.stack_order.is_none());
 }
 
@@ -576,9 +606,15 @@ fn compact_layout_is_more_square_than_row_or_column_extremes() {
     ];
     let gap = 12.0;
 
-    let (_, compact_width, compact_height) = best_compact_layout(&items, gap).unwrap();
-    let (_, row_width, row_height) = horizontal_layout(&items, gap).unwrap();
-    let (_, column_width, column_height) = vertical_layout(&items, gap).unwrap();
+    let (placements, _, _) = best_compact_layout(&items, gap).unwrap();
+    let bounds = verified_layout_bounds(&items, &placements, gap);
+    let (compact_width, compact_height) = (bounds.width(), bounds.height());
+    let (row, _, _) = horizontal_layout(&items, gap).unwrap();
+    let row_bounds = verified_layout_bounds(&items, &row, gap);
+    let (row_width, row_height) = (row_bounds.width(), row_bounds.height());
+    let (column, _, _) = vertical_layout(&items, gap).unwrap();
+    let column_bounds = verified_layout_bounds(&items, &column, gap);
+    let (column_width, column_height) = (column_bounds.width(), column_bounds.height());
 
     let compact_ratio = aspect_ratio(compact_width, compact_height);
     let row_ratio = aspect_ratio(row_width, row_height);
@@ -651,7 +687,9 @@ fn compact_layout_keeps_hole_prone_fixture_dense() {
     let items = hole_prone_items();
     let gap = 12.0;
 
-    let (_, compact_width, compact_height) = best_compact_layout(&items, gap).unwrap();
+    let (placements, _, _) = best_compact_layout(&items, gap).unwrap();
+    let bounds = verified_layout_bounds(&items, &placements, gap);
+    let (compact_width, compact_height) = (bounds.width(), bounds.height());
     let item_area = items
         .iter()
         .map(|item| item.width() * item.height())
@@ -674,7 +712,9 @@ fn compact_layout_prefers_dense_candidate_over_square_with_holes() {
     ];
     let gap = 12.0;
 
-    let (_, compact_width, compact_height) = best_compact_layout(&items, gap).unwrap();
+    let (placements, _, _) = best_compact_layout(&items, gap).unwrap();
+    let bounds = verified_layout_bounds(&items, &placements, gap);
+    let (compact_width, compact_height) = (bounds.width(), bounds.height());
     let item_area = items
         .iter()
         .map(|item| (item.width() + gap) * (item.height() + gap))
@@ -1027,59 +1067,71 @@ fn trackpad_translation_and_pinch_preserve_pointer_world_anchor() {
     state.set_pointer_mode(crate::data::PointerMode::Trackpad);
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
     let pointer = egui::pos2(300.0, 220.0);
-    let pan_before = state.viewport_state();
-    let _ = crate::ui::test_frame::run_ui(
-        &ctx,
-        egui::RawInput {
-            events: vec![
-                egui::Event::PointerMoved(pointer),
-                egui::Event::MouseWheel {
-                    unit: egui::MouseWheelUnit::Point,
-                    delta: egui::vec2(40.0, -20.0),
-                    phase: egui::TouchPhase::Move,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ],
-            ..Default::default()
-        },
-        |ui| {
-            super::show(
-                ui,
-                rect,
-                rect,
-                &mut state,
-                None,
-                false,
-                CanvasInputPolicy::ViewportOnly,
-                false,
-            );
-        },
+    let frame = |state: &mut CanvasState, events| {
+        crate::ui::test_frame::run_ui(
+            &ctx,
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                super::show(
+                    ui,
+                    rect,
+                    rect,
+                    state,
+                    None,
+                    false,
+                    CanvasInputPolicy::ViewportOnly,
+                    false,
+                );
+            },
+        );
+    };
+    let viewport_before = state.viewport_state();
+    frame(
+        &mut state,
+        vec![
+            egui::Event::PointerMoved(pointer),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::Vec2::ZERO,
+                phase: egui::TouchPhase::Start,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(40.0, -20.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
     );
-    assert_ne!(state.viewport_state(), pan_before);
-    // Pinch is a separate gesture, without residual scroll smoothing.
-    let ctx = egui::Context::default();
+    let panned = state.viewport_state();
+    assert_eq!(panned.camera_pan_x, 40.0);
+    assert_eq!(panned.camera_pan_y, -20.0);
+    assert_eq!(panned.camera_zoom, viewport_before.camera_zoom);
+
+    frame(
+        &mut state,
+        vec![egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::Vec2::ZERO,
+            phase: egui::TouchPhase::End,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    assert_eq!(state.viewport_state(), panned);
+
     let world_before = state.screen_to_world(pointer, rect);
-    let zoom_before = state.zoom;
-    let _ = crate::ui::test_frame::run_ui(
-        &ctx,
-        egui::RawInput {
-            events: vec![egui::Event::PointerMoved(pointer), egui::Event::Zoom(1.25)],
-            ..Default::default()
-        },
-        |ui| {
-            super::show(
-                ui,
-                rect,
-                rect,
-                &mut state,
-                None,
-                false,
-                CanvasInputPolicy::ViewportOnly,
-                false,
-            );
-        },
+    frame(
+        &mut state,
+        vec![egui::Event::PointerMoved(pointer), egui::Event::Zoom(1.25)],
     );
-    assert!(state.zoom > zoom_before);
+    let pinched = state.viewport_state();
+    assert_eq!(pinched.camera_pan_x, 75.0);
+    assert_eq!(pinched.camera_pan_y, -5.0);
+    assert_eq!(pinched.camera_zoom, panned.camera_zoom * 1.25);
     assert!(state.screen_to_world(pointer, rect).distance(world_before) < 0.001);
 }
 
@@ -1117,4 +1169,39 @@ fn grouping_selection_keeps_lines_and_arrows_loose() {
     );
     assert_eq!(state.groups()[0].members, [3]);
     assert_eq!(state.all_annotation_ids().len(), 3);
+}
+
+// Measure actual returned positions independently of the layout's reported dimensions.
+fn verified_layout_bounds(
+    items: &[PlacementArrangementInput],
+    placements: &[(i64, eframe::egui::Pos2)],
+    gap: f32,
+) -> eframe::egui::Rect {
+    let mut expected_ids = items.iter().map(|item| item.id).collect::<Vec<_>>();
+    let mut actual_ids = placements.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+    expected_ids.sort_unstable();
+    actual_ids.sort_unstable();
+    assert_eq!(
+        actual_ids, expected_ids,
+        "each input must occupy exactly one slot"
+    );
+    let rects = placements
+        .iter()
+        .map(|(id, center)| {
+            let item = items.iter().find(|item| item.id == *id).unwrap();
+            eframe::egui::Rect::from_center_size(*center, item.geometry.size)
+        })
+        .collect::<Vec<_>>();
+    for (index, left) in rects.iter().enumerate() {
+        for right in &rects[index + 1..] {
+            assert!(
+                rectangles_respect_gap(*left, *right, gap),
+                "placements overlap or lose their gap"
+            );
+        }
+    }
+    rects
+        .into_iter()
+        .reduce(|bounds, rect| bounds.union(rect))
+        .unwrap()
 }

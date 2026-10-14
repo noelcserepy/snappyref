@@ -91,32 +91,77 @@ mod tests {
     }
 
     #[test]
-    fn selected_placement_border_top_overlay_includes_lower_z_selection() {
+    fn selected_placement_border_paints_above_overlapping_higher_z_image() {
+        let ctx = egui::Context::default();
         let mut state = CanvasState::default();
-        for id in [1, 2] {
-            let (placement, image) =
-                test_image_at(id, CanvasImageLod::Working, [100, 100], egui::Pos2::ZERO);
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut texture_ids = Vec::new();
+        for (id, center) in [(1, egui::pos2(0.0, 0.0)), (2, egui::pos2(20.0, 0.0))] {
+            let (placement, mut image) =
+                test_image_at(id, CanvasImageLod::Working, [100, 100], center);
+            let texture = ctx.load_texture(
+                format!("border-test-{id}"),
+                egui::ColorImage::filled([100, 100], egui::Color32::WHITE),
+                egui::TextureOptions::LINEAR,
+            );
+            texture_ids.push(texture.id());
+            image.texture = CanvasTexture::Managed(texture);
             state.install_placement_image(placement, image);
         }
         state.select_placements(&[1]);
-        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
-
+        let output = crate::ui::test_frame::run_ui(
+            &ctx,
+            egui::RawInput {
+                screen_rect: Some(rect),
+                ..Default::default()
+            },
+            |ui| {
+                crate::canvas::show(
+                    ui,
+                    rect,
+                    rect,
+                    &mut state,
+                    None,
+                    false,
+                    crate::canvas::CanvasInputPolicy::Blocked,
+                    false,
+                );
+            },
+        );
+        // Shape submission order is the renderer's paint order. The selected
+        // lower image's outline must follow both overlapping image meshes.
+        let painted = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Mesh(mesh) if texture_ids.contains(&mesh.texture_id) => {
+                    Some((mesh.texture_id, None))
+                }
+                egui::Shape::Path(path)
+                    if path.closed
+                        && path.points
+                            == vec![
+                                egui::pos2(350.0, 250.0),
+                                egui::pos2(450.0, 250.0),
+                                egui::pos2(450.0, 350.0),
+                                egui::pos2(350.0, 350.0),
+                            ] =>
+                {
+                    Some((egui::TextureId::default(), Some(path.stroke.color.clone())))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
-            state.ordered_canvas_items_back_to_front(),
+            painted,
             vec![
-                crate::data::CanvasStackItem::Placement(1),
-                crate::data::CanvasStackItem::Placement(2),
+                (texture_ids[0], None),
+                (texture_ids[1], None),
+                (
+                    egui::TextureId::default(),
+                    Some(egui::epaint::ColorMode::Solid(crate::ui::theme::TEXT))
+                ),
             ]
-        );
-        assert_eq!(
-            overlays::selected_placement_border_paint_ids(&state, rect, 0.0),
-            vec![1]
-        );
-
-        state.interaction.selected_placement_ids = vec![2];
-        assert_eq!(
-            overlays::selected_placement_border_paint_ids(&state, rect, 0.0),
-            vec![2]
         );
     }
 
