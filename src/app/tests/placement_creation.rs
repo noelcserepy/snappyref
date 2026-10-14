@@ -19,6 +19,11 @@ fn rapid_board_switches_ignore_stale_import_completions_and_last_switch_wins() {
     app.switch_to_board(first.id);
     app.install_test_prepared_image(&ctx, test_loaded_item(43, third.id));
 
+    app.install_test_prepared_image(&ctx, test_loaded_item(44, first.id));
+    let accepted = app.canvas.placement_for_id(44).unwrap();
+    assert_eq!(accepted.asset_id(), Some(44));
+    assert_eq!(accepted.state.geometry.center, egui::Pos2::ZERO);
+    assert_eq!(accepted.state.geometry.scaled_size(), egui::vec2(1.0, 1.0));
     assert_eq!(app.active_board_id, first.id);
     assert!(app.canvas.placement_for_id(41).is_none());
     assert!(app.canvas.placement_for_id(42).is_none());
@@ -128,11 +133,8 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
     let empty_board = library.fixture_board("Empty").unwrap();
     library.set_active_board(empty_board.id).unwrap();
     let mut app = test_app(Some(library.clone()));
-    app.import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
-        library.clone(),
-        ctx.clone(),
-        None,
-    ));
+    let (worker, results) = crate::image_preparation::ImagePrepWorker::controlled();
+    app.import_worker = Some(worker);
     app.active_board_id = empty_board.id;
     app.refresh_board_summaries();
     app.search.overlay.open = true;
@@ -156,15 +158,70 @@ fn dropped_library_search_result_is_visible_before_worker_decode_finishes() {
 
     harness.state_mut().flush_persistence();
     let active_items = library.load_placements().unwrap();
-    assert_eq!(active_items.len(), 1);
-    assert!(
-        harness
-            .state()
-            .canvas
-            .placement_for_id(active_items[0].state.id)
-            .is_some()
-    );
     assert_eq!(harness.state().placement_creation.batches.len(), 0);
+    assert_eq!(active_items.len(), 1);
+    let id = active_items[0].id();
+    let pending = harness.state().canvas.placement_for_id(id).unwrap();
+    assert_eq!(
+        pending.asset_id(),
+        Some(library_item.require_loaded_asset().id)
+    );
+    assert_eq!(pending.state.geometry.center, egui::pos2(0.0, 0.0));
+    assert_eq!(pending.state.geometry.scaled_size(), egui::vec2(1.0, 1.0));
+    assert_eq!(
+        pending.require_loaded_asset().id,
+        library_item.require_loaded_asset().id
+    );
+    let mut painted = usize::MAX;
+    crate::ui::test_frame::run_ui(&ctx, Default::default(), |ui| {
+        painted = crate::canvas::show(
+            ui,
+            test_screen_rect(),
+            test_screen_rect(),
+            &mut harness.state_mut().canvas,
+            None,
+            false,
+            crate::canvas::CanvasInputPolicy::ViewportOnly,
+            false,
+        )
+        .image_pass
+        .painted_images;
+    });
+    assert_eq!(painted, 0);
+    let mut loaded = loaded_record(Placement::loaded(
+        pending.state.clone(),
+        library
+            .load_asset(library_item.require_loaded_asset().id)
+            .unwrap(),
+    ));
+    loaded.target_board_id = empty_board.id;
+    results
+        .send(crate::image_preparation::ImagePrepResult::Loaded(Box::new(
+            loaded,
+        )))
+        .unwrap();
+    harness.state_mut().handle_import_results(&ctx);
+    let ready = harness.state().canvas.placement_for_id(id).unwrap();
+    assert_eq!(
+        ready.require_loaded_asset().id,
+        library_item.require_loaded_asset().id
+    );
+    assert_eq!(ready.state.geometry, pending.state.geometry);
+    crate::ui::test_frame::run_ui(&ctx, Default::default(), |ui| {
+        painted = crate::canvas::show(
+            ui,
+            test_screen_rect(),
+            test_screen_rect(),
+            &mut harness.state_mut().canvas,
+            None,
+            false,
+            crate::canvas::CanvasInputPolicy::ViewportOnly,
+            false,
+        )
+        .image_pass
+        .painted_images;
+    });
+    assert_eq!(painted, 1);
 }
 
 #[test]
@@ -201,12 +258,21 @@ fn completed_multi_file_import_batch_selects_and_compacts_loaded_geometry() {
         );
     }
 
+    assert_eq!(
+        [1, 2, 3].map(|id| app
+            .canvas
+            .placement_for_id(id)
+            .unwrap()
+            .state
+            .geometry
+            .center),
+        [
+            egui::pos2(35.0, -65.0),
+            egui::pos2(-90.0, 0.0),
+            egui::pos2(15.0, 35.0)
+        ]
+    );
     assert_eq!(app.canvas.selected_placement_ids(), vec![1, 2, 3]);
-    assert!([1_i64, 2, 3].iter().any(|placement_id| {
-        let placement = app.canvas.placement_for_id(*placement_id).unwrap();
-        placement.state.geometry.center.x.abs() > 0.001
-            || placement.state.geometry.center.y.abs() > 0.001
-    }));
     assert!(app.placement_creation.batches.is_empty());
 }
 
@@ -260,12 +326,8 @@ fn completed_import_batch_compacts_loaded_items_after_out_of_order_failures() {
         .state
         .geometry
         .center;
-    assert_ne!(third_center, egui::pos2(4000.0, -1000.0));
-    assert_ne!(first_center, egui::pos2(-2500.0, 3600.0));
-    assert!(
-        third_center.distance(first_center)
-            < egui::pos2(4000.0, -1000.0).distance(egui::pos2(-2500.0, 3600.0))
-    );
+    assert_eq!(third_center, egui::pos2(762.5, 1407.5));
+    assert_eq!(first_center, egui::pos2(737.5, 1282.5));
     assert!(app.placement_creation.batches.is_empty());
 }
 
@@ -278,11 +340,19 @@ fn completed_inactive_board_import_batch_does_not_mutate_active_canvas() {
         .register_multi_item_batch(1, vec![1, 2]);
     app.active_board_id = 2;
     app.refresh_board_summaries();
+    app.install_test_prepared_image(&ctx, test_loaded_item(9, 2));
+    app.canvas.select_placements(&[9]);
+    let before = app.canvas.placement_for_id(9).unwrap();
 
     app.install_test_prepared_image(&ctx, test_loaded_item(1, 1));
     app.install_test_prepared_image(&ctx, test_loaded_item(2, 1));
 
-    assert!(app.canvas.selected_placement_ids().is_empty());
+    assert_eq!(
+        app.canvas.placement_for_id(9).unwrap().state.geometry,
+        before.state.geometry
+    );
+    assert_eq!(app.canvas.placement_for_id(9).unwrap().asset_id(), Some(9));
+    assert_eq!(app.canvas.selected_placement_ids(), vec![9]);
     assert!(app.canvas.placement_for_id(1).is_none());
     assert!(app.placement_creation.batches.is_empty());
 }
@@ -473,14 +543,31 @@ fn delayed_image_load_preserves_geometry_edited_after_request() {
 #[test]
 fn completed_import_for_active_board_enters_active_canvas() {
     let ctx = egui::Context::default();
-    let mut app = test_app(None);
-    app.active_board_id = 1;
-    app.refresh_board_summaries();
-    let loaded = test_loaded_item(42, 1);
-
+    let root = TempRoot::new("snappyref-active-import-fields");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut app = test_app(Some(library.clone()));
+    let reservation = app
+        .reserve_import(
+            Some((1, 1)),
+            egui::pos2(40.0, 70.0),
+            crate::data::ContentResolutionSource::Clipboard,
+        )
+        .unwrap();
+    let mut loaded = persisted_loaded_item(&library, reservation.placement_id, 1);
+    let asset = loaded.placement.require_loaded_asset().id;
+    loaded.queue_id = Some(reservation.queue_id);
     app.install_test_prepared_image(&ctx, loaded);
-
-    assert!(app.canvas.placement_for_id(42).is_some());
+    let accepted = app
+        .canvas
+        .placement_for_id(reservation.placement_id)
+        .unwrap();
+    assert_eq!(accepted.asset_id(), Some(asset));
+    assert_eq!(accepted.state.geometry.center, egui::pos2(40.0, 70.0));
+    assert_eq!(accepted.state.geometry.scaled_size(), egui::vec2(1.0, 1.0));
+    assert_eq!(
+        app.canvas.selected_placement_ids(),
+        vec![reservation.placement_id]
+    );
     assert_eq!(app.status, "Imported image");
 }
 

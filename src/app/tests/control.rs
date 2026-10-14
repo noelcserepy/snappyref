@@ -58,6 +58,28 @@ fn edit_board_call_is_one_undo_step() {
         ]}),
     )
     .unwrap();
+    assert_eq!(edited["refs"], json!({"title":2,"frame":3,"faces":4}));
+    assert_eq!(edited["items"][0]["text"], "Heads");
+    assert_eq!(
+        edited["items"][1],
+        json!({"id":3,"type":"rectangle","group":4,"x":0.0,"y":31.9,"width":200.0,"height":100.0,"color":"default","fill":"tint","stroke":"m"})
+    );
+    assert_eq!(
+        edited["items"][2],
+        json!({"id":5,"type":"arrow","x1":300.0,"y1":0.0,"x2":350.0,"y2":50.0,"color":"default","stroke":"m"})
+    );
+    let before_delete = call(&mut app, &ctx, "get_board", json!({})).unwrap();
+    app.flush_persistence();
+    let library = app.library.clone().unwrap();
+    let persisted = library.load_board_document(app.active_board_id).unwrap();
+    assert_eq!(
+        persisted
+            .annotations
+            .iter()
+            .map(|a| a.id)
+            .collect::<Vec<_>>(),
+        vec![2, 3, 5]
+    );
     let refs = &edited["refs"];
     assert_eq!(
         edited["groups"][0]["members"],
@@ -86,6 +108,19 @@ fn edit_board_call_is_one_undo_step() {
     assert_eq!(
         call(&mut app, &ctx, "undo", json!({})).unwrap_err(),
         "Nothing to undo."
+    );
+    call(&mut app, &ctx, "redo", json!({})).unwrap();
+    let redone = call(&mut app, &ctx, "get_board", json!({})).unwrap();
+    assert_eq!(redone["items"], before_delete["items"]);
+    assert_eq!(redone["groups"], before_delete["groups"]);
+    assert_eq!(redone["selection"], json!([2]));
+    app.flush_persistence();
+    assert_eq!(
+        library
+            .load_board_document(app.active_board_id)
+            .unwrap()
+            .annotations,
+        persisted.annotations
     );
 }
 
@@ -190,6 +225,10 @@ fn finish_ai_call(harness: &mut Harness<'_, SnappyRefApp>, call: AiCall) -> Resu
         harness.step();
         std::thread::sleep(Duration::from_millis(2));
     }
+    assert!(
+        call.is_finished(),
+        "AI call did not answer within 2,000 frames"
+    );
     let result = call.join().unwrap().ok_or("no connection")?;
     let text = result["content"][0]["text"].as_str().unwrap_or_default();
     if result["isError"] == true {
@@ -225,14 +264,44 @@ fn add_images_answers_from_its_board_after_the_user_opens_another() {
     let call = start_ai_call(&root, "add_images", json!({"sources": [source]}));
     // The frame that takes the call reserves the image, before its worker
     // can have decoded it.
-    while harness.state().canvas.all_placement_ids().is_empty() {
+    for _ in 0..2000 {
+        if !harness.state().canvas.all_placement_ids().is_empty() {
+            break;
+        }
         harness.step();
         std::thread::sleep(Duration::from_millis(2));
     }
+    let ids = harness.state().canvas.all_placement_ids();
+    assert_eq!(
+        ids.len(),
+        1,
+        "AI call must reserve its placement within 2,000 frames"
+    );
+    let placement_id = ids[0];
     harness.state_mut().switch_to_board(second.id);
 
     let added = finish_ai_call(&mut harness, call).unwrap();
+    assert_eq!(added["items"][0]["id"], placement_id);
     assert_eq!(added["items"][0]["type"], "image");
+    let library = harness.state().library.clone().unwrap();
+    harness.state_mut().flush_persistence();
+    let stored = library.load_placements_for_board(first.id).unwrap();
+    assert_eq!(
+        stored.iter().map(|p| p.id()).collect::<Vec<_>>(),
+        vec![placement_id]
+    );
+    assert_eq!(
+        added["items"][0]["asset"],
+        stored[0].require_loaded_asset().id
+    );
+    assert_eq!(added["items"][0]["width"], 8.0);
+    assert_eq!(added["items"][0]["height"], 8.0);
+    assert!(
+        library
+            .load_placements_for_board(second.id)
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(added["items"][0].get("status"), None);
     assert_eq!(
         added["note"],

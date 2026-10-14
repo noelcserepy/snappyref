@@ -21,5 +21,17 @@ fn perf_idle_hold_starts_when_idle_is_observed() {
     let mut app = test_app(None);
     app.perf_scenario = Some(scenario);
     assert!(!app.finish_perf_scenario_if_idle(&egui::Context::default()));
-    assert!(root.join("summary.json").exists());
+    let summary: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("summary.json")).unwrap()).unwrap();
+    assert_eq!(summary["scenario"], "startup");
+    assert_eq!(summary["expected_imports"], 0);
+    assert_eq!(summary["loaded_imports"], 0);
+    assert_eq!(summary["visible_imports"], 0);
+    assert_eq!(
+        summary["import_worker"],
+        serde_json::json!({"queued_startup":0,"queued_interactive":0,"queued_background":0,"in_flight":0})
+    );
+    app.perf_scenario.as_mut().unwrap().settled_idle_at =
+        Some(Instant::now() - Duration::from_secs(60));
+    assert!(app.finish_perf_scenario_if_idle(&egui::Context::default()));
 }
