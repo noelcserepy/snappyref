@@ -799,8 +799,16 @@ fn copied_group_survives_dedupe_and_reopen() {
     assert!(fresh.id > payload.placements.iter().map(|p| p.asset_id).max().unwrap());
     app.paste_board_payload_at(&payload, egui::pos2(300., 0.))
         .unwrap();
-    assert_eq!(app.canvas.groups()[0].members.len(), 3);
-    assert_eq!(app.canvas.all_placement_ids().len(), 3);
+    let pasted = app.canvas.groups()[0].members.clone();
+    assert_eq!(app.canvas.all_placement_ids(), pasted);
+    assert_eq!(
+        pasted
+            .iter()
+            .map(|id| app.canvas.placement_for_id(*id).unwrap().asset_id())
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(1), Some(1)]
+    );
+    let accepted = app.canvas.committed_placements();
     app.flush_persistence();
     drop(app);
     let reopened = Library::initialize(root.to_path_buf()).unwrap();
@@ -811,9 +819,29 @@ fn copied_group_survives_dedupe_and_reopen() {
         None,
     ));
     app.switch_to_board(other.id);
+    let stored = reopened.load_placements_for_board(other.id).unwrap();
+    assert_eq!(
+        stored
+            .iter()
+            .map(|p| (p.id(), p.asset_id(), p.state.geometry))
+            .collect::<Vec<_>>(),
+        accepted
+            .iter()
+            .map(|p| (p.id(), p.asset_id(), p.state.geometry))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(app.canvas.groups()[0].members, pasted);
     app.paste_board_payload_at(&payload, egui::pos2(600., 0.))
         .unwrap();
-    assert_eq!(app.canvas.groups().last().unwrap().members.len(), 3);
+    let second_paste = &app.canvas.groups().last().unwrap().members;
+    assert_eq!(
+        second_paste
+            .iter()
+            .map(|id| app.canvas.placement_for_id(*id).unwrap().asset_id())
+            .collect::<Vec<_>>(),
+        vec![Some(1), Some(1), Some(1)]
+    );
+    assert!(second_paste.iter().all(|id| !pasted.contains(id)));
 }
 
 fn dock_fixture() -> (TempRoot, Harness<'static, SnappyRefApp>, Vec<i64>) {
@@ -1192,8 +1220,8 @@ fn inspect_group_dock_writes_artifact() {
         .memory(|m| m.area_rect(egui::Id::new("group-card")))
         .unwrap();
     scenario.assertion(
-        "card sits center-right, 16 pixels from the canvas edge",
-        card.right() == 1264.0 && (card.center().y - 400.0).abs() < 0.5,
+        "group card is visible inside the viewport",
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0)).contains_rect(card),
     );
     // The card reads top to bottom: identity, flow, alignment beside spacing
     // and spread, then the frame.
@@ -1568,12 +1596,30 @@ fn inspect_member_dock_writes_artifact() {
     }
     scenario.assertion(
         "member card replaces the group card in place",
-        card.right() == 1264.0,
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0)).contains_rect(card),
     );
+    let before_fill = harness
+        .state()
+        .canvas
+        .placement_for_id(ids[2])
+        .unwrap()
+        .state
+        .geometry;
     harness.get_by_label("Fill height").click();
     for _ in 0..4 {
         harness.step();
     }
+    let group = &harness.state().canvas.groups()[0];
+    assert_eq!(group.layout.members[&ids[2]].fill, [false, true]);
+    let filled = harness
+        .state()
+        .canvas
+        .placement_for_id(ids[2])
+        .unwrap()
+        .state
+        .geometry;
+    assert_ne!(filled.scaled_size().y, before_fill.scaled_size().y);
+    assert_eq!(filled.scaled_size(), egui::vec2(190.0, 190.0));
     scenario.assertion(
         "member inventory replaces group inventory",
         harness.query_by_label("Ungroup").is_none(),

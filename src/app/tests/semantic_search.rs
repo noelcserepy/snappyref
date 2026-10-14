@@ -386,13 +386,23 @@ fn command_enter_library_search_results_show_pending_cursor_arrangement_inputs()
     );
     harness.step();
 
+    let pending = harness
+        .state()
+        .canvas
+        .provisional_placements_in_selection_order();
     assert_eq!(
-        harness
-            .state()
-            .canvas
-            .provisional_placements_in_selection_order()
-            .len(),
-        2
+        pending.iter().map(|p| p.asset_id()).collect::<Vec<_>>(),
+        vec![
+            Some(first.require_loaded_asset().id),
+            Some(second.require_loaded_asset().id)
+        ]
+    );
+    assert_eq!(
+        pending
+            .iter()
+            .map(|p| p.state.geometry.scaled_size())
+            .collect::<Vec<_>>(),
+        vec![egui::vec2(1.0, 1.0), egui::vec2(1.0, 1.0)]
     );
 }
 
@@ -545,13 +555,29 @@ fn dragging_library_search_result_out_of_palette_creates_provisional_placement()
     harness.hover_at(egui::pos2(900.0, 600.0));
     harness.step();
 
+    let pending = harness
+        .state()
+        .canvas
+        .provisional_placements_in_selection_order();
+    assert_eq!(pending.len(), 1);
     assert_eq!(
-        harness
-            .state()
-            .canvas
-            .provisional_placements_in_selection_order()
-            .len(),
-        1
+        pending[0].asset_id(),
+        Some(source.require_loaded_asset().id)
+    );
+    assert_eq!(pending[0].state.geometry.center, egui::pos2(300.0, 200.0));
+    assert_eq!(
+        pending[0].state.geometry.scaled_size(),
+        egui::vec2(10.0, 10.0)
+    );
+    assert_eq!(
+        harness.state().canvas_input_policy(&harness.ctx),
+        crate::canvas::CanvasInputPolicy::ViewportOnly
+    );
+    harness.drop_at(egui::pos2(900.0, 600.0));
+    harness.step();
+    assert_eq!(
+        harness.state().canvas_input_policy(&harness.ctx),
+        crate::canvas::CanvasInputPolicy::Full
     );
 }
 
@@ -659,24 +685,6 @@ fn dragging_multiple_library_search_results_centers_provisional_group_on_pointer
         "group center y {:?} should match pointer world y {:?}",
         bounds.center().y,
         pointer_world.y
-    );
-}
-
-#[test]
-fn active_search_provisional_drag_keeps_canvas_edit_input_disabled() {
-    let ctx = egui::Context::default();
-    let mut app = test_app(None);
-    app.search.overlay.open = true;
-    app.search.overlay.drag_state = Some(crate::search::palette::SearchResultDragState {
-        asset_ids: vec![1, 2],
-        outside_overlay: true,
-        provisional_batch_active: true,
-        auto_fit_applied: false,
-    });
-
-    assert_eq!(
-        app.canvas_input_policy(&ctx),
-        crate::canvas::CanvasInputPolicy::ViewportOnly
     );
 }
 

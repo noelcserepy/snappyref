@@ -147,18 +147,39 @@ fn undo_delete_restores_last_placement_to_active_canvas() {
 
 #[test]
 fn late_history_content_result_does_not_restore_redone_deletion() {
-    let mut app = test_app(None);
-    let reservation = app
-        .placement_creation
-        .reserve_history_placement(app.active_board_id, 7);
-    let mut loaded = test_loaded_item(7, app.active_board_id);
+    let ctx = egui::Context::default();
+    let root = TempRoot::new("snappyref-redone-delete-late-load");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut app = test_app(Some(library.clone()));
+    let mut loaded = persisted_loaded_item(&library, 7, 1);
+    loaded.placement = library.fixture_placement(1, loaded.placement).unwrap();
+    add_loaded_record(&mut app, &ctx, loaded.placement.clone());
+    assert_eq!(
+        app.canvas.placement_for_id(7).unwrap().asset_id(),
+        loaded.placement.asset_id()
+    );
+    app.canvas.select_placements(&[7]);
+    app.delete_selected_items_from_board(test_screen_rect());
+    app.undo_document_history(&ctx);
+    assert_eq!(
+        app.canvas
+            .placement_for_id(7)
+            .unwrap()
+            .state
+            .geometry
+            .center,
+        egui::Pos2::ZERO
+    );
+    let reservation = app.placement_creation.reserve_history_placement(1, 7);
     loaded.queue_id = Some(reservation.queue_id);
-
+    app.redo_document_history(&ctx);
     app.accept_preparation_result(
-        &egui::Context::default(),
+        &ctx,
         crate::image_preparation::ImagePrepResult::Loaded(Box::new(loaded)),
     );
+    app.flush_persistence();
     assert!(app.canvas.placement_for_id(7).is_none());
+    assert!(library.load_placements().unwrap().is_empty());
     assert_eq!(app.placement_creation.pending_len(), 0);
 }
 
@@ -594,6 +615,9 @@ fn qwe_arrange_shortcuts_apply_selected_image_layouts() {
             app.canvas
                 .add_prepared_placement_image(&ctx, test_loaded_item(id, 1));
         }
+        app.canvas
+            .add_prepared_placement_image(&ctx, test_loaded_item(3, 1));
+        let unselected = app.canvas.placement_for_id(3).unwrap();
         app.canvas.select_placements(&[1, 2]);
 
         let _ = crate::ui::test_frame::run_ui(
@@ -617,6 +641,25 @@ fn qwe_arrange_shortcuts_apply_selected_image_layouts() {
         );
 
         assert_eq!(app.status, expected_status);
+        let centers = [1, 2].map(|id| {
+            app.canvas
+                .placement_for_id(id)
+                .unwrap()
+                .state
+                .geometry
+                .center
+        });
+        let expected = if key == egui::Key::W {
+            [egui::pos2(-0.5, 0.0), egui::pos2(0.5, 0.0)]
+        } else {
+            [egui::pos2(0.0, -0.5), egui::pos2(0.0, 0.5)]
+        };
+        assert_eq!(centers, expected);
+        assert_eq!(
+            app.canvas.placement_for_id(3).unwrap().state.geometry,
+            unselected.state.geometry
+        );
+        assert_eq!(app.canvas.placement_for_id(3).unwrap().asset_id(), Some(3));
     }
 }
 
@@ -1052,7 +1095,7 @@ fn create_undo_persists_reassigned_redo_history_with_the_archive() {
 }
 
 #[test]
-fn update_action_check_requests_repaint() {
+fn update_action_runs_offline_discovery_on_the_next_frame() {
     let mut app = test_app(None);
     let ctx = egui::Context::default();
     let repaint_requests = Arc::new(AtomicUsize::new(0));
@@ -1071,6 +1114,15 @@ fn update_action_check_requests_repaint() {
     assert!(
         repaint_requests.load(Ordering::SeqCst) > baseline_repaints,
         "manual update check must request a repaint so the queued check runs next frame"
+    );
+    let mut harness = app_full_harness(app);
+    harness.step();
+    assert_eq!(
+        harness.state().update_service.state(),
+        &crate::updater::UpdateState::Failed {
+            reason: "Release discovery failed".to_owned(),
+            version: None,
+        }
     );
 }
 
@@ -1407,26 +1459,22 @@ fn url_batch_previews_use_balanced_layout_for_approximate_dimensions() {
                 .center
         })
         .collect::<Vec<_>>();
-    let distinct_x = previews
-        .iter()
-        .fold(Vec::<i32>::new(), |mut values, center| {
-            let rounded = center.x.round() as i32;
-            if !values.contains(&rounded) {
-                values.push(rounded);
-            }
-            values
-        });
-    let distinct_y = previews
-        .iter()
-        .fold(Vec::<i32>::new(), |mut values, center| {
-            let rounded = center.y.round() as i32;
-            if !values.contains(&rounded) {
-                values.push(rounded);
-            }
-            values
-        });
-
-    assert_eq!(previews.len(), sources.len());
-    assert!(distinct_x.len() > 1);
-    assert!(distinct_y.len() > 1);
+    assert_eq!(
+        previews,
+        vec![
+            egui::pos2(-260.0, -280.0),
+            egui::pos2(100.0, -280.0),
+            egui::pos2(460.0, -280.0),
+            egui::pos2(-260.0, -40.0),
+            egui::pos2(100.0, -40.0),
+            egui::pos2(460.0, -40.0),
+            egui::pos2(-260.0, 200.0),
+            egui::pos2(100.0, 200.0),
+            egui::pos2(460.0, 200.0),
+            egui::pos2(-260.0, 440.0),
+            egui::pos2(100.0, 440.0),
+            egui::pos2(460.0, 440.0),
+            egui::pos2(-260.0, 680.0),
+        ]
+    );
 }
