@@ -30,8 +30,6 @@ import json, os, pathlib, shutil, sys
 root = pathlib.Path.cwd()
 (root / 'arguments.json').write_text(json.dumps(sys.argv[1:]))
 mode = os.environ['EVIDENCE_MODE']
-if mode == 'cargo-failure':
-    sys.exit(7)
 if mode == 'missing':
     sys.exit(0)
 scenario = os.environ['ARTIFACT_SCENARIO']
@@ -51,6 +49,8 @@ if mode == 'corrupt':
     frame.write_bytes(b'corrupt PNG')
 (artifact / 'report.json').write_text(json.dumps(report))
 (folder / 'latest.txt').write_text(str(artifact))
+if mode == 'cargo-failure':
+    sys.exit(7)
 if mode == 'stale':
     for file in (artifact / 'report.json', folder / 'latest.txt'):
         os.utime(file, (1, 1))

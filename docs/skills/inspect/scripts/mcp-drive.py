@@ -152,12 +152,21 @@ class McpSession:
             self.proc.stdout.close()
 
 
+def trim_board_name(name):
+    # Match Rust's whitespace set, preserving Python-only U+001C..U+001F.
+    return name.strip('\t\n\v\f\r \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005'
+                      '\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000')
+
+
 def expected_result(tool, arguments, reply):
     """Check deterministic fields without pinning generated IDs or viewport state."""
+    # The app's argument boundary turns JSON null into an empty object.
+    if arguments is None:
+        arguments = {}
     if tool == 'create_board' and arguments.get('name') is not None:
-        return isinstance(reply, dict) and reply.get('board', {}).get('name') == arguments['name'].strip()
+        return isinstance(reply, dict) and reply.get('board', {}).get('name') == trim_board_name(arguments['name'])
     if tool == 'rename_board':
-        return reply == {'board': {'id': arguments['board'], 'name': arguments['name'].strip()}}
+        return reply == {'board': {'id': arguments['board'], 'name': trim_board_name(arguments['name'])}}
     if tool == 'delete_board':
         return isinstance(reply, dict) and reply.get('deleted') == arguments['board']
     if tool == 'set_settings':
