@@ -141,16 +141,35 @@ mod tests {
                     assert_eq!(resolve_data_root_from_install_root(&root).unwrap(), root);
                     assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
                 }
-                "fallback" => assert_eq!(
-                    resolve_data_root_from_install_root(&root.join("missing-install")).unwrap(),
-                    platform_user_data_root().unwrap(),
-                ),
+                #[cfg(unix)]
+                "fallback" => {
+                    use std::os::unix::fs::PermissionsExt as _;
+                    let protected = root.join("protected-install");
+                    std::fs::create_dir(&protected).unwrap();
+                    std::fs::set_permissions(&protected, std::fs::Permissions::from_mode(0o555))
+                        .unwrap();
+                    let resolved = resolve_data_root_from_install_root(&protected);
+                    std::fs::set_permissions(&protected, std::fs::Permissions::from_mode(0o755))
+                        .unwrap();
+                    #[cfg(target_os = "macos")]
+                    let expected = root.join("Library/Application Support/SnappyRef");
+                    #[cfg(not(target_os = "macos"))]
+                    let expected = root.join("SnappyRef");
+                    assert_eq!(resolved.unwrap(), expected);
+                }
+                #[cfg(windows)]
+                "appdata" => assert_eq!(platform_user_data_root().unwrap(), root.join("SnappyRef")),
                 _ => unreachable!(),
             }
             return;
         }
         let root = crate::test_support::TempRoot::new("root-resolution");
-        for kind in ["library", "data", "portable", "fallback"] {
+        let mut kinds = vec!["library", "data", "portable"];
+        #[cfg(unix)]
+        kinds.push("fallback");
+        #[cfg(windows)]
+        kinds.push("appdata");
+        for kind in kinds {
             let mut child = std::process::Command::new(std::env::current_exe().unwrap());
             child.args(["--exact", "local_data_location::tests::explicit_and_portable_roots_do_not_need_user_data_fallback"])
                 .env(CHILD, kind).env("SNAPPYREF_ROOT_TEST_PATH", &*root);
@@ -168,6 +187,9 @@ mod tests {
                 child.env(SNAPPYREF_LIBRARY_ROOT_ENV, &*root);
             } else if kind == "data" {
                 child.env(SNAPPYREF_DATA_ROOT_ENV, &*root);
+            }
+            if kind == "appdata" {
+                child.env("APPDATA", &*root);
             }
             if kind == "fallback" {
                 child
