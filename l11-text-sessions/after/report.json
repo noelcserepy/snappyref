@@ -4,6 +4,21 @@
   "first_failure": null,
   "assertions": [
     {
+      "name": "Undo while typing preserves the previous Coral style edit",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "the focused editor undoes its text",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "the focused editor redoes hello",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
       "name": "plain Enter commits hello",
       "passed": true,
       "type": "assertion"

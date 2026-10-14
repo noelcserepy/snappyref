@@ -1,31 +1,46 @@
 {
   "scenario": "annotation-text-sessions",
   "status": "fail",
-  "first_failure": "one Undo restores before after five typing frames",
+  "first_failure": "the focused editor redoes hello",
   "assertions": [
     {
-      "name": "plain Enter commits hello",
+      "name": "Undo while typing preserves the previous Coral style edit",
       "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "the focused editor undoes its text",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "the focused editor redoes hello",
+      "passed": false,
+      "type": "assertion"
+    },
+    {
+      "name": "plain Enter commits hello",
+      "passed": false,
       "type": "assertion"
     },
     {
       "name": "one Undo restores before after five typing frames",
-      "passed": false,
+      "passed": true,
       "type": "assertion"
     },
     {
       "name": "Redo restores hello",
-      "passed": true,
-      "type": "assertion"
-    },
-    {
-      "name": "reopened history undoes the whole session to before",
       "passed": false,
       "type": "assertion"
     },
     {
-      "name": "reopened history redoes hello",
+      "name": "reopened history undoes the whole session to before",
       "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "reopened history redoes hello",
+      "passed": false,
       "type": "assertion"
     },
     {
@@ -45,6 +60,26 @@
     },
     {
       "name": "one Undo of the second session restores hello",
+      "passed": false,
+      "type": "assertion"
+    },
+    {
+      "name": "exit saves the unfinished typing session",
+      "passed": false,
+      "type": "assertion"
+    },
+    {
+      "name": "exit stores one Undo step back to hello",
+      "passed": false,
+      "type": "assertion"
+    },
+    {
+      "name": "an empty committed label is removed",
+      "passed": true,
+      "type": "assertion"
+    },
+    {
+      "name": "one Undo restores the label cleared during editing",
       "passed": false,
       "type": "assertion"
     }
