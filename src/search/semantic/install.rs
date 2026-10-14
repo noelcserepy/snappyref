@@ -745,6 +745,53 @@ mod tests {
     }
 
     #[test]
+    fn failed_retry_after_interrupted_copy_keeps_the_previous_model_bytes() {
+        let root = TempRoot::new("interrupted-copy");
+        let descriptor = descriptor_for_bytes(b"unused");
+        let model = root.join("models").join(&descriptor.model_key);
+        let previous = root
+            .join("models")
+            .join(format!("{}.previous", descriptor.model_key));
+        let staged = root.join("staged");
+        let installing = root
+            .join("models")
+            .join(format!("{}.installing", descriptor.model_key));
+        let fixtures: [(&Path, &[u8], &[u8], &[u8]); 3] = [
+            (&previous, b"old-tokenizer", b"old-text", b"old-vision"),
+            (
+                &model,
+                b"partial-tokenizer",
+                b"partial-text",
+                b"partial-vision",
+            ),
+            (&staged, b"new-tokenizer", b"new-text", b"new-vision"),
+        ];
+        for (directory, tokenizer, text, vision) in fixtures {
+            fs::create_dir_all(directory.join("onnx")).unwrap();
+            fs::write(directory.join("tokenizer.json"), tokenizer).unwrap();
+            fs::write(directory.join("onnx/text_model_int8.onnx"), text).unwrap();
+            fs::write(directory.join("onnx/vision_model_int8.onnx"), vision).unwrap();
+        }
+        let error = promote_staged_model_with_hook(&root, &descriptor, &staged, || {
+            remove_path_any(&installing).unwrap();
+        })
+        .unwrap_err();
+        assert!(matches!(error, SemanticSearchInstallError::Io(_)));
+        assert_eq!(
+            fs::read(model.join("tokenizer.json")).unwrap(),
+            b"old-tokenizer"
+        );
+        assert_eq!(
+            fs::read(model.join("onnx/text_model_int8.onnx")).unwrap(),
+            b"old-text"
+        );
+        assert_eq!(
+            fs::read(model.join("onnx/vision_model_int8.onnx")).unwrap(),
+            b"old-vision"
+        );
+    }
+
+    #[test]
     fn removing_semantic_search_assets_keeps_library_and_embeddings() {
         let root = TempRoot::new("remove");
         let descriptor = SemanticSearchAssetDescriptor {

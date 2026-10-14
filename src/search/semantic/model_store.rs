@@ -1,4 +1,6 @@
 //! Availability in the Local Model Store. Startup recovers interrupted promotions; checks are read-only.
+//! A surviving `.previous` marks an uncommitted promotion. Its complete model
+//! takes priority over a final directory that may contain a truncated fallback copy.
 
 use std::path::{Path, PathBuf};
 
@@ -49,12 +51,16 @@ pub(crate) fn recover_interrupted_model_promotion(
 ) -> std::io::Result<()> {
     let store = model_store_root(data_root);
     let final_model = store.join(model_key);
-    if model_files_complete(&final_model, required_files) {
-        return Ok(());
-    }
-    for suffix in ["previous", "installing"] {
-        let recovery = store.join(format!("{model_key}.{suffix}"));
+    for name in [
+        format!("{model_key}.previous"),
+        model_key.to_owned(),
+        format!("{model_key}.installing"),
+    ] {
+        let recovery = store.join(name);
         if model_files_complete(&recovery, required_files) {
+            if recovery == final_model {
+                return Ok(());
+            }
             match std::fs::symlink_metadata(&final_model) {
                 Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(&final_model)?,
                 Ok(_) => std::fs::remove_file(&final_model)?,
