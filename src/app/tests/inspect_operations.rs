@@ -1105,8 +1105,14 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
     harness.event(egui::Event::Paste(format!("http://{address}/slow.png")));
     harness.step();
     let slow_id = harness.state().canvas.selected_placement_ids()[0];
-    assert_eq!(harness.state().canvas.viewport_state(), view_before);
-    assert_eq!(harness.state().placement_creation.pending_len(), 1);
+    scenario.assertion(
+        "accepting a slow URL keeps the viewport",
+        (harness.state().canvas.viewport_state()) == (view_before),
+    );
+    scenario.assertion(
+        "slow URL reserves one pending placement",
+        (harness.state().placement_creation.pending_len()) == (1),
+    );
     scenario.capture_screen("screen-000-url-loading", &mut harness);
     drag_with_modifiers(
         &mut harness,
@@ -1116,7 +1122,10 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
         egui::PointerButton::Primary,
     );
     let moved = center_of(&harness, slow_id);
-    assert!(moved.distance(egui::Pos2::ZERO) > 20.0);
+    scenario.assertion(
+        "loading placement moves with the pointer",
+        moved.distance(egui::Pos2::ZERO) > 20.0,
+    );
     drag_with_modifiers(
         &mut harness,
         screen.center() + egui::vec2(300.0, 200.0),
@@ -1125,25 +1134,38 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
         egui::PointerButton::Primary,
     );
     let navigated = harness.state().canvas.viewport_state();
-    assert_ne!(navigated, view_before);
+    scenario.assertion(
+        "canvas pans while URL preparation waits",
+        (navigated) != (view_before),
+    );
     release.send(()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     while harness.state().placement_creation.pending_len() != 0 && Instant::now() < deadline {
         harness.step();
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(harness.state().placement_creation.pending_len(), 0);
-    assert!(
+    scenario.assertion(
+        "slow URL finishes its pending work",
+        (harness.state().placement_creation.pending_len()) == (0),
+    );
+    scenario.assertion(
+        "slow URL resolves to loaded content",
         harness
             .state()
             .canvas
             .placement_for_id(slow_id)
             .unwrap()
-            .is_loaded()
+            .is_loaded(),
     );
-    assert!(center_of(&harness, slow_id).distance(moved) < 0.01);
-    assert_eq!(harness.state().canvas.viewport_state(), navigated);
-    scenario.assertion("slow URL accepts without viewport movement; pending placement moves and pans; completion preserves identity, edited center and navigated viewport", true);
+    scenario.assertion(
+        "URL completion preserves the edited center",
+        center_of(&harness, slow_id).distance(moved) < 0.01,
+    );
+    scenario.assertion(
+        "URL completion preserves the navigated viewport",
+        (harness.state().canvas.viewport_state()) == (navigated),
+    );
+
     scenario.capture_screen("screen-001-url-loaded", &mut harness);
     harness.input_mut().dropped_files = vec![
         dropped_file(source),
@@ -1152,34 +1174,54 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
     ];
     harness.step();
     let ids = harness.state().canvas.selected_placement_ids();
-    assert_eq!(ids.len(), 3);
+    scenario.assertion(
+        "mixed drop selects its three reserved placements",
+        (ids.len()) == (3),
+    );
     let board_a = harness.state().active_board_id;
     shortcut(&mut harness, CMD, egui::Key::N);
     let board_b = harness.state().active_board_id;
-    assert_ne!(board_a, board_b);
+    scenario.assertion(
+        "New board switches away from the import target",
+        (board_a) != (board_b),
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while harness.state().placement_creation.pending_len() != 0 && Instant::now() < deadline {
         harness.step();
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(harness.state().placement_creation.pending_len(), 0);
-    assert!(harness.state().canvas.canvas_stack_order().is_empty());
+    scenario.assertion(
+        "inactive mixed batch finishes pending work",
+        (harness.state().placement_creation.pending_len()) == (0),
+    );
+    scenario.assertion(
+        "new active board stays empty",
+        harness.state().canvas.canvas_stack_order().is_empty(),
+    );
     harness.state_mut().flush_persistence();
     let completed = library.load_placements_for_board(board_a).unwrap();
-    assert_eq!(completed.len(), 4);
-    assert_eq!(completed.iter().filter(|p| p.is_loaded()).count(), 2);
-    assert_eq!(
-        completed
+    scenario.assertion(
+        "target board retains the URL and all three batch placements",
+        (completed.len()) == (4),
+    );
+    scenario.assertion(
+        "URL and valid file resolve to loaded images",
+        (completed.iter().filter(|p| p.is_loaded()).count()) == (2),
+    );
+    scenario.assertion(
+        "corrupt file and HTTP failure become failed placements",
+        (completed
             .iter()
             .filter(|p| matches!(p.content, crate::data::PlacementContent::Failed { .. }))
-            .count(),
-        2
+            .count())
+            == (2),
     );
-    assert!(
+    scenario.assertion(
+        "inactive completion adds nothing to the active board",
         library
             .load_placements_for_board(board_b)
             .unwrap()
-            .is_empty()
+            .is_empty(),
     );
     let batch = completed
         .iter()
@@ -1188,11 +1230,9 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
     for (i, a) in batch.iter().enumerate() {
         for b in &batch[i + 1..] {
             let overlap = a.visual_bounds().intersect(b.visual_bounds());
-            assert!(
+            scenario.assertion(
+                "completed batch placements do not overlap",
                 overlap.width() <= 0.01 || overlap.height() <= 0.01,
-                "batch bounds {:?} {:?}",
-                a.visual_bounds(),
-                b.visual_bounds()
             );
         }
     }
@@ -1214,18 +1254,24 @@ fn inspect_slow_url_and_inactive_mixed_batch_writes_artifact() {
     for _ in 0..20 {
         harness.step();
     }
-    assert_eq!(harness.state().active_board_id, board_a);
-    assert_eq!(harness.state().canvas.canvas_stack_order().len(), 4);
-    scenario.assertion("mixed valid, corrupt and failed HTTP batch completes only on inactive target board with stable IDs and nonoverlapping final layout", true);
+    scenario.assertion(
+        "board shortcut returns to the import target",
+        (harness.state().active_board_id) == (board_a),
+    );
+    scenario.assertion(
+        "returning shows all four target placements",
+        (harness.state().canvas.canvas_stack_order().len()) == (4),
+    );
+
     scenario.capture_screen("screen-002-return-to-completed-batch", &mut harness);
     harness.state_mut().canvas.select_placements(&ids);
     harness.key_press(INSPECT_DELETE_KEY);
     harness.step();
-    assert_eq!(harness.state().canvas.canvas_stack_order().len(), 1);
     scenario.assertion(
-        "failed placements leave no endless loading and delete with the mixed batch",
-        true,
+        "Delete removes the mixed batch and keeps the original URL",
+        (harness.state().canvas.canvas_stack_order().len()) == (1),
     );
+
     server.join().unwrap();
     finish(scenario);
 }
@@ -1334,6 +1380,7 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
         (90, 90),
         egui::pos2(650.0, 250.0),
     );
+    harness.state_mut().settings.placement_target_area = 90_000.0;
     let ids = [a.id(), b.id()];
     let snapshot = |h: &Harness<'_, SnappyRefApp>| {
         ids.map(|id| {
@@ -1357,26 +1404,31 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
         egui::PointerButton::Primary,
     );
     let moved = snapshot(&harness);
-    assert!((moved[0].center - before[0].center).length() > 50.0);
-    assert!(
-        (moved[0].center - before[0].center - (moved[1].center - before[1].center)).length() < 0.01
+    scenario.assertion(
+        "selected image moves with the drag",
+        (moved[0].center - before[0].center).length() > 50.0,
     );
-    assert_eq!(
-        harness
+    scenario.assertion(
+        "multi-drag moves both images by the same delta",
+        (moved[0].center - before[0].center - (moved[1].center - before[1].center)).length() < 0.01,
+    );
+    scenario.assertion(
+        "multi-drag preserves the unselected image",
+        (harness
             .state()
             .canvas
             .placement_for_id(other.id())
             .unwrap()
             .state
-            .geometry,
-        other.state.geometry
+            .geometry)
+            == (other.state.geometry),
     );
-    scenario.assertion(
-        "multi-selection drag preserves relative geometry and unselected image",
-        true,
-    );
+
     shortcut(&mut harness, CMD, egui::Key::Z);
-    assert_eq!(snapshot(&harness), before);
+    scenario.assertion(
+        "one Undo restores the multi-drag",
+        (snapshot(&harness)) == (before),
+    );
     harness.state_mut().canvas.select_placements(&ids);
     let view = harness.state().canvas.viewport_state();
     drag_with_modifiers(
@@ -1388,19 +1440,23 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
     );
     let scaled = snapshot(&harness);
     let factor = scaled[0].scale / before[0].scale;
-    assert!(factor > 1.05);
-    assert!((scaled[1].scale / before[1].scale - factor).abs() < 0.001);
-    assert!(
+    scenario.assertion("Mod-Alt drag enlarges the selected images", factor > 1.05);
+    scenario.assertion(
+        "multi-scale uses the same factor for both images",
+        (scaled[1].scale / before[1].scale - factor).abs() < 0.001,
+    );
+    scenario.assertion(
+        "multi-scale scales the separation by the same factor",
         (scaled[0].center.distance(scaled[1].center) / before[0].center.distance(before[1].center)
             - factor)
             .abs()
-            < 0.001
+            < 0.001,
     );
-    assert_eq!(harness.state().canvas.viewport_state(), view);
     scenario.assertion(
-        "Mod-Alt scales sizes and spacing uniformly without panning",
-        true,
+        "multi-scale leaves the viewport fixed",
+        (harness.state().canvas.viewport_state()) == (view),
     );
+
     shortcut(&mut harness, CMD, egui::Key::Z);
     harness.state_mut().canvas.select_placements(&ids);
     harness.state_mut().settings.rotation_snap_degrees = 15.0;
@@ -1423,18 +1479,22 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
     harness.step();
     let rotated = snapshot(&harness);
     let steps = rotated[0].rotation / 15.0_f32.to_radians();
-    assert!(steps.abs() >= 1.0 && (steps - steps.round()).abs() < 0.001);
-    assert!((rotated[0].rotation - rotated[1].rotation).abs() < 0.001);
-    assert!(
+    scenario.assertion(
+        "R-handle produces a nonzero snapped rotation",
+        steps.abs() >= 1.0 && (steps - steps.round()).abs() < 0.001,
+    );
+    scenario.assertion(
+        "multi-rotation applies the same angle to both images",
+        (rotated[0].rotation - rotated[1].rotation).abs() < 0.001,
+    );
+    scenario.assertion(
+        "multi-rotation preserves separation",
         (rotated[0].center.distance(rotated[1].center)
             - before[0].center.distance(before[1].center))
         .abs()
-            < 0.01
+            < 0.01,
     );
-    scenario.assertion(
-        "R-handle rotation snaps both images in15degree steps and preserves separation",
-        true,
-    );
+
     shortcut(&mut harness, CMD, egui::Key::Z);
     harness.state_mut().canvas.select_placements(&ids);
     harness.key_down(egui::Key::R);
@@ -1468,8 +1528,11 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
     harness.key_up(egui::Key::R);
     harness.step();
     let precise = snapshot(&harness)[0].rotation / 15.0_f32.to_radians();
-    assert!((precise - precise.round()).abs() > 0.05);
-    scenario.assertion("Alt added during active rotation bypasses snap", true);
+    scenario.assertion(
+        "Alt rotation bypasses the snap angles",
+        (precise - precise.round()).abs() > 0.05,
+    );
+
     shortcut(&mut harness, CMD, egui::Key::Z);
     harness.state_mut().canvas.select_placements(&ids);
     drag_with_modifiers(
@@ -1491,19 +1554,25 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
         egui::PointerButton::Primary,
     );
     let after_normal = snapshot(&harness);
-    assert_eq!(after_normal[0].scale, before_normal[0].scale);
-    assert!(after_normal[0].center.distance(before_normal[0].center) > 20.0);
     scenario.assertion(
-        "release outside canvas ends scaling; next ordinary drag moves without scaling",
-        true,
+        "ordinary drag after outside release leaves scale fixed",
+        (after_normal[0].scale) == (before_normal[0].scale),
     );
+    scenario.assertion(
+        "ordinary drag after outside release moves the image",
+        after_normal[0].center.distance(before_normal[0].center) > 20.0,
+    );
+
     shortcut(&mut harness, CMD, egui::Key::Z);
     scenario.capture_screen("screen-000-after-transforms", &mut harness);
     for gap in [0.0, 24.0] {
         let before_setting = snapshot(&harness);
         harness.state_mut().settings.placement_gap = gap;
         harness.step();
-        assert_eq!(snapshot(&harness), before_setting);
+        scenario.assertion(
+            "changing the gap setting leaves geometry fixed",
+            (snapshot(&harness)) == (before_setting),
+        );
         for key in [egui::Key::W, egui::Key::E] {
             harness.state_mut().canvas.select_placements(&ids);
             let original = snapshot(&harness);
@@ -1527,41 +1596,49 @@ fn inspect_multi_transform_and_layout_contracts_writes_artifact() {
             } else {
                 (ra.top().max(rb.top()) - ra.bottom().min(rb.bottom())).abs()
             };
-            assert!((actual - gap).abs() < 0.01, "gap {gap} actual {actual}");
-            assert_eq!(
-                [arranged[0].size, arranged[1].size],
-                [original[0].size, original[1].size]
+            scenario.assertion(
+                "row and column commands use the requested gap",
+                (actual - gap).abs() < 0.01,
             );
-            assert_eq!(
-                [arranged[0].scale, arranged[1].scale],
-                [original[0].scale, original[1].scale]
+            scenario.assertion(
+                "row and column keep image dimensions",
+                ([arranged[0].size, arranged[1].size]) == ([original[0].size, original[1].size]),
+            );
+            scenario.assertion(
+                "row and column keep image scales",
+                ([arranged[0].scale, arranged[1].scale])
+                    == ([original[0].scale, original[1].scale]),
             );
             shortcut(&mut harness, CMD, egui::Key::Z);
-            assert_eq!(snapshot(&harness), original);
+            scenario.assertion(
+                "one Undo restores row and column arrangements",
+                (snapshot(&harness)) == (original),
+            );
         }
     }
-    scenario.assertion("row and column respect gap0/24 and proportions, undo restores, setting alone does not rearrange", true);
+
     for modifiers in [CMD, egui::Modifiers { shift: true, ..CMD }] {
         harness.state_mut().canvas.select_placements(&ids);
         let original = snapshot(&harness);
-        let target = if modifiers.shift {
-            original
-                .iter()
-                .map(|g| g.size.x * g.size.y * g.scale * g.scale)
-                .sum::<f32>()
-                / 2.0
-        } else {
-            crate::placement::DEFAULT_PLACEMENT_TARGET_AREA
-        };
+        let target = if modifiers.shift { 13_400.0 } else { 90_000.0 };
         shortcut(&mut harness, modifiers, egui::Key::L);
         for (after, before) in snapshot(&harness).iter().zip(original) {
-            assert!((after.size.x * after.size.y * after.scale * after.scale - target).abs() < 1.0);
-            assert_eq!(after.size, before.size);
+            scenario.assertion(
+                "area shortcut hits the selected target area",
+                (after.size.x * after.size.y * after.scale * after.scale - target).abs() < 1.0,
+            );
+            scenario.assertion(
+                "area shortcut preserves source dimensions",
+                (after.size) == (before.size),
+            );
         }
         shortcut(&mut harness, CMD, egui::Key::Z);
-        assert_eq!(snapshot(&harness), original);
+        scenario.assertion(
+            "one Undo restores area normalization",
+            (snapshot(&harness)) == (original),
+        );
     }
-    scenario.assertion("default and selection average-area shortcuts hit their targets, preserve aspect ratios and undo", true);
+
     // Start with overlapping images so a disabled settle command cannot pass.
     for (key, expected) in [
         (

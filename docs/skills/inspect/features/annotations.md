@@ -58,7 +58,8 @@ Preconditions:
   Shift+digit widths, 1 to 5 colors, H head toggles, midpoint drags, and a T
   press with Unicode text. It then drives Escape, Shift+digit text sizes, Enter, ⌘A,
   Backspace, an S-drag, a corner resize, a body move, and a double-click edit.
-  Only the first assertion is a live check. The rest are plain asserts.
+  Each live check is recorded in the report. A failing check keeps the
+  later observations and frames, then marks the report as failed.
 - **Board of real images.** Run `run-scenario.sh annotation-board`.
   It seeds six readme-board images, places labels with T, draws arrows
   from labels and rectangles with S, and colors them with number keys. Frames

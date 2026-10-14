@@ -259,7 +259,7 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
 
     let root = TempRoot::new("snappyref-inspect-semantic-sidebar-status");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let actual_status = crate::search::semantic::default_local_model_store_status();
+    let actual_status = LocalModelStoreStatus::Downloading { percent: 42 };
     let mut app = test_app(Some(library));
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Settings;
@@ -280,6 +280,11 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
     );
 
     let frame_stats = scenario.capture_screen("screen", &mut harness);
+    scenario.assertion(
+        "seeded model status displays Downloading 42% and Cancel",
+        harness.query_by_label("Downloading 42%").is_some()
+            && harness.query_by_label("Cancel").is_some(),
+    );
     scenario.fact(
         "semantic-search.local-model-store-status",
         serde_json::json!({
@@ -2394,15 +2399,12 @@ fn inspect_crop_undo_redo_placement_writes_artifact() {
     scenario.capture_screen("screen-006-redone", &mut harness);
 
     harness.state_mut().flush_persistence();
-    let durable = &library.load_placements().unwrap()[0];
-    assert!(
-        durable.is_loaded(),
-        "crop durability lost loaded content: {durable:?}; status={}",
-        harness.state().status
-    );
+    let durable = library.load_placements().unwrap();
     scenario.assertion(
-        "explicit flush preserves the cropped Asset relation",
-        durable.require_loaded_asset().id == cropped_asset_id,
+        "explicit flush preserves exactly the loaded cropped Asset relation",
+        durable.iter().all(Placement::is_loaded)
+            && durable.iter().map(|p| p.asset_id()).collect::<Vec<_>>()
+                == vec![Some(cropped_asset_id)],
     );
 
     let report = scenario.finish();
