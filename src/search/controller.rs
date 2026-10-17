@@ -519,7 +519,11 @@ impl SearchController {
                         self.note_demand_embedding_drained_at(Instant::now());
                     }
                 }
-                self.overlay.status = SearchOverlayStatus::Error(error);
+                // An import's failure replaces only the import's Indexing note.
+                // A search keeps its own status and gets its own answer.
+                if matches!(self.overlay.status, SearchOverlayStatus::Indexing) {
+                    self.overlay.status = SearchOverlayStatus::Error(error);
+                }
                 // A search waiting on this image asks again. The service
                 // answers with the failure, whatever order the events came in.
                 let should_refresh = self.overlay.open
@@ -574,13 +578,14 @@ impl SearchController {
                         SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
                 }
             }
-            // The service is embedding the source image. Its Indexed result
-            // runs the search again.
+            // The service is embedding the source image. Its Indexed or
+            // Failed result runs the search again. Loading keeps the palette
+            // polling until then.
             SearchQueryResult::SourcePending { request_id }
                 if Some(request_id) == active_request_id =>
             {
                 self.active_search = None;
-                self.overlay.status = SearchOverlayStatus::Indexing;
+                self.overlay.status = SearchOverlayStatus::Loading("Indexing…".to_owned());
             }
             SearchQueryResult::Failed { request_id, error }
                 if Some(request_id) == active_request_id =>
@@ -1622,13 +1627,9 @@ mod tests {
     }
 
     #[test]
-    fn waiting_palette_keeps_repainting_until_the_service_answers() {
-        let repaint_delay = |status: SearchOverlayStatus| {
+    fn palette_polls_only_while_its_search_waits() {
+        let repaint_delay = |search: &mut SearchController| {
             let ctx = egui::Context::default();
-            let mut search = SearchController::default();
-            search.set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
-            search.overlay.open = true;
-            search.overlay.status = status;
             let mut canvas = CanvasState::default();
             let screen_rect =
                 egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
@@ -1659,16 +1660,44 @@ mod tests {
             }
             delay
         };
+        let root = TempRoot::new("snappyref-palette-polling");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
 
-        // egui subtracts the frame time from a 16 ms request, leaving zero.
-        assert_eq!(repaint_delay(SearchOverlayStatus::Indexing), Duration::ZERO);
-        assert_eq!(
-            repaint_delay(SearchOverlayStatus::Loading(
-                "Preparing semantic search…".to_owned()
-            )),
-            Duration::ZERO
+        // An image search waits while its source image is embedded, and an
+        // unrelated embedding failure leaves that wait alone.
+        let mut search = search_controller_for_library(library.clone());
+        search.overlay.open = true;
+        search.open_image_pivot_search(crate::search::palette::ImageSearchPivot {
+            asset_id: 7,
+            asset_preview_path: None,
+        });
+        let first = search.active_search.as_ref().unwrap().request_id;
+        search.apply_service_results(
+            Vec::new(),
+            vec![SearchQueryResult::SourcePending { request_id: first }],
         );
-        assert_eq!(repaint_delay(SearchOverlayStatus::Ready), Duration::MAX);
+        search.apply_service_results(
+            vec![SearchIndexResult::Failed {
+                asset_id: Some(9),
+                error: "other image".to_owned(),
+            }],
+            Vec::new(),
+        );
+        assert_eq!(
+            crate::search::palette::palette_status_line(&search.overlay.status).1,
+            "Indexing…"
+        );
+        // egui subtracts the frame time from a 16 ms request, leaving zero.
+        assert_eq!(repaint_delay(&mut search), Duration::ZERO);
+
+        // An import finished while the palette was open. Nothing waits.
+        let mut search = search_controller_for_library(library);
+        search.overlay.open = true;
+        search
+            .queue_asset_index(8, std::path::PathBuf::from("/tmp/imported.png"))
+            .unwrap();
+        search.apply_service_results(vec![SearchIndexResult::Indexed { asset_id: 8 }], Vec::new());
+        assert_eq!(repaint_delay(&mut search), Duration::MAX);
     }
 
     #[test]

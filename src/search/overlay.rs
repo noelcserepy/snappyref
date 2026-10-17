@@ -59,11 +59,7 @@ impl SearchController {
         if self.active_search.is_some() {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
-        // Service answers arrive without waking the UI, so a waiting palette polls.
-        if matches!(
-            self.overlay.status,
-            SearchOverlayStatus::Loading(_) | SearchOverlayStatus::Indexing
-        ) {
+        if matches!(self.overlay.status, SearchOverlayStatus::Loading(_)) {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
 
