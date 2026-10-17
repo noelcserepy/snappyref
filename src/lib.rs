@@ -91,7 +91,7 @@ pub fn run() -> eframe::Result<()> {
         viewport = viewport.with_window_level(eframe::egui::viewport::WindowLevel::AlwaysOnTop);
     }
     let mut options = eframe::NativeOptions {
-        viewport,
+        viewport: platform::native_drop::configure_viewport(viewport),
         ..Default::default()
     };
     configure_startup_activation(&mut options, startup_focus_enabled);
