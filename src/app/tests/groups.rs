@@ -1966,5 +1966,30 @@ fn inspect_group_after_snapped_import_writes_artifact() {
     harness.step();
     scenario.capture_screen("screen-004-released", &mut harness);
     scenario.assertion("release clears the guide", guides(&harness) == 0);
+
+    // The Group picker takes pointer input, so the canvas never sees this release.
+    let back = from;
+    scenario.action("hold a snapped drag, open the Group picker, release", back);
+    harness.hover_at(to);
+    harness.drag_at(to);
+    for _ in 0..8 {
+        harness.step();
+    }
+    std::thread::sleep(Duration::from_millis(120));
+    harness.hover_at(back + egui::vec2(0.0, 3.0));
+    harness.step();
+    let held = guides(&harness);
+    harness.key_press(egui::Key::G);
+    harness.step();
+    let picker_opened = harness.state().canvas.group_picker_open();
+    harness.drop_at(back + egui::vec2(0.0, 3.0));
+    harness.step();
+    harness.key_press(egui::Key::Escape);
+    harness.step();
+    scenario.capture_screen("screen-005-picker-closed", &mut harness);
+    scenario.assertion(
+        "a release taken by the Group picker leaves no guide",
+        held > 0 && picker_opened && guides(&harness) == 0,
+    );
     scenario.finish();
 }

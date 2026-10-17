@@ -440,11 +440,13 @@ pub fn show(
         }
     }
     state.prune_cached_pixels_to_selected_items();
-    // Snap guides belong to a running gesture or to provisional placements that
-    // still follow the pointer. A released gesture or a committed import layout
-    // leaves no guide behind.
+    // Snap guides belong to a held gesture or to provisional placements that
+    // still follow the pointer. A released gesture, even one whose release went
+    // to an overlay, and a committed import layout leave no guide behind.
+    let gesture_held =
+        state.interaction.gesture.is_some() && ui.input(|i| i.pointer.primary_down());
     if !state.interaction.guide_snap_indicators.is_empty()
-        && state.interaction.gesture.is_none()
+        && !gesture_held
         && !state.has_provisional_placements()
     {
         state.clear_guide_snap_indicators();
