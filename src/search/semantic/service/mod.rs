@@ -1109,6 +1109,60 @@ mod tests {
     }
 
     #[test]
+    fn image_pivot_embeds_again_a_source_whose_stored_embedding_is_malformed() {
+        for corruption in ["length", "dimension", "nonfinite"] {
+            let root = TempRoot::new("snappyref-corrupt-source-embedding-service-test");
+            let library = Library::initialize(root.join("library")).unwrap();
+            let (source, _) = register_image(&library, "source");
+            let (near, _) = register_image(&library, "near");
+            let mut first_axis = vec![0.0; DEFAULT_SEMANTIC_SEARCH_MODEL.dimension];
+            first_axis[0] = 1.0;
+            for asset_id in [source, near] {
+                library
+                    .upsert_asset_embedding_blob(
+                        asset_id,
+                        DEFAULT_SEMANTIC_SEARCH_MODEL.model_key,
+                        &first_axis,
+                    )
+                    .unwrap();
+            }
+            let blob = match corruption {
+                "length" => vec![0, 0, 0],
+                "dimension" => 1.0_f32.to_ne_bytes().to_vec(),
+                _ => {
+                    let mut nonfinite = first_axis.clone();
+                    nonfinite[1] = f32::NAN;
+                    nonfinite.into_iter().flat_map(f32::to_ne_bytes).collect()
+                }
+            };
+            rusqlite::Connection::open(root.join("library/library.db"))
+                .unwrap()
+                .execute(
+                    "UPDATE asset_embeddings SET embedding_blob = ?1 WHERE asset_id = ?2",
+                    rusqlite::params![blob, source],
+                )
+                .unwrap();
+            let service = fixture_search_service(&library);
+
+            assert_eq!(
+                pivot_answer(&service, 1, source),
+                Err("pending".to_owned()),
+                "{corruption}"
+            );
+            assert_eq!(
+                embedding_starts(&index_results_until_settled(&service, source)),
+                vec![source],
+                "{corruption}"
+            );
+            assert_eq!(
+                pivot_answer(&service, 2, source),
+                Ok(vec![near]),
+                "{corruption}"
+            );
+        }
+    }
+
+    #[test]
     fn overlapping_import_and_search_embeddings_keep_the_retry_budget() {
         let root = TempRoot::new("snappyref-pivot-source-import-overlap-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
