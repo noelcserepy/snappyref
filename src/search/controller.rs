@@ -700,7 +700,10 @@ impl SearchController {
         service.enqueue_asset_index(asset_id, original_path)?;
         self.pending_demand_embeddings.insert(asset_id);
         self.embedding_backfill.exhausted = false;
-        self.overlay.status = SearchOverlayStatus::Indexing;
+        // A search in flight owns the status.
+        if self.active_search.is_none() {
+            self.overlay.status = SearchOverlayStatus::Indexing;
+        }
         Ok(())
     }
 
@@ -1678,18 +1681,18 @@ mod tests {
             Vec::new(),
             vec![SearchQueryResult::SourcePending { request_id: first }],
         );
+        // Other writers of the status: an import queues its embedding and
+        // fails, and the user presses Mod+F again.
+        search
+            .queue_asset_index(10, std::path::PathBuf::from("/tmp/imported.png"))
+            .unwrap();
         search.apply_service_results(
             vec![SearchIndexResult::Failed {
-                asset_id: Some(9),
+                asset_id: Some(10),
                 error: "other image".to_owned(),
             }],
             Vec::new(),
         );
-        // Other writers of the status: an import queues its embedding, and
-        // the user presses Mod+F again.
-        search
-            .queue_asset_index(10, std::path::PathBuf::from("/tmp/imported.png"))
-            .unwrap();
         search.open_overlay_from_command();
         assert_eq!(
             crate::search::palette::palette_status_line(&search.overlay.status).1,
@@ -1712,42 +1715,60 @@ mod tests {
     fn source_indexed_a_frame_before_its_pending_answer_still_shows_results() {
         let root = TempRoot::new("snappyref-pivot-indexed-before-pending");
         let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
-        let model = crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
-        let mut first_axis = vec![0.0; model.dimension];
-        first_axis[0] = 1.0;
         let register = |name: &str| {
             let path = library
                 .store_rgba_image(name, &[0, 0, 255, 255], 1, 1)
                 .unwrap();
-            let id = library
+            library
                 .register_original(&path, "image/png", 1, 1, 4, None)
                 .unwrap()
-                .id;
-            library
-                .upsert_asset_embedding_blob(id, model.model_key, &first_axis)
-                .unwrap();
-            id
+                .id
         };
         let source = register("source");
         let near = register("near");
-        let mut search = search_controller_for_library(library);
+        let model = crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
+        let mut first_axis = vec![0.0; model.dimension];
+        first_axis[0] = 1.0;
+        library
+            .upsert_asset_embedding_blob(near, model.model_key, &first_axis)
+            .unwrap();
+        let mut search = SearchController::default();
+        search.set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+        search
+            .set_embedding_helper_for_test(crate::search::semantic::EmbeddingHelperLaunch::Fixture);
+        search.sync_service(
+            Some(&library),
+            &mut String::new(),
+            crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+        );
         search.overlay.open = true;
         search.open_image_pivot_search(crate::search::palette::ImageSearchPivot {
             asset_id: source,
             asset_preview_path: None,
         });
-        let first = search.active_search.as_ref().unwrap().request_id;
+        // Collect the search's real pending answer and the source's real
+        // Indexed result, then deliver the Indexed result a frame earlier.
+        let service = search.service.as_ref().unwrap();
+        let mut index_results = Vec::new();
+        let mut search_results = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while search_results.is_empty()
+            || !index_results.iter().any(
+                |result| matches!(result, SearchIndexResult::Indexed { asset_id } if *asset_id == source),
+            )
+        {
+            assert!(Instant::now() < deadline, "source did not finish indexing");
+            index_results.extend(service.try_recv_all());
+            search_results.extend(service.try_recv_search_all());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(matches!(
+            search_results[..],
+            [SearchQueryResult::SourcePending { .. }]
+        ));
 
-        // The source's embedding finished a frame before the search's own
-        // pending answer arrived.
-        search.apply_service_results(
-            vec![SearchIndexResult::Indexed { asset_id: source }],
-            Vec::new(),
-        );
-        search.apply_service_results(
-            Vec::new(),
-            vec![SearchQueryResult::SourcePending { request_id: first }],
-        );
+        search.apply_service_results(index_results, Vec::new());
+        search.apply_service_results(Vec::new(), search_results);
         let deadline = Instant::now() + Duration::from_secs(5);
         while search.overlay.results.is_empty() && Instant::now() < deadline {
             search.handle_results();

@@ -470,23 +470,41 @@ fn process_index_request(
             original_path,
             for_search,
         } => {
-            let indexed = index_asset(
-                worker_library,
-                model_spec,
-                result_tx,
-                canvas_image_max_side,
-                asset_id,
-                &original_path,
-                helper_launch,
-                helper,
-                true,
-            );
-            match &indexed {
-                Ok(()) => worker_index.refresh(),
-                Err(error) => {
-                    let _ = record_embedding_failure(worker_library, asset_id, model_spec, error);
+            // Requests can queue up for one Asset, from imports and searches.
+            // Each one honors what storage says by the time it runs.
+            let stored_failure = worker_library
+                .asset_embedding_failure_before_retry(
+                    asset_id,
+                    model_spec.model_key,
+                    unix_timestamp_seconds(),
+                )
+                .ok()
+                .flatten();
+            let indexed = if let Some(error) = stored_failure {
+                Err(error)
+            } else if worker_index.contains(asset_id).unwrap_or(false) {
+                Ok(())
+            } else {
+                let attempt = index_asset(
+                    worker_library,
+                    model_spec,
+                    result_tx,
+                    canvas_image_max_side,
+                    asset_id,
+                    &original_path,
+                    helper_launch,
+                    helper,
+                    true,
+                );
+                match &attempt {
+                    Ok(()) => worker_index.refresh(),
+                    Err(error) => {
+                        let _ =
+                            record_embedding_failure(worker_library, asset_id, model_spec, error);
+                    }
                 }
-            }
+                attempt
+            };
             // Finished once searches can see the outcome and before the result,
             // so a search the result starts finds the embedding or its failure.
             // Another request for the same Asset leaves a search's request running.
@@ -863,7 +881,7 @@ mod tests {
     use super::{
         EmbeddingHelperLaunch, IndexResult, SearchQueryResult, SemanticSearchConfig,
         SemanticSearchService, embedding_source_path, is_terminal_embedding_failure,
-        run_index_worker_loop,
+        run_index_worker_loop, unix_timestamp_seconds,
     };
     use crate::library::storage::Library;
     use crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
@@ -1012,7 +1030,8 @@ mod tests {
         }
     }
 
-    /// Index results up to the Asset's next Indexed or Failed result.
+    /// Index results through the batch with the Asset's next Indexed or
+    /// Failed result.
     fn index_results_until_settled(
         service: &SemanticSearchService,
         asset_id: i64,
@@ -1020,16 +1039,17 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut results = Vec::new();
         loop {
-            for result in service.try_recv_all() {
-                let settled = matches!(
+            let batch = service.try_recv_all();
+            let settled = batch.iter().any(|result| {
+                matches!(
                     result,
                     IndexResult::Indexed { asset_id: id }
-                        | IndexResult::Failed { asset_id: Some(id), .. } if id == asset_id
-                );
-                results.push(result);
-                if settled {
-                    return results;
-                }
+                        | IndexResult::Failed { asset_id: Some(id), .. } if *id == asset_id
+                )
+            });
+            results.extend(batch);
+            if settled {
+                return results;
             }
             assert!(Instant::now() < deadline, "embedding did not finish");
             std::thread::sleep(Duration::from_millis(2));
@@ -1089,31 +1109,70 @@ mod tests {
     }
 
     #[test]
-    fn image_pivot_during_its_import_embedding_spends_one_retry() {
+    fn overlapping_import_and_search_embeddings_keep_the_retry_budget() {
         let root = TempRoot::new("snappyref-pivot-source-import-overlap-service-test");
         let library = Library::initialize(root.join("library")).unwrap();
-        let (broken, path) = register_image(&library, "unembeddable");
         let service = fixture_search_service(&library);
+        let drain_until_quiet = || {
+            let mut results = Vec::new();
+            let mut quiet_since = Instant::now();
+            while quiet_since.elapsed() < Duration::from_millis(800) {
+                let batch = service.try_recv_all();
+                if !batch.is_empty() {
+                    quiet_since = Instant::now();
+                }
+                results.extend(batch);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            results
+        };
+        // Storage retries a first failure at once and a second after 5
+        // minutes. A third failure would be terminal.
+        let assert_retry_kept = |asset_id: i64| {
+            let now = unix_timestamp_seconds();
+            let key = DEFAULT_SEMANTIC_SEARCH_MODEL.model_key;
+            assert_eq!(
+                library.asset_embedding_failure_before_retry(asset_id, key, now),
+                Ok(Some("image could not be decoded".to_owned()))
+            );
+            assert_eq!(
+                library.asset_embedding_failure_before_retry(asset_id, key, now + 10 * 60),
+                Ok(None)
+            );
+        };
 
-        service.enqueue_asset_index(broken, path).unwrap();
-        assert_eq!(pivot_answer(&service, 1, broken), Err("pending".to_owned()));
-        index_results_until_settled(&service, broken);
-        // The import's failure leaves the search's own embedding running.
-        assert_eq!(pivot_answer(&service, 2, broken), Err("pending".to_owned()));
-        index_results_until_settled(&service, broken);
+        // Two imports queued ahead of the search.
+        let (imported_twice, path) = register_image(&library, "unembeddable-a");
+        service
+            .enqueue_asset_index(imported_twice, path.clone())
+            .unwrap();
+        service.enqueue_asset_index(imported_twice, path).unwrap();
         assert_eq!(
-            pivot_answer(&service, 3, broken),
-            Err("image could not be decoded".to_owned())
+            pivot_answer(&service, 1, imported_twice),
+            Err("pending".to_owned())
         );
-        std::thread::sleep(Duration::from_millis(600));
-        assert!(service.try_recv_all().is_empty());
-        assert!(
-            library
-                .next_embedding_retry_at_for_model(DEFAULT_SEMANTIC_SEARCH_MODEL.model_key)
-                .unwrap()
-                .is_some(),
-            "two failures keep a retry; a third would be terminal"
+        assert_eq!(
+            embedding_starts(&drain_until_quiet()),
+            vec![imported_twice, imported_twice]
         );
+        assert_retry_kept(imported_twice);
+
+        // A search, then an import while the search's embedding runs, then
+        // the search asking again after its failure.
+        let (searched_first, path) = register_image(&library, "unembeddable-b");
+        assert_eq!(
+            pivot_answer(&service, 2, searched_first),
+            Err("pending".to_owned())
+        );
+        service.enqueue_asset_index(searched_first, path).unwrap();
+        let mut results = index_results_until_settled(&service, searched_first);
+        let _ = pivot_answer(&service, 3, searched_first);
+        results.extend(drain_until_quiet());
+        assert_eq!(
+            embedding_starts(&results),
+            vec![searched_first, searched_first]
+        );
+        assert_retry_kept(searched_first);
     }
 
     #[test]
