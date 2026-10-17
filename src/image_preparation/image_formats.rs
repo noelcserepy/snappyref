@@ -146,13 +146,6 @@ fn decode_image_bytes_with_path_hint(
     let source_label_path_hint = source_label.as_deref().map(Path::new);
     let effective_path_hint = path_hint.or(source_label_path_hint);
 
-    // A JPEG XL signature outranks XBM and XPM names, which are text formats.
-    if effective_path_hint.is_some_and(|path| path_extension_is(path, "jxl"))
-        || mime_hint.is_some_and(mime_hint_is_jxl)
-        || bytes_have_jxl_signature(bytes)
-    {
-        return decode_jxl(bytes, file_size);
-    }
     if effective_path_hint.is_some_and(|path| path_extension_is(path, "xbm"))
         || mime_hint.is_some_and(mime_hint_is_xbm)
     {
@@ -162,6 +155,12 @@ fn decode_image_bytes_with_path_hint(
         || mime_hint.is_some_and(mime_hint_is_xpm)
     {
         return decode_xpm(bytes, file_size);
+    }
+    if effective_path_hint.is_some_and(|path| path_extension_is(path, "jxl"))
+        || mime_hint.is_some_and(mime_hint_is_jxl)
+        || bytes_have_jxl_signature(bytes)
+    {
+        return decode_jxl(bytes, file_size);
     }
     let format = guess_image_format(bytes, mime_hint, effective_path_hint)
         .map_err(|error| format!("{}: {error}", source_label.as_deref().unwrap_or("image")))?;
@@ -1886,7 +1885,7 @@ static unsigned char sample_bits[] = { 0x01 };
     }
 
     #[test]
-    fn decode_image_bytes_detects_jxl_by_signature_over_missing_or_wrong_hints() {
+    fn decode_image_bytes_detects_jxl_by_signature_without_a_jxl_hint() {
         let codestream = std::fs::read(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/images/formats/red-green.jxl"),
@@ -1901,7 +1900,7 @@ static unsigned char sample_bits[] = { 0x01 };
         for (label, bytes, source_label) in [
             ("codestream", &codestream, None),
             ("container", &container, None),
-            ("codestream named .xbm", &codestream, Some("image.xbm")),
+            ("codestream named .png", &codestream, Some("image.png")),
         ] {
             let decoded = decode_image_bytes_with_max_side(
                 bytes,
