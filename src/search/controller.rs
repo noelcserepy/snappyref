@@ -1622,32 +1622,59 @@ mod tests {
     }
 
     #[test]
-    fn source_indexed_a_frame_before_its_pending_answer_still_runs_the_search() {
+    fn source_indexed_a_frame_before_its_pending_answer_still_shows_results() {
         let root = TempRoot::new("snappyref-pivot-indexed-before-pending");
         let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
+        let model = crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
+        let mut first_axis = vec![0.0; model.dimension];
+        first_axis[0] = 1.0;
+        let register = |name: &str| {
+            let path = library
+                .store_rgba_image(name, &[0, 0, 255, 255], 1, 1)
+                .unwrap();
+            let id = library
+                .register_original(&path, "image/png", 1, 1, 4, None)
+                .unwrap()
+                .id;
+            library
+                .upsert_asset_embedding_blob(id, model.model_key, &first_axis)
+                .unwrap();
+            id
+        };
+        let source = register("source");
+        let near = register("near");
         let mut search = search_controller_for_library(library);
         search.overlay.open = true;
         search.open_image_pivot_search(crate::search::palette::ImageSearchPivot {
-            asset_id: 7,
+            asset_id: source,
             asset_preview_path: None,
         });
         let first = search.active_search.as_ref().unwrap().request_id;
 
-        search.apply_service_results(vec![SearchIndexResult::Indexed { asset_id: 7 }], Vec::new());
+        // The source's embedding finished a frame before the search's own
+        // pending answer arrived.
+        search.apply_service_results(
+            vec![SearchIndexResult::Indexed { asset_id: source }],
+            Vec::new(),
+        );
         search.apply_service_results(
             Vec::new(),
             vec![SearchQueryResult::SourcePending { request_id: first }],
         );
-
-        let rerun = search
-            .active_search
-            .as_ref()
-            .map(|search| search.request_id);
-        assert!(rerun.is_some_and(|rerun| rerun != first), "{rerun:?}");
-        assert!(matches!(
-            &search.overlay.status,
-            SearchOverlayStatus::Loading(message) if message == "Searching…"
-        ));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while search.overlay.results.is_empty() && Instant::now() < deadline {
+            search.handle_results();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(
+            search
+                .overlay
+                .results
+                .iter()
+                .map(|result| result.asset_id)
+                .collect::<Vec<_>>(),
+            vec![near]
+        );
     }
 
     #[test]
