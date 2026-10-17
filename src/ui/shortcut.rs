@@ -29,7 +29,40 @@ pub(crate) enum Key {
 
 pub(crate) type Shortcut = &'static [Key];
 
-const MAC: bool = cfg!(target_os = "macos");
+/// Tests can draw the Windows form on a Mac with [`WindowsForm`]. Shipping
+/// builds fold this to the build target.
+fn mac() -> bool {
+    #[cfg(test)]
+    if WINDOWS_FORM.get() {
+        return false;
+    }
+    cfg!(target_os = "macos")
+}
+
+#[cfg(test)]
+thread_local! {
+    static WINDOWS_FORM: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Draws shortcuts in their Windows form on this thread until dropped, so a
+/// Mac test can lay out Ctrl, Alt, Shift, and Del chips.
+#[cfg(test)]
+pub(crate) struct WindowsForm(());
+
+#[cfg(test)]
+impl WindowsForm {
+    pub(crate) fn force() -> Self {
+        WINDOWS_FORM.set(true);
+        Self(())
+    }
+}
+
+#[cfg(test)]
+impl Drop for WindowsForm {
+    fn drop(&mut self) {
+        WINDOWS_FORM.set(false);
+    }
+}
 const HEIGHT: f32 = 18.0;
 const PAD: f32 = 5.0;
 const GAP: f32 = 3.0;
@@ -41,7 +74,7 @@ pub(crate) const HINT_GAP: f32 = 14.0;
 impl Key {
     /// macOS reads ⌥⇧⌘, Windows Ctrl+Alt+Shift. Keys follow modifiers.
     fn rank(self) -> u8 {
-        match (self, MAC) {
+        match (self, mac()) {
             (Key::Alt, true) | (Key::Command, false) => 0,
             (Key::Shift, true) | (Key::Alt, false) => 1,
             (Key::Command, true) | (Key::Shift, false) => 2,
@@ -52,18 +85,18 @@ impl Key {
     /// Keys drawn as path glyphs on a square chip, because the bundled fonts
     /// lack them or set them low and thin next to DM Sans.
     fn drawn(self) -> bool {
-        matches!(self, Key::Enter | Key::Up | Key::Down) || (MAC && self == Key::Delete)
+        matches!(self, Key::Enter | Key::Up | Key::Down) || (mac() && self == Key::Delete)
     }
 
     fn label(self) -> &'static str {
         match self {
-            Key::Command if MAC => "⌘",
+            Key::Command if mac() => "⌘",
             Key::Command => "Ctrl",
-            Key::Alt if MAC => "⌥",
+            Key::Alt if mac() => "⌥",
             Key::Alt => "Alt",
-            Key::Shift if MAC => "⇧",
+            Key::Shift if mac() => "⇧",
             Key::Shift => "Shift",
-            Key::Delete if MAC => "⌫",
+            Key::Delete if mac() => "⌫",
             Key::Delete => "Del",
             Key::Enter => "↵",
             Key::Up => "↑",
@@ -87,7 +120,7 @@ pub(crate) fn text(keys: &[Key]) -> String {
         .filter(|key| !matches!(key, Key::Gesture(_)))
         .map(|key| key.label())
         .collect::<Vec<_>>()
-        .join(if MAC { "" } else { "+" });
+        .join(if mac() { "" } else { "+" });
     keys.iter().fold(chord, |text, key| match key {
         Key::Gesture(gesture) => format!("{text} + {gesture}"),
         _ => text,
@@ -101,7 +134,7 @@ fn font() -> FontId {
 /// The macOS modifier symbols come from a monospace subset that sets them
 /// smaller than DM Sans capitals, so they draw two points up to match.
 fn key_font(key: Key) -> FontId {
-    if MAC && matches!(key, Key::Command | Key::Alt | Key::Shift) {
+    if mac() && matches!(key, Key::Command | Key::Alt | Key::Shift) {
         FontId::proportional(theme::TYPE_CONTROL)
     } else {
         font()
@@ -293,7 +326,7 @@ fn paint_glyph(painter: &egui::Painter, center: Pos2, key: Key, color: Color32) 
 
 #[cfg(test)]
 mod tests {
-    use super::{Key, text};
+    use super::{Key, WindowsForm, text};
 
     #[test]
     fn text_orders_modifiers_for_the_platform() {
@@ -303,10 +336,10 @@ mod tests {
         if cfg!(target_os = "macos") {
             assert_eq!(text(&ungroup), "⇧⌘G");
             assert_eq!(text(&scale), "⌥⌘ + Drag");
-        } else {
-            assert_eq!(text(&ungroup), "Ctrl+Shift+G");
-            assert_eq!(text(&scale), "Ctrl+Alt + Drag");
         }
+        let _windows = WindowsForm::force();
+        assert_eq!(text(&ungroup), "Ctrl+Shift+G");
+        assert_eq!(text(&scale), "Ctrl+Alt + Drag");
         assert_eq!(text(&crop), "C + Drag");
     }
 }

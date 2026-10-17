@@ -229,8 +229,7 @@ impl CanvasState {
 }
 
 const CARD: &str = "group-card";
-const CARD_WIDTH: f32 = 264.0;
-const CARD_INNER: f32 = CARD_WIDTH - 2.0 * card::PADDING;
+const CARD_INNER: f32 = card::WIDTH - 2.0 * card::PADDING;
 /// Two half-width fields on one card line, 6 pixels apart.
 const CARD_HALF: f32 = (CARD_INNER - 6.0) * 0.5;
 const CARD_SLIDE: f32 = 8.0;

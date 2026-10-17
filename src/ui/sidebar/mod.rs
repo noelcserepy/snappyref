@@ -18,13 +18,11 @@ pub(crate) use controls::{show_sidebar_edge, show_status_message};
 
 /// The card's gap to the window edge.
 const INSET: f32 = 8.0;
-/// The Group card's width, so both cards share one inner column.
-const CARD_WIDTH: f32 = 264.0;
-const INNER_WIDTH: f32 = CARD_WIDTH - 2.0 * card::PADDING;
+const INNER_WIDTH: f32 = card::WIDTH - 2.0 * card::PADDING;
 /// Clear of the macOS title bar.
 const TOP_MARGIN: f32 = 40.0;
 /// The window space the open sidebar covers.
-pub(crate) const SIDEBAR_WIDTH: f32 = INSET + CARD_WIDTH;
+pub(crate) const SIDEBAR_WIDTH: f32 = INSET + card::WIDTH;
 /// The Boards/Settings tab: a bed around control-height tabs.
 const TAB_HEIGHT: f32 = theme::CONTROL_HEIGHT + 4.0;
 

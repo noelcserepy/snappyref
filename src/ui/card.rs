@@ -16,6 +16,10 @@ use super::{motion, theme};
 
 /// Card padding.
 pub(crate) const PADDING: f32 = theme::SPACE_3;
+/// The sidebar and Group cards' width, so both share one inner column. It
+/// fits the widest shortcut row in its Windows form: Always on top with
+/// Ctrl Shift T needs 259 of the 260 inner points.
+pub(crate) const WIDTH: f32 = 284.0;
 /// Controls sit 6 apart on a line, and lines 8 apart.
 pub(crate) const ITEM_SPACING: Vec2 = egui::vec2(6.0, 8.0);
 /// A [`status`] line's dot, and where its label starts.
@@ -234,27 +238,40 @@ pub(crate) fn switch(
         r.left_center() + egui::vec2(17.0, 0.0),
         theme::TEXT_MUTED.gamma_multiply(fade),
     );
-    p.text(
-        r.left_center() + egui::vec2(30.0, 0.0),
-        Align2::LEFT_CENTER,
-        name,
-        FontId::proportional(theme::TYPE_CONTROL),
-        theme::TEXT.gamma_multiply(fade),
-    );
-    if let Some(keys) = keys {
-        let mut faded = p.clone();
-        faded.multiply_opacity(fade);
-        shortcut::paint(
-            &faded,
-            r.right_center() - egui::vec2(48.0, 0.0),
-            Align2::RIGHT_CENTER,
-            keys,
-            theme::TEXT_MUTED,
-        );
-    }
     let track = egui::Rect::from_center_size(
         r.right_center() - egui::vec2(25.0, 0.0),
         egui::vec2(30.0, 18.0),
+    );
+    let trailing = match keys {
+        Some(keys) => {
+            let mut faded = p.clone();
+            faded.multiply_opacity(fade);
+            shortcut::paint(
+                &faded,
+                r.right_center() - egui::vec2(48.0, 0.0),
+                Align2::RIGHT_CENTER,
+                keys,
+                theme::TEXT_MUTED,
+            )
+            .left()
+        }
+        None => track.left(),
+    };
+    // The name truncates before it reaches the chips or the track.
+    let name_left = r.left() + 30.0;
+    let mut job = egui::text::LayoutJob::single_section(
+        name.to_owned(),
+        egui::TextFormat::simple(
+            FontId::proportional(theme::TYPE_CONTROL),
+            theme::TEXT.gamma_multiply(fade),
+        ),
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(trailing - theme::SPACE_2 - name_left);
+    let name = p.layout_job(job);
+    p.galley(
+        egui::pos2(name_left, r.center().y - name.size().y * 0.5),
+        name,
+        theme::TEXT,
     );
     let track_fill = if on {
         theme::ACCENT
