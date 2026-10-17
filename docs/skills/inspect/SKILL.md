@@ -271,7 +271,8 @@ indexing, model loading, or asset installation.
 For indexing and helper readiness without the model, call
 `search.set_embedding_helper_for_test(EmbeddingHelperLaunch::Fixture)` before the
 service starts. The real service then embeds with an offline helper that loads
-in 400 ms and takes 150 ms per image. `image-search-after-install` shows the setup.
+in 400 ms and takes 150 ms per image. An image whose path contains
+`unembeddable` fails to decode. `image-search-after-install` shows the setup.
 
 When Semantic Search is missing and the task is not about missing-assets UI,
 prefer accepting/installing it as part of deterministic setup.

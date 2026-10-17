@@ -118,7 +118,8 @@ pub(crate) enum EmbeddingHelperLaunch {
     #[default]
     App,
     /// An offline test helper that speaks the same protocol at roughly the
-    /// real pace and answers every image with the first unit vector.
+    /// real pace. It answers every image with the first unit vector, except
+    /// that an image whose path contains "unembeddable" fails to decode.
     #[cfg(test)]
     Fixture,
 }
@@ -365,9 +366,13 @@ mod tests {
         let mut embedding = vec![0.0_f32; DEFAULT_SEMANTIC_SEARCH_MODEL.dimension];
         embedding[0] = 1.0;
         let answer = serde_json::json!({ "embedding": embedding }).to_string();
-        for _request in std::io::stdin().lock().lines().map_while(Result::ok) {
+        for request in std::io::stdin().lock().lines().map_while(Result::ok) {
             std::thread::sleep(std::time::Duration::from_millis(150));
-            writeln!(stdout, "{answer}").unwrap();
+            if request.contains("unembeddable") {
+                writeln!(stdout, r#"{{"error":"image could not be decoded"}}"#).unwrap();
+            } else {
+                writeln!(stdout, "{answer}").unwrap();
+            }
             stdout.flush().unwrap();
         }
         std::process::exit(0);

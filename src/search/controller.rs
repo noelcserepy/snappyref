@@ -509,7 +509,20 @@ impl SearchController {
                     }
                 }
                 self.overlay.status = SearchOverlayStatus::Error(error);
-                false
+                // A search waiting on this image asks again. The service
+                // answers with the failure, whatever order the events came in.
+                let should_refresh = self.overlay.open
+                    && asset_id.is_some()
+                    && self
+                        .overlay
+                        .image_pivot
+                        .as_ref()
+                        .map(|pivot| pivot.asset_id)
+                        == asset_id;
+                if should_refresh {
+                    self.overlay.last_submitted_query.clear();
+                }
+                should_refresh
             }
         }
     }
@@ -1595,6 +1608,84 @@ mod tests {
             ),
             ..SearchController::default()
         }
+    }
+
+    #[test]
+    fn image_search_shows_its_source_embedding_failure_when_events_arrive_together() {
+        let root = TempRoot::new("snappyref-pivot-source-failure-controller-test");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
+        let path = library
+            .store_rgba_image("unembeddable", &[0, 0, 255, 255], 1, 1)
+            .unwrap();
+        let source = library
+            .register_original(&path, "image/png", 1, 1, 4, None)
+            .unwrap()
+            .id;
+        let mut search = SearchController::default();
+        search.set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+        search
+            .set_embedding_helper_for_test(crate::search::semantic::EmbeddingHelperLaunch::Fixture);
+        search.sync_service(
+            Some(&library),
+            &mut String::new(),
+            crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+        );
+        // Start the helper first, so no helper-ready event re-runs the search.
+        let warm_path = library
+            .store_rgba_image("warm", &[0, 0, 255, 255], 1, 1)
+            .unwrap();
+        let warm = library
+            .register_original(&warm_path, "image/png", 1, 1, 4, None)
+            .unwrap()
+            .id;
+        search.queue_asset_index(warm, warm_path).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while search.demand_embedding_pending_count() > 0 {
+            assert!(
+                Instant::now() < deadline,
+                "warm-up embedding did not finish"
+            );
+            search.handle_results();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        search.overlay.open = true;
+        search.open_image_pivot_search(crate::search::palette::ImageSearchPivot {
+            asset_id: source,
+            asset_preview_path: None,
+        });
+        // Hold the UI back until storage has the failure, so SourcePending
+        // and the embedding failure reach one handle_results call together.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while library
+            .next_embedding_retry_at_for_model(
+                crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL.model_key,
+            )
+            .unwrap()
+            .is_none()
+        {
+            assert!(Instant::now() < deadline, "embedding did not fail");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            search.handle_results();
+            if !matches!(
+                search.overlay.status,
+                SearchOverlayStatus::Loading(_) | SearchOverlayStatus::Indexing
+            ) || Instant::now() >= deadline
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            matches!(
+                &search.overlay.status,
+                SearchOverlayStatus::Error(error) if error == "image could not be decoded"
+            ),
+            "palette must show the embedding failure"
+        );
     }
 
     #[test]
