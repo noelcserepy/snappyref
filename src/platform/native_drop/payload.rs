@@ -2,22 +2,158 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-pub(super) fn append_http_urls_from_text(text: &str, urls: &mut Vec<String>) {
-    let mut remainder = text;
-    while let Some(start) = [remainder.find("http://"), remainder.find("https://")]
+/// URL candidates from one drag, by how surely each names the dragged image.
+/// Browsers write the dragged image element's markup as HTML, so its
+/// `<img src>` is surest. A URL drag format names the image, or the link
+/// around a linked image. Everything else, such as an HTML clip's SourceURL
+/// page, link targets and prose, is context.
+#[derive(Default)]
+pub(super) struct DragUrls {
+    image_sources: Vec<String>,
+    url_formats: Vec<String>,
+    context: Vec<String>,
+}
+
+impl DragUrls {
+    /// Appends a value that holds one complete URL, such as a browser's URL
+    /// drag format. Parentheses, quotes and brackets stay part of it.
+    pub(super) fn append_url(&mut self, value: &str) {
+        append_http_url(value, &mut self.url_formats);
+    }
+
+    pub(super) fn append_text(&mut self, text: &str) {
+        for source in img_sources(text) {
+            append_http_url(&source.replace("&amp;", "&"), &mut self.image_sources);
+        }
+        let mut offset = 0;
+        while let Some(start) = [
+            text[offset..].find("http://"),
+            text[offset..].find("https://"),
+        ]
         .into_iter()
         .flatten()
         .min()
-    {
-        let candidate = &remainder[start..];
-        let end = candidate
-            .find(|ch: char| {
-                ch.is_whitespace() || matches!(ch, '"' | '\'' | '<' | '>' | '(' | ')' | '[' | ']')
-            })
-            .unwrap_or(candidate.len());
-        append_http_url_candidate(&candidate[..end], urls);
-        remainder = &candidate[end..];
+        {
+            let start = offset + start;
+            let candidate = &text[start..];
+            let end = candidate
+                .find(|ch: char| {
+                    ch.is_whitespace()
+                        || matches!(ch, '"' | '\'' | '<' | '>' | '(' | ')' | '[' | ']')
+                })
+                .unwrap_or(candidate.len());
+            append_http_url_candidate(&candidate[..end], &mut self.context);
+            offset = start + end;
+        }
     }
+
+    /// Picks the most image-like URL. An image extension decides first. On a
+    /// tie, the surer kind of candidate wins, then the earlier one.
+    pub(super) fn best(&self) -> Vec<String> {
+        self.image_sources
+            .iter()
+            .chain(&self.url_formats)
+            .chain(&self.context)
+            .rev()
+            .max_by_key(|url| drag_image_url_score(url))
+            .cloned()
+            .into_iter()
+            .collect()
+    }
+}
+
+// The src attribute of each <img> start tag. Every tag's attributes are read
+// with HTML's rules, so a quoted value may hold `>` or another `src=`.
+fn img_sources(html: &str) -> Vec<&str> {
+    let bytes = html.as_bytes();
+    let mut sources = Vec::new();
+    let mut at = 0;
+    while let Some(found) = html[at..].find('<') {
+        at += found + 1;
+        if html[at..].starts_with("!--") {
+            at = html[at..].find("-->").map_or(html.len(), |end| at + end);
+            continue;
+        }
+        if !bytes.get(at).is_some_and(u8::is_ascii_alphabetic) {
+            continue;
+        }
+        let name_start = at;
+        while bytes
+            .get(at)
+            .is_some_and(|byte| !byte.is_ascii_whitespace() && !matches!(byte, b'/' | b'>'))
+        {
+            at += 1;
+        }
+        let name = &html[name_start..at];
+        let is_img = name.eq_ignore_ascii_case("img");
+        // Script and style content is text, so markup inside it is not a tag.
+        let raw_text_end = ["script", "style"]
+            .into_iter()
+            .find(|raw| name.eq_ignore_ascii_case(raw))
+            .map(|raw| format!("</{raw}"));
+        loop {
+            while bytes
+                .get(at)
+                .is_some_and(|byte| byte.is_ascii_whitespace() || *byte == b'/')
+            {
+                at += 1;
+            }
+            if bytes.get(at).is_none_or(|byte| *byte == b'>') {
+                break;
+            }
+            let attribute_start = at;
+            while bytes.get(at).is_some_and(|byte| {
+                !byte.is_ascii_whitespace() && !matches!(byte, b'=' | b'>' | b'/')
+            }) {
+                at += 1;
+            }
+            let attribute = &html[attribute_start..at];
+            while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+                at += 1;
+            }
+            if bytes.get(at) != Some(&b'=') {
+                continue;
+            }
+            at += 1;
+            while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+                at += 1;
+            }
+            let value = if let Some(&quote @ (b'"' | b'\'')) = bytes.get(at) {
+                let start = at + 1;
+                let end = html[start..]
+                    .find(quote as char)
+                    .map_or(html.len(), |end| start + end);
+                at = (end + 1).min(html.len());
+                &html[start..end]
+            } else {
+                let start = at;
+                while bytes
+                    .get(at)
+                    .is_some_and(|byte| !byte.is_ascii_whitespace() && *byte != b'>')
+                {
+                    at += 1;
+                }
+                &html[start..at]
+            };
+            if is_img && attribute.eq_ignore_ascii_case("src") {
+                sources.push(value);
+            }
+        }
+        if let Some(end_tag) = raw_text_end {
+            let lower = html[at..].to_ascii_lowercase();
+            at += lower
+                .match_indices(&end_tag)
+                .map(|(end, _)| end)
+                .find(|end| {
+                    lower[end + end_tag.len()..]
+                        .chars()
+                        .next()
+                        .is_none_or(|ch| ch.is_ascii_whitespace() || matches!(ch, '/' | '>'))
+                })
+                .unwrap_or(lower.len());
+        }
+    }
+    sources
 }
 
 fn append_http_url_candidate(raw: &str, urls: &mut Vec<String>) {
@@ -27,8 +163,11 @@ fn append_http_url_candidate(raw: &str, urls: &mut Vec<String>) {
             '"' | '\'' | '<' | '>' | '(' | ')' | '[' | ']' | ',' | ';'
         )
     });
-    let unescaped = trimmed.replace("&amp;", "&");
-    let Ok(parsed) = url::Url::parse(&unescaped) else {
+    append_http_url(&trimmed.replace("&amp;", "&"), urls);
+}
+
+fn append_http_url(value: &str, urls: &mut Vec<String>) {
+    let Ok(parsed) = url::Url::parse(value.trim()) else {
         return;
     };
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
@@ -46,13 +185,6 @@ fn append_http_url_candidate(raw: &str, urls: &mut Vec<String>) {
     if !urls.contains(&normalized) {
         urls.push(normalized);
     }
-}
-
-pub(super) fn best_drag_image_urls(urls: Vec<String>) -> Vec<String> {
-    urls.into_iter()
-        .max_by_key(|url| drag_image_url_score(url))
-        .into_iter()
-        .collect()
 }
 
 fn drag_image_url_score(url: &str) -> i32 {
@@ -148,83 +280,89 @@ mod tests {
         assert_eq!(state.dropped, NativeDropPayload::default());
     }
 
+    fn best_of_text(text: &str) -> Vec<String> {
+        let mut urls = super::DragUrls::default();
+        urls.append_text(text);
+        urls.best()
+    }
+
     #[test]
-    fn extracts_plain_text_http_urls() {
-        let mut urls = Vec::new();
-        super::append_http_urls_from_text(
-            "https://example.com/a.jpg\nhttps://example.com/b.png",
-            &mut urls,
-        );
+    fn text_selection_prefers_an_image_url_over_a_page_url() {
         assert_eq!(
-            urls,
-            vec![
-                "https://example.com/a.jpg".to_owned(),
-                "https://example.com/b.png".to_owned()
-            ]
+            best_of_text("https://example.com/page http://cdn.example.com/photo.webp"),
+            ["http://cdn.example.com/photo.webp"]
         );
     }
 
     #[test]
-    fn extracts_mixed_http_and_https_urls_in_text_order() {
-        let mut urls = Vec::new();
-        super::append_http_urls_from_text(
-            "https://example.com/a.png http://example.com/b.png",
-            &mut urls,
-        );
+    fn img_source_beats_page_urls_around_it() {
+        let image = "https://images.example.com/photo_(1)?w=800";
+        for html in [
+            // Windows HTML Format: a SourceURL header, then a linked image.
+            format!(
+                "SourceURL:https://example.com/gallery\r\n<a href=\"https://example.com/gallery\"><img src=\"{image}\"></a>"
+            ),
+            format!(r#"<a href="https://example.com/gallery"><img alt="x" src = "{image}"></a>"#),
+            format!(r#"<img data-src="https://images.example.com/placeholder" src='{image}'>"#),
+            format!(
+                r#"<iframe src="https://example.com/embed"></iframe><IMG SRC={image} width=10>"#
+            ),
+            format!(r#"<a href="https://example.com/gallery"><img alt="x > y" src="{image}"></a>"#),
+            format!(r#"<img title='the src="https://example.com/placeholder"' src="{image}">"#),
+            format!(
+                r#"<a title="<img src=https://example.com/placeholder>" href="https://example.com/gallery"><!-- <img src="https://example.com/old"> --><img src="{image}"></a>"#
+            ),
+            format!(
+                r#"<img-placeholder src="https://example.com/placeholder"></img-placeholder><img src="{image}">"#
+            ),
+            format!(
+                r#"<script>const t = '</scripture><img src="https://example.com/placeholder">';</script><STYLE>/* <img src="https://example.com/old"> */</STYLE><img src="{image}">"#
+            ),
+        ] {
+            assert_eq!(best_of_text(&html), [image], "{html}");
+        }
+    }
+
+    #[test]
+    fn linked_image_selects_the_img_source_over_the_link_url_format() {
+        let mut urls = super::DragUrls::default();
+        urls.append_url("https://example.com/gallery");
+        urls.append_text(r#"<img src="https://images.example.com/photo-123?w=800">"#);
+        assert_eq!(urls.best(), ["https://images.example.com/photo-123?w=800"]);
+    }
+
+    #[test]
+    fn wrapper_urls_yield_their_nested_image() {
         assert_eq!(
-            urls,
-            ["https://example.com/a.png", "http://example.com/b.png"]
+            best_of_text(
+                "https://www.google.com/imgres?imgurl=https%3A%2F%2Fcdn.example.com%2Fphoto.jpg&amp;imgrefurl=https%3A%2F%2Fexample.com%2Fpage"
+            ),
+            ["https://cdn.example.com/photo.jpg"]
         );
     }
 
     #[test]
-    fn extracts_http_urls_embedded_in_html() {
-        let mut urls = Vec::new();
-        super::append_http_urls_from_text(
-            r#"<img src="https://images.example.com/photo.webp"><a href="https://example.com/page">"#,
-            &mut urls,
-        );
+    fn url_format_values_keep_characters_that_end_urls_in_text() {
+        for value in [
+            "https://example.com/photo_(1).jpg",
+            "https://example.com/O'Brien.jpg",
+            "http://[::1]:8765/web-drop.png",
+        ] {
+            let mut urls = super::DragUrls::default();
+            urls.append_url(value);
+            assert_eq!(urls.best(), [value]);
+        }
         assert_eq!(
-            urls,
-            vec![
-                "https://images.example.com/photo.webp".to_owned(),
-                "https://example.com/page".to_owned()
-            ]
+            best_of_text("(see https://example.com/a.jpg)"),
+            ["https://example.com/a.jpg"]
         );
-    }
-
-    #[test]
-    fn extracts_nested_image_urls_from_wrapper_urls() {
-        let mut urls = Vec::new();
-        super::append_http_urls_from_text(
-            "https://www.google.com/imgres?imgurl=https%3A%2F%2Fcdn.example.com%2Fphoto.jpg&amp;imgrefurl=https%3A%2F%2Fexample.com%2Fpage",
-            &mut urls,
-        );
-        assert_eq!(
-            urls,
-            vec![
-                "https://cdn.example.com/photo.jpg".to_owned(),
-                "https://www.google.com/imgres?imgurl=https%3A%2F%2Fcdn.example.com%2Fphoto.jpg&imgrefurl=https%3A%2F%2Fexample.com%2Fpage".to_owned()
-            ]
-        );
-    }
-
-    #[test]
-    fn drag_url_selection_prefers_actual_image_over_page_url() {
-        let urls = super::best_drag_image_urls(vec![
-            "https://example.com/page".to_owned(),
-            "https://cdn.example.com/photo.webp".to_owned(),
-        ]);
-        assert_eq!(urls, vec!["https://cdn.example.com/photo.webp".to_owned()]);
     }
 
     #[test]
     fn ignores_non_http_urls() {
-        let mut urls = Vec::new();
-        super::append_http_urls_from_text(
-            "file:///tmp/test.png ftp://example.com/photo.png https://example.com/ok.jpg",
-            &mut urls,
+        assert_eq!(
+            best_of_text("file:///tmp/test.png ftp://example.com/photo.png https://example.com/ok"),
+            ["https://example.com/ok"]
         );
-        assert_eq!(urls, vec!["https://example.com/ok.jpg".to_owned()]);
     }
 }

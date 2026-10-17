@@ -14,7 +14,18 @@ use fallback as platform;
 
 pub(crate) use payload::NativeDropPayload;
 
-pub fn install_url_drop_bridge(cc: &eframe::CreationContext<'_>) {
+/// On Windows the bridge's OLE target is the window's only drop target. Winit
+/// would otherwise register a file-only target first and the bridge, which
+/// also reads browser URLs, could not register.
+pub fn configure_viewport(
+    viewport: eframe::egui::ViewportBuilder,
+) -> eframe::egui::ViewportBuilder {
+    #[cfg(target_os = "windows")]
+    let viewport = viewport.with_drag_and_drop(false);
+    viewport
+}
+
+pub fn install_drop_bridge(cc: &eframe::CreationContext<'_>) {
     platform::install(cc);
 }
 

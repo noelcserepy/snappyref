@@ -240,7 +240,7 @@ impl SnappyRefApp {
         config: AppConfig,
         startup: StartupState,
     ) -> Self {
-        crate::platform::native_drop::install_url_drop_bridge(cc);
+        crate::platform::native_drop::install_drop_bridge(cc);
         let max_texture_side = cc.egui_ctx.input(|input| input.max_texture_side.max(1));
         let mut app = Self::detached(
             cc.wgpu_render_state.clone(),

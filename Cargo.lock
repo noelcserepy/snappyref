@@ -4935,6 +4935,7 @@ dependencies = [
  "bytemuck",
  "ed25519-dalek",
  "eframe",
+ "egui-winit",
  "egui_extras",
  "egui_kittest",
  "exr",

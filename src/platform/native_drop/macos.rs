@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::ffi::c_char;
 use std::sync::{Mutex, Once, OnceLock};
 
@@ -438,7 +437,7 @@ fn extract_pasteboard_payload(pasteboard: &NSPasteboard) -> (super::NativeDropPa
         return (payload, true);
     }
 
-    let mut urls = Vec::new();
+    let mut urls = super::payload::DragUrls::default();
     let mut should_claim_drag = true;
     if let Some(items) = unsafe { pasteboard.pasteboardItems() } {
         for item in items {
@@ -448,10 +447,11 @@ fn extract_pasteboard_payload(pasteboard: &NSPasteboard) -> (super::NativeDropPa
         if !payload.paths.is_empty() {
             return (payload, true);
         }
-        if !urls.is_empty() {
+        let best = urls.best();
+        if !best.is_empty() {
             return (
                 super::NativeDropPayload {
-                    urls: super::payload::best_drag_image_urls(urls),
+                    urls: best,
                     paths: Vec::new(),
                     screen_pos: None,
                 },
@@ -471,12 +471,12 @@ fn extract_pasteboard_payload(pasteboard: &NSPasteboard) -> (super::NativeDropPa
         let Some(value) = (unsafe { pasteboard.stringForType(&pasteboard_type) }) else {
             continue;
         };
-        super::payload::append_http_urls_from_text(&value.to_string(), &mut urls);
+        append_drag_urls(&pasteboard_type, &value.to_string(), &mut urls);
     }
 
     (
         super::NativeDropPayload {
-            urls: super::payload::best_drag_image_urls(urls),
+            urls: urls.best(),
             paths: payload.paths,
             screen_pos: None,
         },
@@ -497,31 +497,10 @@ fn has_file_payload_on_pasteboard(pasteboard: &NSPasteboard) -> bool {
 
 fn extract_drag_urls_from_item(
     item: &objc2_app_kit::NSPasteboardItem,
-    urls: &mut Vec<String>,
+    urls: &mut super::payload::DragUrls,
 ) -> bool {
-    let mut visited_types = HashSet::new();
     let mut should_claim_drag = false;
-    let item_types = unsafe { item.types() }.into_iter().collect::<Vec<_>>();
-    let preferred_type_names = unsafe {
-        [
-            NSPasteboardTypeURL.to_string(),
-            NSPasteboardTypeHTML.to_string(),
-            NSPasteboardTypeString.to_string(),
-        ]
-    };
-    for pasteboard_type in item_types
-        .iter()
-        .filter(|pasteboard_type| preferred_type_names.contains(&pasteboard_type.to_string()))
-    {
-        should_claim_drag |=
-            extract_drag_urls_from_item_type(item, pasteboard_type, urls, &mut visited_types);
-    }
-
-    for pasteboard_type in item_types {
-        let key = pasteboard_type.to_string();
-        if !visited_types.insert(key) {
-            continue;
-        }
+    for pasteboard_type in unsafe { item.types() } {
         should_claim_drag |= is_claimable_drag_type(&pasteboard_type);
         if !is_text_pasteboard_type(&pasteboard_type) {
             continue;
@@ -529,30 +508,21 @@ fn extract_drag_urls_from_item(
         let Some(value) = (unsafe { item.stringForType(&pasteboard_type) }) else {
             continue;
         };
-        super::payload::append_http_urls_from_text(&value.to_string(), urls);
+        append_drag_urls(&pasteboard_type, &value.to_string(), urls);
     }
     should_claim_drag
 }
 
-fn extract_drag_urls_from_item_type(
-    item: &objc2_app_kit::NSPasteboardItem,
+fn append_drag_urls(
     pasteboard_type: &objc2_app_kit::NSPasteboardType,
-    urls: &mut Vec<String>,
-    visited_types: &mut HashSet<String>,
-) -> bool {
-    let key = pasteboard_type.to_string();
-    if !visited_types.insert(key) {
-        return false;
+    value: &str,
+    urls: &mut super::payload::DragUrls,
+) {
+    if pasteboard_type.to_string() == unsafe { NSPasteboardTypeURL }.to_string() {
+        urls.append_url(value);
+    } else {
+        urls.append_text(value);
     }
-    let should_claim_drag = is_claimable_drag_type(pasteboard_type);
-    if !is_text_pasteboard_type(pasteboard_type) {
-        return should_claim_drag;
-    }
-    let Some(value) = (unsafe { item.stringForType(pasteboard_type) }) else {
-        return should_claim_drag;
-    };
-    super::payload::append_http_urls_from_text(&value.to_string(), urls);
-    should_claim_drag
 }
 
 fn is_claimable_drag_type(pasteboard_type: &objc2_app_kit::NSPasteboardType) -> bool {
@@ -601,7 +571,7 @@ mod tests {
             [
                 (
                     NSPasteboardTypeURL,
-                    "https://cdn.example.com/image?width=800",
+                    "https://cdn.example.com/image_(1)?width=800",
                 ),
                 (
                     NSPasteboardTypeHTML,
@@ -629,13 +599,36 @@ mod tests {
                 );
             } else {
                 let expected = if kind == unsafe { NSPasteboardTypeURL } {
-                    "https://cdn.example.com/image?width=800"
+                    "https://cdn.example.com/image_(1)?width=800"
                 } else {
                     "https://cdn.example.com/image.webp?width=800"
                 };
                 assert_eq!(payload.urls, [expected]);
             }
         }
+        unsafe { pasteboard.clearContents() };
+    }
+
+    #[test]
+    fn linked_image_drag_selects_the_img_source_over_the_link() {
+        use objc2_app_kit::{NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeURL};
+        use objc2_foundation::NSString;
+        // A linked image: the URL type names the link, the HTML the image.
+        let image = "https://images.example.com/photo_(1)?w=800";
+        let pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName() };
+        unsafe {
+            pasteboard.clearContents();
+            let html = format!(r#"<img src="{image}">"#);
+            assert!(pasteboard.setString_forType(&NSString::from_str(&html), NSPasteboardTypeHTML));
+            assert!(pasteboard.setString_forType(
+                &NSString::from_str("https://example.com/gallery"),
+                NSPasteboardTypeURL
+            ));
+        }
+        assert_eq!(
+            super::extract_pasteboard_payload(&pasteboard).0.urls,
+            [image]
+        );
         unsafe { pasteboard.clearContents() };
     }
 

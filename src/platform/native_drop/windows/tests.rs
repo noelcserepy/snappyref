@@ -1,6 +1,7 @@
 use super::{DropTargetRegistration, client_point, hovered, state, take_drop};
 use std::mem::ManuallyDrop;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use windows::Win32::Foundation::{
     DRAGDROP_E_ALREADYREGISTERED, DV_E_FORMATETC, E_NOTIMPL, HGLOBAL, HWND, POINTL,
 };
@@ -8,7 +9,9 @@ use windows::Win32::System::Com::{
     FORMATETC, IAdviseSink, IDataObject, IDataObject_Impl, IEnumFORMATETC, IEnumSTATDATA,
     STGMEDIUM, STGMEDIUM_0, TYMED_HGLOBAL,
 };
-use windows::Win32::System::Ole::{DROPEFFECT_COPY, OleInitialize, OleUninitialize};
+use windows::Win32::System::Ole::{
+    DROPEFFECT_COPY, DROPEFFECT_NONE, OleInitialize, OleUninitialize,
+};
 use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
 use windows::core::{BOOL, HRESULT, Ref, implement};
 use windows_sys::Win32::System::DataExchange::RegisterClipboardFormatW;
@@ -83,6 +86,9 @@ impl IDataObject_Impl for TestPayload_Impl {
     }
 }
 
+// Drop state is process-wide, and libtest runs these tests in parallel.
+static DROP_STATE: Mutex<()> = Mutex::new(());
+
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
 }
@@ -112,6 +118,9 @@ fn native_desktop_drop_cursor_fallback() {
 }
 
 fn verify_native_drop(check_desktop_cursor: bool) {
+    let _drop_state = DROP_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     unsafe {
         OleInitialize(None).unwrap();
     }
@@ -202,7 +211,8 @@ fn verify_native_drop(check_desktop_cursor: bool) {
     }
     assert_eq!(effect, DROPEFFECT_COPY);
     assert_eq!(hovered().paths, vec![path.clone()]);
-    assert_eq!(hovered().urls, vec!["https://example.com/drop.png"]);
+    // Files win over the URL formats offered with them.
+    assert_eq!(hovered().urls, Vec::<String>::new());
     assert_eq!(hovered().screen_pos, expected(enter));
     unsafe {
         target
@@ -225,7 +235,7 @@ fn verify_native_drop(check_desktop_cursor: bool) {
     }
     let received = take_drop();
     assert_eq!(received.paths, vec![path]);
-    assert_eq!(received.urls, vec!["https://example.com/drop.png"]);
+    assert_eq!(received.urls, Vec::<String>::new());
     assert_eq!(received.screen_pos, expected(dropped));
     assert!(hovered().is_empty());
     let consumed = take_drop();
@@ -252,4 +262,105 @@ fn verify_native_drop(check_desktop_cursor: bool) {
     drop(registration);
     let mut replacement = DropTargetRegistration::new(window.0);
     replacement.register().unwrap();
+}
+
+// A Chromium <img> drag offers these formats and no CF_HDROP. The image bytes
+// arrive only as a virtual FileGroupDescriptorW/FileContents file.
+fn chromium_image_drag() -> IDataObject {
+    let format = |name: &str| unsafe { RegisterClipboardFormatW(wide(name).as_ptr()) as u16 };
+    // Extensionless, like many CDN images, so it scores the same as the page.
+    let image = "https://images.example.com/photo_(1)?w=800";
+    let fragment = format!(r#"<img src="{image}" alt="drop">"#);
+    let html = format!(
+        "Version:0.9\r\nStartHTML:0000000000\r\nEndHTML:0000000000\r\nStartFragment:0000000000\r\nEndFragment:0000000000\r\nSourceURL:https://example.com/gallery\r\n<html><body><!--StartFragment-->{fragment}<!--EndFragment--></body></html>\0"
+    );
+    TestPayload(vec![
+        (format("UniformResourceLocatorW"), wide_bytes(image)),
+        (
+            format("UniformResourceLocator"),
+            format!("{image}\0").into_bytes(),
+        ),
+        (13, wide_bytes(image)),
+        (format("HTML Format"), html.into_bytes()),
+    ])
+    .into()
+}
+
+#[test]
+fn app_window_bridge_accepts_browser_image_drags() {
+    use eframe::egui;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use winit::application::ApplicationHandler;
+    use winit::event_loop::{ActiveEventLoop, EventLoop};
+    use winit::platform::windows::EventLoopBuilderExtWindows as _;
+
+    #[derive(Default)]
+    struct BrowserDrop {
+        effect: Option<windows::Win32::System::Ole::DROPEFFECT>,
+        received: Option<super::super::NativeDropPayload>,
+    }
+    impl ApplicationHandler for BrowserDrop {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            if self.received.is_some() {
+                return;
+            }
+            // The window gets the attributes eframe derives from the app's viewport.
+            let viewport = super::super::configure_viewport(
+                egui::ViewportBuilder::default().with_visible(false),
+            );
+            let attributes =
+                egui_winit::create_winit_window_attributes(&egui::Context::default(), viewport);
+            let window = event_loop.create_window(attributes).unwrap();
+            let RawWindowHandle::Win32(handle) = window.window_handle().unwrap().as_raw() else {
+                panic!("a Windows window has a Win32 handle");
+            };
+            unsafe { OleInitialize(None).unwrap() };
+            let mut registration = DropTargetRegistration::new(HWND(handle.hwnd.get() as *mut _));
+            registration.register().unwrap();
+            let payload = chromium_image_drag();
+            let point = POINTL { x: 0, y: 0 };
+            let mut effect = DROPEFFECT_NONE;
+            unsafe {
+                let target = &registration.target;
+                target
+                    .DragEnter(&payload, MODIFIERKEYS_FLAGS(0), point, &mut effect)
+                    .unwrap();
+                self.effect = Some(effect);
+                target
+                    .Drop(&payload, MODIFIERKEYS_FLAGS(0), point, &mut effect)
+                    .unwrap();
+            }
+            self.received = Some(take_drop());
+            drop(registration);
+            unsafe { OleUninitialize() };
+            event_loop.exit();
+        }
+
+        fn window_event(
+            &mut self,
+            _: &ActiveEventLoop,
+            _: winit::window::WindowId,
+            _: winit::event::WindowEvent,
+        ) {
+        }
+    }
+
+    let _drop_state = DROP_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *state().lock().unwrap() = Default::default();
+    let mut browser_drop = BrowserDrop::default();
+    EventLoop::builder()
+        .with_any_thread(true)
+        .build()
+        .unwrap()
+        .run_app(&mut browser_drop)
+        .unwrap();
+    assert_eq!(browser_drop.effect, Some(DROPEFFECT_COPY));
+    let received = browser_drop.received.unwrap();
+    assert_eq!(
+        received.urls,
+        ["https://images.example.com/photo_(1)?w=800"]
+    );
+    assert_eq!(received.paths, Vec::<PathBuf>::new());
 }

@@ -46,12 +46,21 @@ pub(super) fn install(cc: &eframe::CreationContext<'_>) {
         }
         let mut target = DropTargetRegistration::new(hwnd);
         target.initialized_ole = true;
+        // configure_viewport keeps winit's target off, so this is the window's
+        // only drop target for Explorer files and browser URLs alike. A failed
+        // bridge releases only itself, never an existing window target.
         if target.register().is_ok() {
             *registration = Some(target);
         }
-        // Winit owns Explorer drops when RegisterDragDrop reports already registered.
-        // A failed bridge releases only itself, never the existing window target.
     });
+}
+
+// OLE delivers drag callbacks without window input events, so egui would not
+// otherwise draw the hover preview or consume the drop until the next input.
+fn request_repaint() {
+    if let Some(ctx) = EGUI_CONTEXT.get() {
+        ctx.request_repaint();
+    }
 }
 
 fn state() -> &'static Mutex<NativeDropState> {
@@ -173,6 +182,7 @@ impl IDropTarget_Impl for DropTarget_Impl {
             .lock()
             .expect("native drop state mutex poisoned")
             .set_hovered(payload, client_point(self.hwnd, *point));
+        request_repaint();
         Ok(())
     }
 
@@ -190,6 +200,7 @@ impl IDropTarget_Impl for DropTarget_Impl {
             state.set_hovered_pos(client_point(self.hwnd, *point));
             DROPEFFECT_COPY
         };
+        request_repaint();
         Ok(())
     }
 
@@ -198,6 +209,7 @@ impl IDropTarget_Impl for DropTarget_Impl {
             .lock()
             .expect("native drop state mutex poisoned")
             .clear_hovered();
+        request_repaint();
         Ok(())
     }
 
@@ -221,6 +233,8 @@ impl IDropTarget_Impl for DropTarget_Impl {
             state.set_dropped(payload, client_point(self.hwnd, *point));
             DROPEFFECT_COPY
         };
+        drop(state);
+        request_repaint();
         Ok(())
     }
 }
@@ -231,31 +245,61 @@ unsafe fn extract_drop_payload(data_object: &IDataObject) -> super::NativeDropPa
         let _ = with_hglobal_data(data_object, CF_HDROP, |hglobal, _, _| {
             append_hdrop_paths(hglobal as HDROP, &mut payload.paths);
         });
-        for text in drop_text_values(data_object) {
-            super::payload::append_http_urls_from_text(&text, &mut payload.urls);
+        // Files win over URLs, as on macOS, so a browser that also offers a
+        // downloaded copy of the image does not place it twice.
+        if !payload.paths.is_empty() {
+            return payload;
         }
+        let mut urls = super::payload::DragUrls::default();
+        for (text, kind) in drop_text_values(data_object) {
+            match kind {
+                DropText::Url => urls.append_url(&text),
+                DropText::Prose => urls.append_text(&text),
+            }
+        }
+        payload.urls = urls.best();
     }
-    payload.urls = super::payload::best_drag_image_urls(payload.urls);
     payload
 }
 
-unsafe fn drop_text_values(data_object: &IDataObject) -> Vec<String> {
+#[derive(Clone, Copy)]
+enum DropText {
+    // Holds one complete URL, which may contain delimiters that end a URL in prose.
+    Url,
+    Prose,
+}
+
+unsafe fn drop_text_values(data_object: &IDataObject) -> Vec<(String, DropText)> {
     let mut values = Vec::new();
-    for format in [
-        CF_UNICODETEXT,
-        registered_clipboard_format("UniformResourceLocatorW"),
-        registered_clipboard_format("UniformResourceLocator"),
-        registered_clipboard_format("text/html"),
-        registered_clipboard_format("HTML Format"),
+    for (format, utf16, kind) in [
+        (
+            registered_clipboard_format("UniformResourceLocatorW"),
+            true,
+            DropText::Url,
+        ),
+        (
+            registered_clipboard_format("UniformResourceLocator"),
+            false,
+            DropText::Url,
+        ),
+        (CF_UNICODETEXT, true, DropText::Prose),
+        (
+            registered_clipboard_format("text/html"),
+            false,
+            DropText::Prose,
+        ),
+        (
+            registered_clipboard_format("HTML Format"),
+            false,
+            DropText::Prose,
+        ),
     ] {
         if format == 0 {
             continue;
         }
-        let is_utf16 = format == CF_UNICODETEXT
-            || format == registered_clipboard_format("UniformResourceLocatorW");
         let value = unsafe {
             with_hglobal_data(data_object, format, |_hglobal, pointer, size| {
-                if is_utf16 {
+                if utf16 {
                     utf16_hglobal_text(pointer, size)
                 } else {
                     bytes_hglobal_text(pointer, size)
@@ -266,7 +310,7 @@ unsafe fn drop_text_values(data_object: &IDataObject) -> Vec<String> {
         if let Some(value) = value
             && !value.is_empty()
         {
-            values.push(value);
+            values.push((value, kind));
         }
     }
     values
