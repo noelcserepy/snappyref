@@ -104,13 +104,16 @@ runtime it reports a skip. Wake tests need only Python, bash and stub SSH.
 ## Native file and URL drops
 
 Use this guidance when changing the Windows drop bridge in
-[windows.rs](../../../src/platform/native_drop/windows.rs) or its winit fallback.
+[windows.rs](../../../src/platform/native_drop/windows.rs). The bridge is the
+window's only OLE drop target, for Explorer files and browser URLs alike.
 Registration ownership and generated COM ABI rationale live beside that code.
 
-For native drop changes, verify Explorer file import, cursor-following previews,
-and final placement on Windows. Verify
-browser URL drops where the custom bridge can register. In-process inspect
-scenarios do not exercise the COM calling convention or OS registration.
+For native drop changes, verify on Windows that an Explorer file and an image
+dragged from Chrome or Edge both show a cursor-following preview and land where
+dropped. A Chromium image drag offers URL, text and HTML formats plus a virtual
+file, but no `CF_HDROP`. In-process inspect scenarios do not exercise the COM
+calling convention or OS registration. The Windows tests do, on a winit window
+built from the app's viewport.
 
 ## Visible GUI Launch
 
