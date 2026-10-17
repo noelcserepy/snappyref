@@ -111,12 +111,29 @@ pub(super) struct EmbeddingHelperClient {
     stdout: BufReader<ChildStdout>,
 }
 
+/// Which process the index worker starts as its Embedding Helper Process.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) enum EmbeddingHelperLaunch {
+    /// This executable in its `--semantic-embed-server` role.
+    #[default]
+    App,
+    /// An offline test helper that speaks the same protocol at roughly the
+    /// real pace and answers every image with the first unit vector.
+    #[cfg(test)]
+    Fixture,
+}
+
 impl EmbeddingHelperClient {
-    fn new() -> Result<(Self, ModelLoadTiming), String> {
+    fn new(launch: EmbeddingHelperLaunch) -> Result<(Self, ModelLoadTiming), String> {
         let executable = std::env::current_exe()
             .map_err(|error| format!("failed to find app executable: {error}"))?;
-        let mut child = Command::new(executable)
-            .arg("--semantic-embed-server")
+        let mut command = Command::new(executable);
+        match launch {
+            EmbeddingHelperLaunch::App => command.arg("--semantic-embed-server"),
+            #[cfg(test)]
+            EmbeddingHelperLaunch::Fixture => tests::fixture_command(&mut command, "serve"),
+        };
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -134,6 +151,10 @@ impl EmbeddingHelperClient {
             stdin,
             stdout: BufReader::new(stdout),
         };
+        #[cfg(test)]
+        if matches!(launch, EmbeddingHelperLaunch::Fixture) {
+            tests::skip_test_runner_header(&mut client.stdout);
+        }
         let timing = client.read_ready_timing()?;
         Ok((client, timing))
     }
@@ -211,10 +232,6 @@ pub(super) fn embed_image_in_helper(
     source_path: &PathBuf,
     helper: &mut Option<EmbeddingHelperClient>,
 ) -> Result<Vec<f32>, String> {
-    if helper.is_none() {
-        let (client, _) = EmbeddingHelperClient::new()?;
-        *helper = Some(client);
-    }
     helper
         .as_mut()
         .ok_or_else(|| "embedding helper unavailable".to_owned())?
@@ -223,9 +240,10 @@ pub(super) fn embed_image_in_helper(
 
 pub(super) fn ensure_embedding_helper(
     helper: &mut Option<EmbeddingHelperClient>,
+    launch: EmbeddingHelperLaunch,
 ) -> Result<Option<ModelLoadTiming>, String> {
     if helper.is_none() {
-        let (client, timing) = EmbeddingHelperClient::new()?;
+        let (client, timing) = EmbeddingHelperClient::new(launch)?;
         *helper = Some(client);
         Ok(Some(timing))
     } else {
@@ -240,8 +258,8 @@ mod tests {
     const FIXTURE_ENV: &str = "SNAPPYREF_EMBED_PROTOCOL_FIXTURE";
     const READY: &str = r#"{"model_load_timing":{"assets_resolved_ms":1,"tokenizer_loaded_ms":2,"text_session_loaded_ms":3,"vision_session_loaded_ms":4,"total_ms":10}}"#;
 
-    fn fixture(scenario: &str) -> EmbeddingHelperClient {
-        let mut child = Command::new(std::env::current_exe().unwrap())
+    pub(super) fn fixture_command<'a>(command: &'a mut Command, scenario: &str) -> &'a mut Command {
+        command
             .args([
                 "--exact",
                 "search::semantic::service::helper::tests::protocol_fixture_child",
@@ -249,13 +267,10 @@ mod tests {
                 "--nocapture",
             ])
             .env(FIXTURE_ENV, scenario)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let stdin = child.stdin.take().unwrap();
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
-        // The test runner prints a header before the fixture owns stdout.
+    }
+
+    /// The test runner prints a header before the fixture owns stdout.
+    pub(super) fn skip_test_runner_header(stdout: &mut BufReader<ChildStdout>) {
         loop {
             let mut line = String::new();
             assert_ne!(
@@ -267,6 +282,20 @@ mod tests {
                 break;
             }
         }
+    }
+
+    fn fixture(scenario: &str) -> EmbeddingHelperClient {
+        let mut child = fixture_command(
+            &mut Command::new(std::env::current_exe().unwrap()),
+            scenario,
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        skip_test_runner_header(&mut stdout);
         EmbeddingHelperClient {
             child,
             stdin,
@@ -278,6 +307,9 @@ mod tests {
     #[ignore = "spawned by the offline embedding protocol tests"]
     fn protocol_fixture_child() {
         let scenario = std::env::var(FIXTURE_ENV).expect("fixture scenario");
+        if scenario == "serve" {
+            serve_fixture_embeddings();
+        }
         // A missing request newline or flush must fail rather than hang CI.
         std::thread::spawn(|| {
             std::thread::sleep(std::time::Duration::from_secs(10));
@@ -318,6 +350,26 @@ mod tests {
             _ => panic!("unknown fixture scenario"),
         }
         stdout.flush().unwrap();
+        std::process::exit(0);
+    }
+
+    /// `EmbeddingHelperLaunch::Fixture`: loads and embeds at roughly the real
+    /// helper's pace, until the index worker closes stdin.
+    fn serve_fixture_embeddings() -> ! {
+        let mut stdout = std::io::stdout().lock();
+        writeln!(stdout, "embedding-protocol-fixture").unwrap();
+        stdout.flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        writeln!(stdout, "{READY}").unwrap();
+        stdout.flush().unwrap();
+        let mut embedding = vec![0.0_f32; DEFAULT_SEMANTIC_SEARCH_MODEL.dimension];
+        embedding[0] = 1.0;
+        let answer = serde_json::json!({ "embedding": embedding }).to_string();
+        for _request in std::io::stdin().lock().lines().map_while(Result::ok) {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            writeln!(stdout, "{answer}").unwrap();
+            stdout.flush().unwrap();
+        }
         std::process::exit(0);
     }
 

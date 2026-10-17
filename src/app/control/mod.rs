@@ -1006,8 +1006,11 @@ impl SnappyRefApp {
                 Ok(json!({"assets": assets}))
             }
             Some(SearchQueryResult::Failed { error, .. }) => Err(error),
-            // The model was still loading. Ask again until it answers.
-            Some(SearchQueryResult::ModelPending { .. }) if !timed_out => {
+            // The model was still loading or the source image was being
+            // embedded. Ask again until it answers.
+            Some(
+                SearchQueryResult::ModelPending { .. } | SearchQueryResult::SourcePending { .. },
+            ) if !timed_out => {
                 match self
                     .search
                     .start_direct_search(query.as_deref(), *similar_to, *limit)

@@ -52,6 +52,8 @@ pub(crate) struct SearchController {
     pub(super) local_model_store_status: Option<LocalModelStoreStatus>,
     semantic_install: SemanticSearchInstallController,
     perf_events: Vec<SemanticPerfEvent>,
+    #[cfg(test)]
+    embedding_helper_for_test: crate::search::semantic::EmbeddingHelperLaunch,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -137,6 +139,15 @@ impl SearchController {
     #[cfg(test)]
     pub(crate) fn set_local_model_store_status_for_test(&mut self, status: LocalModelStoreStatus) {
         self.local_model_store_status = Some(status);
+    }
+
+    /// Services this controller starts from now on embed images with `launch`.
+    #[cfg(test)]
+    pub(crate) fn set_embedding_helper_for_test(
+        &mut self,
+        launch: crate::search::semantic::EmbeddingHelperLaunch,
+    ) {
+        self.embedding_helper_for_test = launch;
     }
 
     #[cfg(test)]
@@ -247,17 +258,30 @@ impl SearchController {
             return;
         };
 
-        match SemanticSearchService::new(
+        let config = SemanticSearchConfig {
+            model: DEFAULT_SEMANTIC_SEARCH_MODEL,
+            canvas_image_max_side,
+        };
+        #[cfg(test)]
+        let service = SemanticSearchService::with_embedding_helper(
             library.clone(),
-            SemanticSearchConfig {
-                model: DEFAULT_SEMANTIC_SEARCH_MODEL,
-                canvas_image_max_side,
-            },
-        ) {
+            config,
+            self.embedding_helper_for_test,
+        );
+        #[cfg(not(test))]
+        let service = SemanticSearchService::new(library.clone(), config);
+        match service {
             Ok(service) => {
                 self.overlay.status =
                     SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
                 self.service = Some(service);
+                // A search opened before the install finished runs now.
+                if self.overlay.open
+                    && (self.overlay.image_pivot.is_some() || !self.overlay.query.trim().is_empty())
+                {
+                    self.overlay.last_submitted_query.clear();
+                    self.submit_query();
+                }
             }
             Err(error) => {
                 self.overlay.status = SearchOverlayStatus::Error(error.clone());
@@ -526,6 +550,14 @@ impl SearchController {
                         SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
                 }
             }
+            // The service is embedding the source image. Its Indexed result
+            // runs the search again.
+            SearchQueryResult::SourcePending { request_id }
+                if Some(request_id) == active_request_id =>
+            {
+                self.active_search = None;
+                self.overlay.status = SearchOverlayStatus::Indexing;
+            }
             SearchQueryResult::Failed { request_id, error }
                 if Some(request_id) == active_request_id =>
             {
@@ -538,6 +570,7 @@ impl SearchController {
             }
             SearchQueryResult::Completed { .. }
             | SearchQueryResult::ModelPending { .. }
+            | SearchQueryResult::SourcePending { .. }
             | SearchQueryResult::Failed { .. } => {}
         }
     }

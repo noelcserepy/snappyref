@@ -38,8 +38,9 @@ be placed with Enter or dragged onto the canvas.
 Preconditions:
 
 - `doctor.sh` exits 0.
-- Scenarios inject model status and results, except `semantic-search-real-install`.
-  The injected scenarios do not rank, index, or download.
+- Scenarios inject model status and results, except `semantic-search-real-install`
+  and `image-search-after-install`. The injected scenarios do not rank, index,
+  or download.
 
 - **First launch and remove dialog.** Run `run-scenario.sh semantic-search-install`.
   It checks that ⌘F stays blocked behind the prompt and that Enter starts the
@@ -50,6 +51,13 @@ Preconditions:
   results, no results, the image pivot, the install card, progress, and an
   error. Enter and "Not now" are driven on the install card. "result previews
   decoded before capture" proves the thumbnails were visible.
+- **Image search right after install.** Run
+  `run-scenario.sh image-search-after-install`. It drives a click on an
+  unindexed image, ⌘F, and "Install" on the palette card. The real service then
+  embeds the image with an offline helper,
+  `EmbeddingHelperLaunch::Fixture`. That helper loads in 400 ms and takes 150 ms
+  per image. The scenario asserts that the footer says "Indexing…", never
+  "Search error", and that the ranked results then appear on their own.
 - **Image search to canvas.** Run `run-scenario.sh blue-image-search-drag`. It
   drives a click and two ⌘-clicks to select 3 results, then a drag and drop.
   The image search itself is opened in code, not with ⌘F or the menu.
@@ -69,14 +77,17 @@ Preconditions:
 
 ## Gotchas
 
-- Opening search with ⌘F or "Search using image" has no scenario.
+- Only `image-search-after-install` opens image search with ⌘F. The
+  "Search using image" menu row has no scenario.
 - `search-keyboard-placement` drives arrow selection, ↵ and ⌘↵ placement,
   and Escape cancellation. Right-click cancellation and pagination past the
   final loaded row remain manual.
-- No scenario clicks "Install", "Cancel", or "Retry" on the palette card, or
-  "Cancel", "Retry", or the confirmed "Remove" in Settings. Plain tests in
+- Only `image-search-after-install` clicks "Install" on the palette card. No
+  scenario clicks the card's "Cancel" or "Retry", or "Cancel", "Retry", or the
+  confirmed "Remove" in Settings. Plain tests in
   `src/app/tests/semantic_search.rs` cover some of these, without artifacts.
-- Search ranking, indexing, and the real download need the real model. Never
+- Real ranking and the real download need the real model. The fixture helper
+  embeds every image as the same vector, so only seeded embeddings rank. Never
   run `semantic-search-real-install` unless the user asks.
 - `mcp-drive.py` runs on a root with no model, so `search_library` and
   `search_model` are only seen being refused.

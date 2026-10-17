@@ -48,12 +48,13 @@ impl AssetIndex {
             .map(|cache| cache.warming)
             .unwrap_or(false)
     }
-    pub(super) fn pivot_embedding(&self, asset_id: i64) -> Result<Vec<f32>, String> {
+    /// The Asset's embedding, or None while it has none.
+    pub(super) fn pivot_embedding(&self, asset_id: i64) -> Result<Option<Vec<f32>>, String> {
         let embeddings = self.embeddings()?;
-        embeddings
+        Ok(embeddings
             .binary_search_by_key(&asset_id, |row| row.asset_id)
-            .map(|index| embeddings[index].embedding.clone())
-            .map_err(|_| "Source image not indexed yet".to_owned())
+            .ok()
+            .map(|index| embeddings[index].embedding.clone()))
     }
     pub(super) fn rerank(&self, hits: &mut [AssetSearchHit], query: &[f32]) -> Result<(), String> {
         let embeddings = self.embeddings()?;

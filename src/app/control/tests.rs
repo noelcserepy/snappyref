@@ -78,12 +78,11 @@ fn take_search_result(app: &mut SnappyRefApp, request: u64) -> SearchQueryResult
     }
 }
 
-fn assert_unindexed_result(result: SearchQueryResult, expected_request: u64) {
-    let SearchQueryResult::Failed { request_id, error } = result else {
-        panic!("unindexed pivot must fail")
+fn assert_unindexed_result(result: &SearchQueryResult, expected_request: u64) {
+    let SearchQueryResult::SourcePending { request_id } = result else {
+        panic!("unindexed pivot must wait for its embedding")
     };
-    assert_eq!(request_id, expected_request);
-    assert_eq!(error, "Source image not indexed yet");
+    assert_eq!(*request_id, expected_request);
 }
 
 #[test]
@@ -170,17 +169,12 @@ fn search_calls_complete_fail_retry_model_pending_and_expire() {
     );
     let renewed = search_request(&waiting);
     let result = take_search_result(&mut app, renewed);
-    assert_unindexed_result(result, renewed);
+    assert_unindexed_result(&result, renewed);
     assert!(!client.is_finished());
+    // The call also waits while its source image is embedded.
     assert!(
-        app.poll_control_search(
-            &mut waiting,
-            Some(SearchQueryResult::ModelPending {
-                request_id: renewed
-            }),
-            false
-        )
-        .is_none()
+        app.poll_control_search(&mut waiting, Some(result), false)
+            .is_none()
     );
     let expired = search_request(&waiting);
     app.control.waiting.push(waiting);
@@ -197,7 +191,7 @@ fn search_calls_complete_fail_retry_model_pending_and_expire() {
         .start_direct_search(None, Some(pivot), 1)
         .unwrap();
     let result = take_search_result(&mut app, barrier);
-    assert_unindexed_result(result, barrier);
+    assert_unindexed_result(&result, barrier);
     assert!(
         app.search.take_direct_search_result(expired).is_none(),
         "expired search is still tracked after its late result arrived"
@@ -282,7 +276,7 @@ fn cancelling_ask_preserves_the_asset_and_revoking_access_answers_waiting_calls(
         .start_direct_search(None, Some(asset.id), 1)
         .unwrap();
     let result = take_search_result(&mut app, barrier);
-    assert_unindexed_result(result, barrier);
+    assert_unindexed_result(&result, barrier);
     assert!(
         app.search
             .take_direct_search_result(revoked_search)

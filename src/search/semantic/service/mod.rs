@@ -1,7 +1,7 @@
 mod helper;
-pub(crate) use helper::run_embed_image_server;
 use helper::{EmbeddingHelperClient, embed_image_in_helper, ensure_embedding_helper};
-use std::collections::HashMap;
+pub(crate) use helper::{EmbeddingHelperLaunch, run_embed_image_server};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -86,6 +86,8 @@ pub enum IndexResult {
 #[derive(Debug, PartialEq, Eq)]
 pub enum SearchQueryError {
     ModelPending,
+    /// The image search's source image is being embedded.
+    SourcePending,
     Failed(String),
 }
 
@@ -97,6 +99,9 @@ impl From<String> for SearchQueryError {
 
 pub enum SearchQueryResult {
     ModelPending {
+        request_id: u64,
+    },
+    SourcePending {
         request_id: u64,
     },
     Completed {
@@ -113,6 +118,7 @@ impl SearchQueryResult {
     pub(crate) fn request_id(&self) -> u64 {
         match self {
             Self::ModelPending { request_id }
+            | Self::SourcePending { request_id }
             | Self::Completed { request_id, .. }
             | Self::Failed { request_id, .. } => *request_id,
         }
@@ -132,6 +138,8 @@ pub struct SemanticSearchService {
     model_state: Arc<Mutex<ModelState>>,
     #[cfg(test)]
     text_embedding_cache: Arc<Mutex<HashMap<String, Vec<f32>>>>,
+    #[cfg(test)]
+    pending_source_embeddings: PendingSourceEmbeddings,
     asset_index: AssetIndex,
     index_tx: mpsc::Sender<IndexRequest>,
     result_tx: mpsc::Sender<IndexResult>,
@@ -142,12 +150,21 @@ pub struct SemanticSearchService {
 
 impl SemanticSearchService {
     pub fn new(library: Library, config: SemanticSearchConfig) -> Result<Self, String> {
+        Self::with_embedding_helper(library, config, EmbeddingHelperLaunch::App)
+    }
+
+    pub(crate) fn with_embedding_helper(
+        library: Library,
+        config: SemanticSearchConfig,
+        helper_launch: EmbeddingHelperLaunch,
+    ) -> Result<Self, String> {
         let (index_tx, index_rx) = mpsc::channel::<IndexRequest>();
         let (result_tx, result_rx) = mpsc::channel::<IndexResult>();
         let (search_tx, search_rx) = mpsc::channel::<SearchRequest>();
         let (search_result_tx, search_result_rx) = mpsc::channel::<SearchQueryResult>();
         let model_state = Arc::new(Mutex::new(ModelState::Uninitialized));
         let text_embedding_cache = Arc::new(Mutex::new(HashMap::new()));
+        let pending_source_embeddings = PendingSourceEmbeddings::default();
         let asset_index = AssetIndex::new(
             library.clone(),
             config.model.model_key,
@@ -157,6 +174,7 @@ impl SemanticSearchService {
         let worker_library = library.clone();
         let worker_state = model_state.clone();
         let worker_index = asset_index.clone();
+        let worker_pending_sources = pending_source_embeddings.clone();
         let model_spec = config.model.clone();
         let canvas_image_max_side = config.canvas_image_max_side;
 
@@ -169,7 +187,9 @@ impl SemanticSearchService {
                     &model_spec,
                     &worker_result_tx,
                     &worker_index,
+                    &worker_pending_sources,
                     canvas_image_max_side,
+                    helper_launch,
                     helper,
                 );
             });
@@ -178,6 +198,7 @@ impl SemanticSearchService {
         let search_state = model_state.clone();
         let search_index_tx = index_tx.clone();
         let search_text_embedding_cache = text_embedding_cache.clone();
+        let search_pending_sources = pending_source_embeddings.clone();
         let worker_index = asset_index.clone();
         thread::spawn(move || {
             while let Ok(request) = search_rx.recv() {
@@ -211,6 +232,7 @@ impl SemanticSearchService {
                             &search_index_tx,
                             &search_text_embedding_cache,
                             &worker_index,
+                            &search_pending_sources,
                             source_asset_id,
                             text_query.as_deref(),
                             limit,
@@ -226,6 +248,9 @@ impl SemanticSearchService {
                     Err(SearchQueryError::ModelPending) => {
                         search_result_tx.send(SearchQueryResult::ModelPending { request_id })
                     }
+                    Err(SearchQueryError::SourcePending) => {
+                        search_result_tx.send(SearchQueryResult::SourcePending { request_id })
+                    }
                     Err(SearchQueryError::Failed(error)) => {
                         search_result_tx.send(SearchQueryResult::Failed { request_id, error })
                     }
@@ -239,6 +264,8 @@ impl SemanticSearchService {
             model_state,
             #[cfg(test)]
             text_embedding_cache,
+            #[cfg(test)]
+            pending_source_embeddings,
             asset_index,
             index_tx,
             result_tx,
@@ -318,6 +345,7 @@ impl SemanticSearchService {
             &self.index_tx,
             &self.text_embedding_cache,
             &self.asset_index,
+            &self.pending_source_embeddings,
             source_asset_id,
             text_query,
             limit,
@@ -376,11 +404,15 @@ fn search_with_image_pivot_with_limit_for(
     index_tx: &mpsc::Sender<IndexRequest>,
     text_embedding_cache: &Arc<Mutex<HashMap<String, Vec<f32>>>>,
     asset_index: &AssetIndex,
+    pending_sources: &PendingSourceEmbeddings,
     source_asset_id: i64,
     text_query: Option<&str>,
     limit: usize,
 ) -> Result<Vec<SearchResultAssetEntry>, SearchQueryError> {
-    let source_embedding = asset_index.pivot_embedding(source_asset_id)?;
+    let Some(source_embedding) = asset_index.pivot_embedding(source_asset_id)? else {
+        pending_sources.request(library, index_tx, source_asset_id)?;
+        return Err(SearchQueryError::SourcePending);
+    };
     let mut hits = asset_index.search(&source_embedding, IMAGE_PIVOT_CANDIDATE_LIMIT)?;
     hits.retain(|hit| hit.asset_id != source_asset_id);
 
@@ -422,7 +454,9 @@ fn process_index_request(
     model_spec: &ModelSpec,
     result_tx: &mpsc::Sender<IndexResult>,
     worker_index: &AssetIndex,
+    pending_sources: &PendingSourceEmbeddings,
     canvas_image_max_side: u32,
+    helper_launch: EmbeddingHelperLaunch,
     helper: &mut Option<EmbeddingHelperClient>,
 ) {
     match request {
@@ -433,16 +467,20 @@ fn process_index_request(
             asset_id,
             original_path,
         } => {
-            if let Err(error) = index_asset(
+            let indexed = index_asset(
                 worker_library,
                 model_spec,
                 result_tx,
                 canvas_image_max_side,
                 asset_id,
                 &original_path,
+                helper_launch,
                 helper,
                 true,
-            ) {
+            );
+            // Released before the result, so a search started by it can ask again.
+            pending_sources.release(asset_id);
+            if let Err(error) = indexed {
                 let _ = record_embedding_failure(worker_library, asset_id, model_spec, &error);
                 let _ = result_tx.send(IndexResult::Failed {
                     asset_id: Some(asset_id),
@@ -482,6 +520,7 @@ fn process_index_request(
                 canvas_image_max_side,
                 job.asset_id,
                 &job.original_path,
+                helper_launch,
                 helper,
                 false,
             ) {
@@ -495,6 +534,46 @@ fn process_index_request(
                     let _ = result_tx.send(IndexResult::BackfillFailed { error });
                 }
             }
+        }
+    }
+}
+
+/// Source images that searches asked the index worker to embed and that it
+/// has not finished. A search asks once per image while its embedding runs.
+#[derive(Clone, Default)]
+struct PendingSourceEmbeddings(Arc<Mutex<HashSet<i64>>>);
+
+impl PendingSourceEmbeddings {
+    fn request(
+        &self,
+        library: &Library,
+        index_tx: &mpsc::Sender<IndexRequest>,
+        asset_id: i64,
+    ) -> Result<(), String> {
+        let mut pending = self
+            .0
+            .lock()
+            .map_err(|_| "semantic-search pending sources poisoned".to_owned())?;
+        if pending.contains(&asset_id) {
+            return Ok(());
+        }
+        let original_path = library
+            .asset_original_paths_for_assets(&[asset_id])?
+            .remove(&asset_id)
+            .ok_or_else(|| "Source image is no longer in the library".to_owned())?;
+        index_tx
+            .send(IndexRequest::Asset {
+                asset_id,
+                original_path,
+            })
+            .map_err(|error| format!("failed to queue source image indexing: {error}"))?;
+        pending.insert(asset_id);
+        Ok(())
+    }
+
+    fn release(&self, asset_id: i64) {
+        if let Ok(mut pending) = self.0.lock() {
+            pending.remove(&asset_id);
         }
     }
 }
@@ -575,6 +654,7 @@ fn index_asset(
     canvas_image_max_side: u32,
     asset_id: i64,
     original_path: &Path,
+    helper_launch: EmbeddingHelperLaunch,
     helper: &mut Option<EmbeddingHelperClient>,
     report_import_embedding_start: bool,
 ) -> Result<(), String> {
@@ -592,12 +672,12 @@ fn index_asset(
         let _ = result_tx.send(IndexResult::ModelLoadStarted);
     }
     if helper_will_start {
-        if let Some(timing) = ensure_embedding_helper(helper)? {
+        if let Some(timing) = ensure_embedding_helper(helper, helper_launch)? {
             let _ = result_tx.send(IndexResult::ModelLoadTiming { timing });
         }
         let _ = result_tx.send(IndexResult::ModelReady);
     } else {
-        let _ = ensure_embedding_helper(helper)?;
+        let _ = ensure_embedding_helper(helper, helper_launch)?;
     }
     if report_import_embedding_start {
         let _ = result_tx.send(IndexResult::ImportEmbeddingStarted { asset_id });
@@ -743,8 +823,9 @@ fn ensure_model(
 #[cfg(test)]
 mod tests {
     use super::{
-        IndexResult, SemanticSearchConfig, SemanticSearchService, embedding_source_path,
-        is_terminal_embedding_failure, run_index_worker_loop,
+        EmbeddingHelperLaunch, IndexResult, SearchQueryError, SemanticSearchConfig,
+        SemanticSearchService, embedding_source_path, is_terminal_embedding_failure,
+        run_index_worker_loop,
     };
     use crate::library::storage::Library;
     use crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
@@ -841,6 +922,77 @@ mod tests {
                 "{corruption}"
             );
         }
+    }
+
+    #[test]
+    fn image_pivot_embeds_an_unindexed_source_once_then_answers() {
+        let root = TempRoot::new("snappyref-pivot-source-pending-service-test");
+        let library = Library::initialize(root.join("library")).unwrap();
+        let register = |name: &str| {
+            let path = library
+                .store_rgba_image(name, &[0, 0, 255, 255], 1, 1)
+                .unwrap();
+            library
+                .register_original(&path, "image/png", 1, 1, 4, None)
+                .unwrap()
+                .id
+        };
+        let source = register("source");
+        let near = register("near");
+        let mut first_axis = vec![0.0; DEFAULT_SEMANTIC_SEARCH_MODEL.dimension];
+        first_axis[0] = 1.0;
+        library
+            .upsert_asset_embedding_blob(near, DEFAULT_SEMANTIC_SEARCH_MODEL.model_key, &first_axis)
+            .unwrap();
+        let service = SemanticSearchService::with_embedding_helper(
+            library.clone(),
+            SemanticSearchConfig {
+                model: DEFAULT_SEMANTIC_SEARCH_MODEL,
+                canvas_image_max_side: crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+            },
+            EmbeddingHelperLaunch::Fixture,
+        )
+        .unwrap();
+
+        for _ in 0..2 {
+            assert_eq!(
+                service
+                    .search_with_image_pivot_with_limit(source, None, 5)
+                    .map(|_| ()),
+                Err(SearchQueryError::SourcePending)
+            );
+        }
+        let mut embedding_starts = Vec::new();
+        loop {
+            match service
+                .result_rx
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap()
+            {
+                IndexResult::ImportEmbeddingStarted { asset_id } => embedding_starts.push(asset_id),
+                IndexResult::Indexed { asset_id } => {
+                    assert_eq!(asset_id, source);
+                    break;
+                }
+                IndexResult::Failed { error, .. } => panic!("{error}"),
+                _ => {}
+            }
+        }
+        assert_eq!(embedding_starts, vec![source]);
+        // A second request would embed again right after the first.
+        assert!(
+            service
+                .result_rx
+                .recv_timeout(Duration::from_millis(600))
+                .is_err()
+        );
+        let results = service
+            .search_with_image_pivot_with_limit(source, None, 5)
+            .unwrap();
+        assert_eq!(
+            results.iter().map(|hit| hit.asset_id).collect::<Vec<_>>(),
+            vec![near]
+        );
     }
 
     #[test]

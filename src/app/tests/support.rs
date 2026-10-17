@@ -693,6 +693,31 @@ pub(super) fn inspect_search_result_tile_center(index: usize, result_count: usiz
     )
 }
 
+/// Steps until every result and image pivot thumbnail has decoded. False on timeout.
+pub(super) fn inspect_wait_for_search_previews(harness: &mut Harness<'_, SnappyRefApp>) -> bool {
+    for _ in 0..200 {
+        harness.step();
+        let overlay = &harness.state().search.overlay;
+        let pending = overlay
+            .results
+            .iter()
+            .map(|entry| entry.asset_id)
+            .chain(overlay.image_pivot.as_ref().map(|pivot| pivot.asset_id))
+            .any(|id| {
+                !matches!(
+                    overlay.asset_preview_cache.get(&id),
+                    Some(crate::search::palette::SearchAssetPreviewEntry::Ready(_))
+                )
+            });
+        if !pending {
+            harness.step();
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    false
+}
+
 pub(super) fn inspect_world_to_screen(world: egui::Pos2, rect: egui::Rect) -> egui::Pos2 {
     rect.center() + world.to_vec2()
 }
