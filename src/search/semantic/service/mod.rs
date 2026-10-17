@@ -34,6 +34,8 @@ enum IndexRequest {
     Asset {
         asset_id: i64,
         original_path: PathBuf,
+        /// A search asked for it and waits in `SearchSourceEmbeddings`.
+        for_search: bool,
     },
     BackfillOne,
 }
@@ -290,6 +292,7 @@ impl SemanticSearchService {
             .send(IndexRequest::Asset {
                 asset_id,
                 original_path,
+                for_search: false,
             })
             .map_err(|error| format!("failed to queue asset indexing: {error}"))
     }
@@ -465,6 +468,7 @@ fn process_index_request(
         IndexRequest::Asset {
             asset_id,
             original_path,
+            for_search,
         } => {
             let indexed = index_asset(
                 worker_library,
@@ -485,7 +489,10 @@ fn process_index_request(
             }
             // Finished once searches can see the outcome and before the result,
             // so a search the result starts finds the embedding or its failure.
-            source_embeddings.finished(asset_id);
+            // Another request for the same Asset leaves a search's request running.
+            if for_search {
+                source_embeddings.finished(asset_id);
+            }
             let _ = result_tx.send(match indexed {
                 Ok(()) => IndexResult::Indexed { asset_id },
                 Err(error) => IndexResult::Failed {
@@ -589,6 +596,7 @@ impl SearchSourceEmbeddings {
                     .send(IndexRequest::Asset {
                         asset_id,
                         original_path,
+                        for_search: true,
                     })
                     .map_err(|error| format!("failed to queue source image indexing: {error}"))
             });
@@ -954,28 +962,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn image_pivot_waits_for_its_source_embedding_and_reports_its_failure() {
-        let root = TempRoot::new("snappyref-pivot-source-pending-service-test");
-        let library = Library::initialize(root.join("library")).unwrap();
-        let register = |name: &str| {
-            let path = library
-                .store_rgba_image(name, &[0, 0, 255, 255], 1, 1)
-                .unwrap();
-            library
-                .register_original(&path, "image/png", 1, 1, 4, None)
-                .unwrap()
-                .id
-        };
-        let source = register("source");
-        let near = register("near");
-        let broken = register("unembeddable");
-        let mut first_axis = vec![0.0; DEFAULT_SEMANTIC_SEARCH_MODEL.dimension];
-        first_axis[0] = 1.0;
-        library
-            .upsert_asset_embedding_blob(near, DEFAULT_SEMANTIC_SEARCH_MODEL.model_key, &first_axis)
-            .unwrap();
-        let service = SemanticSearchService::with_embedding_helper(
+    fn fixture_search_service(library: &Library) -> SemanticSearchService {
+        SemanticSearchService::with_embedding_helper(
             library.clone(),
             SemanticSearchConfig {
                 model: DEFAULT_SEMANTIC_SEARCH_MODEL,
@@ -983,83 +971,149 @@ mod tests {
             },
             EmbeddingHelperLaunch::Fixture,
         )
-        .unwrap();
-        let search = |request_id: u64, asset_id: i64| {
-            service
-                .enqueue_search_with_image_pivot_with_limit(request_id, asset_id, None, 5)
-                .unwrap();
-            let deadline = Instant::now() + Duration::from_secs(10);
-            loop {
-                if let Some(result) = service.try_recv_search_all().pop() {
-                    assert_eq!(result.request_id(), request_id);
-                    return match result {
-                        SearchQueryResult::SourcePending { .. } => Err("pending".to_owned()),
-                        SearchQueryResult::Failed { error, .. } => Err(error),
-                        SearchQueryResult::Completed { results, .. } => {
-                            Ok(results.iter().map(|hit| hit.asset_id).collect::<Vec<_>>())
-                        }
-                        SearchQueryResult::ModelPending { .. } => panic!("no text query"),
-                    };
-                }
-                assert!(Instant::now() < deadline, "search did not answer");
-                std::thread::sleep(Duration::from_millis(2));
-            }
-        };
-        let index_results_until_settled = |asset_id: i64| {
-            let deadline = Instant::now() + Duration::from_secs(10);
-            let mut results = Vec::new();
-            loop {
-                for result in service.try_recv_all() {
-                    let settled = matches!(
-                        result,
-                        IndexResult::Indexed { asset_id: id }
-                            | IndexResult::Failed { asset_id: Some(id), .. } if id == asset_id
-                    );
-                    results.push(result);
-                    if settled {
-                        return results;
-                    }
-                }
-                assert!(Instant::now() < deadline, "embedding did not finish");
-                std::thread::sleep(Duration::from_millis(2));
-            }
-        };
-        let embedding_starts = |results: &[IndexResult]| {
-            results
-                .iter()
-                .filter_map(|result| match result {
-                    IndexResult::ImportEmbeddingStarted { asset_id } => Some(*asset_id),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        };
+        .unwrap()
+    }
 
-        assert_eq!(search(1, source), Err("pending".to_owned()));
-        assert_eq!(search(2, source), Err("pending".to_owned()));
+    fn register_image(library: &Library, name: &str) -> (i64, std::path::PathBuf) {
+        let path = library
+            .store_rgba_image(name, &[0, 0, 255, 255], 1, 1)
+            .unwrap();
+        let id = library
+            .register_original(&path, "image/png", 1, 1, 4, None)
+            .unwrap()
+            .id;
+        (id, path)
+    }
+
+    /// An image search's answer: result Assets, or "pending", or the error.
+    fn pivot_answer(
+        service: &SemanticSearchService,
+        request_id: u64,
+        asset_id: i64,
+    ) -> Result<Vec<i64>, String> {
+        service
+            .enqueue_search_with_image_pivot_with_limit(request_id, asset_id, None, 5)
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(result) = service.try_recv_search_all().pop() {
+                assert_eq!(result.request_id(), request_id);
+                return match result {
+                    SearchQueryResult::SourcePending { .. } => Err("pending".to_owned()),
+                    SearchQueryResult::Failed { error, .. } => Err(error),
+                    SearchQueryResult::Completed { results, .. } => {
+                        Ok(results.iter().map(|hit| hit.asset_id).collect())
+                    }
+                    SearchQueryResult::ModelPending { .. } => panic!("no text query"),
+                };
+            }
+            assert!(Instant::now() < deadline, "search did not answer");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// Index results up to the Asset's next Indexed or Failed result.
+    fn index_results_until_settled(
+        service: &SemanticSearchService,
+        asset_id: i64,
+    ) -> Vec<IndexResult> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut results = Vec::new();
+        loop {
+            for result in service.try_recv_all() {
+                let settled = matches!(
+                    result,
+                    IndexResult::Indexed { asset_id: id }
+                        | IndexResult::Failed { asset_id: Some(id), .. } if id == asset_id
+                );
+                results.push(result);
+                if settled {
+                    return results;
+                }
+            }
+            assert!(Instant::now() < deadline, "embedding did not finish");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    fn embedding_starts(results: &[IndexResult]) -> Vec<i64> {
+        results
+            .iter()
+            .filter_map(|result| match result {
+                IndexResult::ImportEmbeddingStarted { asset_id } => Some(*asset_id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn image_pivot_waits_for_its_source_embedding_and_reports_its_failure() {
+        let root = TempRoot::new("snappyref-pivot-source-pending-service-test");
+        let library = Library::initialize(root.join("library")).unwrap();
+        let (source, _) = register_image(&library, "source");
+        let (near, _) = register_image(&library, "near");
+        let (broken, _) = register_image(&library, "unembeddable");
+        let mut first_axis = vec![0.0; DEFAULT_SEMANTIC_SEARCH_MODEL.dimension];
+        first_axis[0] = 1.0;
+        library
+            .upsert_asset_embedding_blob(near, DEFAULT_SEMANTIC_SEARCH_MODEL.model_key, &first_axis)
+            .unwrap();
+        let service = fixture_search_service(&library);
+
+        assert_eq!(pivot_answer(&service, 1, source), Err("pending".to_owned()));
+        assert_eq!(pivot_answer(&service, 2, source), Err("pending".to_owned()));
         assert_eq!(
-            embedding_starts(&index_results_until_settled(source)),
+            embedding_starts(&index_results_until_settled(&service, source)),
             vec![source]
         );
         // A second request would embed again right after the first.
         std::thread::sleep(Duration::from_millis(600));
         assert!(service.try_recv_all().is_empty());
-        assert_eq!(search(3, source), Ok(vec![near]));
+        assert_eq!(pivot_answer(&service, 3, source), Ok(vec![near]));
 
         // Storage retries a first failure at once and a second after 5 minutes.
-        assert_eq!(search(4, broken), Err("pending".to_owned()));
-        index_results_until_settled(broken);
-        assert_eq!(search(5, broken), Err("pending".to_owned()));
+        assert_eq!(pivot_answer(&service, 4, broken), Err("pending".to_owned()));
+        index_results_until_settled(&service, broken);
+        assert_eq!(pivot_answer(&service, 5, broken), Err("pending".to_owned()));
         assert_eq!(
-            embedding_starts(&index_results_until_settled(broken)),
+            embedding_starts(&index_results_until_settled(&service, broken)),
             vec![broken]
         );
         for request_id in [6, 7] {
             assert_eq!(
-                search(request_id, broken),
+                pivot_answer(&service, request_id, broken),
                 Err("image could not be decoded".to_owned())
             );
         }
         assert!(service.try_recv_all().is_empty());
+    }
+
+    #[test]
+    fn image_pivot_during_its_import_embedding_spends_one_retry() {
+        let root = TempRoot::new("snappyref-pivot-source-import-overlap-service-test");
+        let library = Library::initialize(root.join("library")).unwrap();
+        let (broken, path) = register_image(&library, "unembeddable");
+        let service = fixture_search_service(&library);
+
+        service.enqueue_asset_index(broken, path).unwrap();
+        assert_eq!(pivot_answer(&service, 1, broken), Err("pending".to_owned()));
+        index_results_until_settled(&service, broken);
+        // The import's failure leaves the search's own embedding running.
+        assert_eq!(pivot_answer(&service, 2, broken), Err("pending".to_owned()));
+        index_results_until_settled(&service, broken);
+        assert_eq!(
+            pivot_answer(&service, 3, broken),
+            Err("image could not be decoded".to_owned())
+        );
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(service.try_recv_all().is_empty());
+        assert!(
+            library
+                .next_embedding_retry_at_for_model(DEFAULT_SEMANTIC_SEARCH_MODEL.model_key)
+                .unwrap()
+                .is_some(),
+            "two failures keep a retry; a third would be terminal"
+        );
     }
 
     #[test]

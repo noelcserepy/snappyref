@@ -1622,6 +1622,56 @@ mod tests {
     }
 
     #[test]
+    fn waiting_palette_keeps_repainting_until_the_service_answers() {
+        let repaint_delay = |status: SearchOverlayStatus| {
+            let ctx = egui::Context::default();
+            let mut search = SearchController::default();
+            search.set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+            search.overlay.open = true;
+            search.overlay.status = status;
+            let mut canvas = CanvasState::default();
+            let screen_rect =
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
+            let mut delay = Duration::ZERO;
+            // Later frames are past the palette's entrance animation.
+            for frame in 0..30 {
+                let output = crate::ui::test_frame::run_ui(
+                    &ctx,
+                    egui::RawInput {
+                        time: Some(frame as f64 * 0.5),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let _ = search.show_overlay(
+                            ui.ctx(),
+                            screen_rect,
+                            &mut canvas,
+                            &mut String::new(),
+                            super::SearchPlacementCreationConfig {
+                                placement_target_area: 20_000.0,
+                                placement_gap: 24.0,
+                                visible_canvas_rect: screen_rect,
+                            },
+                        );
+                    },
+                );
+                delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            }
+            delay
+        };
+
+        // egui subtracts the frame time from a 16 ms request, leaving zero.
+        assert_eq!(repaint_delay(SearchOverlayStatus::Indexing), Duration::ZERO);
+        assert_eq!(
+            repaint_delay(SearchOverlayStatus::Loading(
+                "Preparing semantic search…".to_owned()
+            )),
+            Duration::ZERO
+        );
+        assert_eq!(repaint_delay(SearchOverlayStatus::Ready), Duration::MAX);
+    }
+
+    #[test]
     fn source_indexed_a_frame_before_its_pending_answer_still_shows_results() {
         let root = TempRoot::new("snappyref-pivot-indexed-before-pending");
         let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
