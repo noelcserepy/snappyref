@@ -140,10 +140,17 @@ fn img_sources(html: &str) -> Vec<&str> {
             }
         }
         if let Some(end_tag) = raw_text_end {
-            at = html[at..]
-                .to_ascii_lowercase()
-                .find(&end_tag)
-                .map_or(html.len(), |end| at + end);
+            let lower = html[at..].to_ascii_lowercase();
+            at += lower
+                .match_indices(&end_tag)
+                .map(|(end, _)| end)
+                .find(|end| {
+                    lower[end + end_tag.len()..]
+                        .chars()
+                        .next()
+                        .is_none_or(|ch| ch.is_ascii_whitespace() || matches!(ch, '/' | '>'))
+                })
+                .unwrap_or(lower.len());
         }
     }
     sources
@@ -309,7 +316,7 @@ mod tests {
                 r#"<img-placeholder src="https://example.com/placeholder"></img-placeholder><img src="{image}">"#
             ),
             format!(
-                r#"<script>const t = '<img src="https://example.com/placeholder">';</script><STYLE>/* <img src="https://example.com/old"> */</STYLE><img src="{image}">"#
+                r#"<script>const t = '</scripture><img src="https://example.com/placeholder">';</script><STYLE>/* <img src="https://example.com/old"> */</STYLE><img src="{image}">"#
             ),
         ] {
             assert_eq!(best_of_text(&html), [image], "{html}");
