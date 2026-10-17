@@ -1,4 +1,6 @@
-use super::support::{INSPECT_DELETE_KEY, check_compact_placements, inspect_displayed_text};
+use super::support::{
+    INSPECT_DELETE_KEY, check_compact_placements, inspect_displayed_galleys, inspect_displayed_text,
+};
 use super::*;
 
 #[test]
@@ -318,7 +320,34 @@ fn inspect_semantic_search_sidebar_status_writes_artifact() {
 
 #[test]
 fn inspect_sidebar_pages_writes_artifact() {
-    let mut scenario = InspectScenario::new("sidebar-pages");
+    inspect_sidebar_pages(InspectScenario::new("sidebar-pages"));
+}
+
+/// Windows spells modifiers out as Ctrl, Alt, and Shift chips, the widest
+/// shortcuts the sidebar shows.
+#[test]
+fn inspect_sidebar_pages_windows_writes_artifact() {
+    let _windows = crate::ui::shortcut::WindowsForm::force();
+    inspect_sidebar_pages(InspectScenario::new("sidebar-pages-windows"));
+}
+
+fn elided_text(harness: &Harness<'_, SnappyRefApp>) -> Vec<String> {
+    inspect_displayed_galleys(harness)
+        .into_iter()
+        .filter(|t| t.elided)
+        .map(|t| t.text)
+        .collect()
+}
+
+/// True when every one of `texts` shows in the frame, not cut short.
+fn in_full(harness: &Harness<'_, SnappyRefApp>, texts: &[&str]) -> bool {
+    let shown = inspect_displayed_galleys(harness);
+    texts
+        .iter()
+        .all(|text| shown.iter().any(|t| t.text == *text && !t.elided))
+}
+
+fn inspect_sidebar_pages(mut scenario: InspectScenario) {
     scenario.event(
         "seed",
         serde_json::json!({
@@ -454,6 +483,17 @@ fn inspect_sidebar_pages_writes_artifact() {
         "General shows pointer, canvas, and window settings",
         harness.query_by_label("Always on top").is_some(),
     );
+    let text = inspect_displayed_galleys(&harness);
+    let on_top = text.iter().find(|t| t.text == "Always on top").unwrap();
+    scenario.target("sidebar.always-on-top.name", "text", on_top.rect);
+    scenario.assertion(
+        "Always on top shows in full, clear of its shortcut chips",
+        !on_top.elided
+            && text
+                .iter()
+                .filter(|t| t.text != "Always on top")
+                .all(|t| !t.rect.intersects(on_top.rect)),
+    );
     scenario.assertion(
         "General ends with the Semantic Search download and the available update",
         harness.query_by_label("Downloading 42%").is_some()
@@ -471,6 +511,26 @@ fn inspect_sidebar_pages_writes_artifact() {
     harness.hover_at(park);
     harness.run_steps(6);
     scenario.capture_screen("screen-003-keys", &mut harness);
+    // The widest rows: long actions with Ctrl Shift chips on Windows.
+    let top_shown = in_full(&harness, &["Ungroup selection", "Export board to PureRef"]);
+    let mut cut = elided_text(&harness);
+    harness.get_by_label("Undo").scroll_to_me();
+    harness.run_steps(6);
+    scenario.capture_screen("screen-003-keys-end", &mut harness);
+    let end_shown = in_full(
+        &harness,
+        &[
+            "Toggle always on top",
+            "Directional settle arrange",
+            "Selection avg area",
+        ],
+    );
+    cut.extend(elided_text(&harness));
+    scenario.fact("keys.cut-short", serde_json::json!(cut));
+    scenario.assertion(
+        "every Keys action shows in full, the widest rows included",
+        top_shown && end_shown && cut.is_empty(),
+    );
     scenario.assertion(
         "Settings navigation sits above its General and Keys pages",
         harness.get_by_label("Settings").rect().bottom()

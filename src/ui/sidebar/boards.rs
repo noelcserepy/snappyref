@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn double_clicking_a_board_name_submits_the_typed_rename() {
         let mut harness = Harness::builder()
-            .with_size(egui::vec2(264.0, 200.0))
+            .with_size(egui::vec2(card::WIDTH, 200.0))
             .with_step_dt(1.0 / 60.0)
             .build_ui_state(
                 |ui, action| {

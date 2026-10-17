@@ -751,11 +751,29 @@ pub(super) fn inspect_command_modifier() -> egui::Modifiers {
 
 /// Text submitted to the renderer, including painter-only controls without AccessKit labels.
 pub(super) fn inspect_displayed_text(harness: &Harness<'_, SnappyRefApp>) -> Vec<String> {
-    fn collect(shape: &egui::epaint::Shape, clip: egui::Rect, out: &mut Vec<String>) {
+    inspect_displayed_galleys(harness)
+        .into_iter()
+        .map(|text| text.text)
+        .collect()
+}
+
+/// A text shape the frame shows: its full text, its visible bounds, and
+/// whether truncation cut it short.
+pub(super) struct DisplayedText {
+    pub text: String,
+    pub rect: egui::Rect,
+    pub elided: bool,
+}
+
+pub(super) fn inspect_displayed_galleys(harness: &Harness<'_, SnappyRefApp>) -> Vec<DisplayedText> {
+    fn collect(shape: &egui::epaint::Shape, clip: egui::Rect, out: &mut Vec<DisplayedText>) {
         match shape {
-            egui::epaint::Shape::Text(text) if clip.intersects(text.visual_bounding_rect()) => {
-                out.push(text.galley.job.text.clone())
-            }
+            egui::epaint::Shape::Text(text) if clip.intersects(text.visual_bounding_rect()) => out
+                .push(DisplayedText {
+                    text: text.galley.job.text.clone(),
+                    rect: text.visual_bounding_rect(),
+                    elided: text.galley.elided,
+                }),
             egui::epaint::Shape::Vec(shapes) => {
                 for shape in shapes {
                     collect(shape, clip, out);

@@ -600,7 +600,7 @@ fn view_tool_uses_visible_canvas_and_selection_refusal_keeps_selection() {
         },
         |_| {},
     );
-    for (open, width) in [(false, 1200.0), (true, 928.0)] {
+    for (open, width) in [(false, 1200.0), (true, 908.0)] {
         app.sidebar_open = open;
         let view = call(
             &mut app,

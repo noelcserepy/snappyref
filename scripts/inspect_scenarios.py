@@ -42,6 +42,7 @@ SCENARIOS = {
     'ai-control': ('inspect_ai_control_writes_artifact', 'ai-control', False),
     'sidebar-board-shortcuts': ('inspect_sidebar_board_shortcuts_writes_artifact', 'sidebar-board-shortcuts', False),
     'sidebar-pages': ('inspect_sidebar_pages_writes_artifact', 'sidebar-pages', False),
+    'sidebar-pages-windows': ('inspect_sidebar_pages_windows_writes_artifact', 'sidebar-pages-windows', False),
     'semantic-search-real-install': ('inspect_semantic_search_real_install_writes_artifact', 'semantic-search-real-install', True),
     'sample-image-import': ('inspect_sample_image_import_writes_artifact', 'sample-image-import', False),
     'pending-drop-batch-undo': ('inspect_pending_drop_batch_undo_writes_artifact', 'pending-drop-batch-undo', False),
