@@ -74,14 +74,23 @@ fn img_sources(html: &str) -> Vec<&str> {
             at = html[at..].find("-->").map_or(html.len(), |end| at + end);
             continue;
         }
-        let name_start = at;
-        while bytes.get(at).is_some_and(u8::is_ascii_alphanumeric) {
-            at += 1;
-        }
-        if at == name_start {
+        if !bytes.get(at).is_some_and(u8::is_ascii_alphabetic) {
             continue;
         }
-        let is_img = html[name_start..at].eq_ignore_ascii_case("img");
+        let name_start = at;
+        while bytes
+            .get(at)
+            .is_some_and(|byte| !byte.is_ascii_whitespace() && !matches!(byte, b'/' | b'>'))
+        {
+            at += 1;
+        }
+        let name = &html[name_start..at];
+        let is_img = name.eq_ignore_ascii_case("img");
+        // Script and style content is text, so markup inside it is not a tag.
+        let raw_text_end = ["script", "style"]
+            .into_iter()
+            .find(|raw| name.eq_ignore_ascii_case(raw))
+            .map(|raw| format!("</{raw}"));
         loop {
             while bytes
                 .get(at)
@@ -129,6 +138,12 @@ fn img_sources(html: &str) -> Vec<&str> {
             if is_img && attribute.eq_ignore_ascii_case("src") {
                 sources.push(value);
             }
+        }
+        if let Some(end_tag) = raw_text_end {
+            at = html[at..]
+                .to_ascii_lowercase()
+                .find(&end_tag)
+                .map_or(html.len(), |end| at + end);
         }
     }
     sources
@@ -289,6 +304,12 @@ mod tests {
             format!(r#"<img title='the src="https://example.com/placeholder"' src="{image}">"#),
             format!(
                 r#"<a title="<img src=https://example.com/placeholder>" href="https://example.com/gallery"><!-- <img src="https://example.com/old"> --><img src="{image}"></a>"#
+            ),
+            format!(
+                r#"<img-placeholder src="https://example.com/placeholder"></img-placeholder><img src="{image}">"#
+            ),
+            format!(
+                r#"<script>const t = '<img src="https://example.com/placeholder">';</script><STYLE>/* <img src="https://example.com/old"> */</STYLE><img src="{image}">"#
             ),
         ] {
             assert_eq!(best_of_text(&html), [image], "{html}");
