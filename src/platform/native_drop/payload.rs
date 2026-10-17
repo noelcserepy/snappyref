@@ -62,41 +62,74 @@ impl DragUrls {
     }
 }
 
-// The src attribute of each <img> tag: whitespace may surround `=`, and the
-// value may be quoted or bare. data-src and srcset are other attributes.
+// The src attribute of each <img> start tag. Every tag's attributes are read
+// with HTML's rules, so a quoted value may hold `>` or another `src=`.
 fn img_sources(html: &str) -> Vec<&str> {
-    // ASCII lowercasing keeps byte offsets, so `lower` indexes `html`.
-    let lower = html.to_ascii_lowercase();
+    let bytes = html.as_bytes();
     let mut sources = Vec::new();
-    let mut offset = 0;
-    while let Some(found) = lower[offset..].find("<img") {
-        let tag_start = offset + found + "<img".len();
-        let tag_end = lower[tag_start..]
-            .find('>')
-            .map_or(lower.len(), |end| tag_start + end);
-        let tag = &lower[tag_start..tag_end];
-        let mut search = 0;
-        while let Some(found) = tag[search..].find("src") {
-            let name = search + found;
-            search = name + "src".len();
-            if !tag[..name].ends_with(|ch: char| ch.is_ascii_whitespace()) {
+    let mut at = 0;
+    while let Some(found) = html[at..].find('<') {
+        at += found + 1;
+        if html[at..].starts_with("!--") {
+            at = html[at..].find("-->").map_or(html.len(), |end| at + end);
+            continue;
+        }
+        let name_start = at;
+        while bytes.get(at).is_some_and(u8::is_ascii_alphanumeric) {
+            at += 1;
+        }
+        if at == name_start {
+            continue;
+        }
+        let is_img = html[name_start..at].eq_ignore_ascii_case("img");
+        loop {
+            while bytes
+                .get(at)
+                .is_some_and(|byte| byte.is_ascii_whitespace() || *byte == b'/')
+            {
+                at += 1;
+            }
+            if bytes.get(at).is_none_or(|byte| *byte == b'>') {
+                break;
+            }
+            let attribute_start = at;
+            while bytes.get(at).is_some_and(|byte| {
+                !byte.is_ascii_whitespace() && !matches!(byte, b'=' | b'>' | b'/')
+            }) {
+                at += 1;
+            }
+            let attribute = &html[attribute_start..at];
+            while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+                at += 1;
+            }
+            if bytes.get(at) != Some(&b'=') {
                 continue;
             }
-            let Some(value) = tag[search..].trim_start().strip_prefix('=') else {
-                continue;
+            at += 1;
+            while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+                at += 1;
+            }
+            let value = if let Some(&quote @ (b'"' | b'\'')) = bytes.get(at) {
+                let start = at + 1;
+                let end = html[start..]
+                    .find(quote as char)
+                    .map_or(html.len(), |end| start + end);
+                at = (end + 1).min(html.len());
+                &html[start..end]
+            } else {
+                let start = at;
+                while bytes
+                    .get(at)
+                    .is_some_and(|byte| !byte.is_ascii_whitespace() && *byte != b'>')
+                {
+                    at += 1;
+                }
+                &html[start..at]
             };
-            let value_start = tag_start + tag.len() - value.trim_start().len();
-            let value = &html[value_start..tag_end];
-            sources.push(match value.chars().next() {
-                Some(quote @ ('"' | '\'')) => value[1..].split(quote).next().unwrap_or(""),
-                _ => value
-                    .split(|ch: char| ch.is_ascii_whitespace())
-                    .next()
-                    .unwrap_or(""),
-            });
-            break;
+            if is_img && attribute.eq_ignore_ascii_case("src") {
+                sources.push(value);
+            }
         }
-        offset = tag_end;
     }
     sources
 }
@@ -251,6 +284,11 @@ mod tests {
             format!(r#"<img data-src="https://images.example.com/placeholder" src='{image}'>"#),
             format!(
                 r#"<iframe src="https://example.com/embed"></iframe><IMG SRC={image} width=10>"#
+            ),
+            format!(r#"<a href="https://example.com/gallery"><img alt="x > y" src="{image}"></a>"#),
+            format!(r#"<img title='the src="https://example.com/placeholder"' src="{image}">"#),
+            format!(
+                r#"<a title="<img src=https://example.com/placeholder>" href="https://example.com/gallery"><!-- <img src="https://example.com/old"> --><img src="{image}"></a>"#
             ),
         ] {
             assert_eq!(best_of_text(&html), [image], "{html}");
