@@ -440,6 +440,11 @@ pub fn show(
         }
     }
     state.prune_cached_pixels_to_selected_items();
+    // Snap guides show only while a held pointer drags, resizes, or places. A
+    // released gesture or a one-shot import layout leaves no guide behind.
+    if !ui.input(|i| i.pointer.primary_down()) {
+        state.clear_guide_snap_indicators();
+    }
 
     let painter = ui.painter_at(rect);
 

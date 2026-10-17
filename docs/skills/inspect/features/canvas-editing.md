@@ -61,6 +61,8 @@ Preconditions:
   for a rotated image at non-default pan/zoom, release outside the canvas,
   persisted geometry, and one Undo. Run `run-scenario.sh snapped-drag-commit`
   for snap acquisition, retention, committed position, and Command bypass.
+  Run `run-scenario.sh group-after-snapped-import` for guide lifetime: a
+  snapped file drop and ⌘G leave no guide, and a held drag shows one until release.
 - **Clipped marquee selection.** Run `run-scenario.sh marquee-clipped-group`
   for hidden overflow versus visible group content and exact Shift-add selection.
 - **Delete, Undo, Redo.** Run `run-scenario.sh delete-undo-redo-placement`.
