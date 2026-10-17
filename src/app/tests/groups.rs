@@ -1836,3 +1836,160 @@ fn inspect_context_menu_writes_artifact() {
 
     scenario.finish();
 }
+
+#[test]
+fn inspect_group_after_snapped_import_writes_artifact() {
+    let mut scenario = InspectScenario::new("group-after-snapped-import");
+    let root = TempRoot::new("snappyref-inspect-group-after-snapped-import");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    scenario.event("seed", serde_json::json!({"placements": 1, "purpose": "Drop two images in line with an existing one, then group the dropped selection"}));
+    let path = library
+        .store_rgba_image("anchor", &solid_rgba([78, 126, 226, 255], 120, 90), 120, 90)
+        .unwrap();
+    let anchor = library
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            crate::data::Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::pos2(-250.0, 0.0),
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                library
+                    .register_original(&path, "image/png", 120, 90, 43200, None)
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+    let anchor = inspect_prepared_loaded_placement(
+        anchor,
+        [78, 126, 226, 255],
+        120,
+        90,
+        None,
+        crate::image_preparation::ImportOrigin::Existing,
+    );
+    let dropped = [
+        ("dropped-a.png", [226, 160, 78, 255]),
+        ("dropped-b.png", [106, 176, 116, 255]),
+    ]
+    .map(|(name, color)| {
+        let file = root.join(name);
+        image::RgbaImage::from_pixel(120, 90, image::Rgba(color))
+            .save(&file)
+            .unwrap();
+        file
+    });
+    let mut app = test_app(Some(library.clone()));
+    app.import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
+        library.clone(),
+        egui::Context::default(),
+        None,
+    ));
+    let mut harness = app_full_harness_with_startup(1.0 / 60.0, move |ctx| {
+        app.canvas.add_prepared_placement_image(ctx, anchor);
+        app
+    });
+    harness.step();
+    let screen = test_screen_rect();
+    let guides =
+        |harness: &Harness<'_, SnappyRefApp>| harness.state().canvas.guide_snap_indicator_count();
+
+    // A drop a few pixels below the anchor's top edge snaps the batch onto it.
+    let drop_at = inspect_world_to_screen(egui::pos2(-127.0, 48.0), screen);
+    scenario.action("drop two images in line with the anchor", drop_at);
+    harness.hover_at(drop_at);
+    harness.input_mut().dropped_files = dropped.iter().map(dropped_file).collect();
+    harness.step();
+    let mut batch = harness.state().canvas.selected_placement_ids();
+    batch.sort();
+    scenario.fact("guides after drop", serde_json::json!(guides(&harness)));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while harness.state().placement_creation.pending_len() != 0 && Instant::now() < deadline {
+        harness.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for _ in 0..5 {
+        harness.step();
+    }
+    let dropped_names = batch
+        .iter()
+        .filter_map(|id| harness.state().canvas.placement_for_id(*id))
+        .filter_map(|placement| Some(placement.loaded_asset()?.filename.clone()))
+        .collect::<Vec<_>>();
+    scenario.fact("dropped selection", serde_json::json!(dropped_names));
+    // Stored filenames carry a unique prefix before the dropped name.
+    scenario.assertion(
+        "drop selects the two dropped images",
+        dropped_names.len() == 2
+            && ["-dropped-a.png", "-dropped-b.png"]
+                .iter()
+                .all(|name| dropped_names.iter().any(|stored| stored.ends_with(name))),
+    );
+    scenario.capture_screen("screen-001-dropped", &mut harness);
+    scenario.fact("guides after load", serde_json::json!(guides(&harness)));
+
+    scenario.action("create Group with command G", drop_at);
+    shortcut(&mut harness, CMD, egui::Key::G);
+    for _ in 0..5 {
+        harness.step();
+    }
+    scenario.assertion(
+        "command G groups the dropped selection",
+        harness.state().canvas.groups().len() == 1 && {
+            let mut members = harness.state().canvas.groups()[0].members.clone();
+            members.sort();
+            members == batch
+        },
+    );
+    scenario.capture_screen("screen-002-grouped", &mut harness);
+    scenario.assertion("no snap guide outlives the drop", guides(&harness) == 0);
+
+    // The anchor's top edge lands 3px above the lower dropped image's top edge.
+    let from = inspect_world_to_screen(egui::pos2(-250.0, 0.0), screen);
+    let to = from + egui::vec2(0.0, 87.0);
+    scenario.action("hold the anchor dragged beside the Group", to);
+    harness.hover_at(from);
+    harness.drag_at(from);
+    for _ in 0..8 {
+        harness.step();
+    }
+    std::thread::sleep(Duration::from_millis(120));
+    harness.hover_at(to);
+    harness.step();
+    scenario.capture_screen("screen-003-held-drag", &mut harness);
+    scenario.assertion("held snapping drag shows its guide", guides(&harness) > 0);
+    harness.drop_at(to);
+    harness.step();
+    scenario.capture_screen("screen-004-released", &mut harness);
+    scenario.assertion("release clears the guide", guides(&harness) == 0);
+
+    // The Group picker takes pointer input, so the canvas never sees this release.
+    let back = from;
+    scenario.action("hold a snapped drag, open the Group picker, release", back);
+    harness.hover_at(to);
+    harness.drag_at(to);
+    for _ in 0..8 {
+        harness.step();
+    }
+    std::thread::sleep(Duration::from_millis(120));
+    harness.hover_at(back + egui::vec2(0.0, 3.0));
+    harness.step();
+    let held = guides(&harness);
+    harness.key_press(egui::Key::G);
+    harness.step();
+    let picker_opened = harness.state().canvas.group_picker_open();
+    harness.drop_at(back + egui::vec2(0.0, 3.0));
+    harness.step();
+    harness.key_press(egui::Key::Escape);
+    harness.step();
+    scenario.capture_screen("screen-005-picker-closed", &mut harness);
+    scenario.assertion(
+        "a release taken by the Group picker leaves no guide",
+        held > 0 && picker_opened && guides(&harness) == 0,
+    );
+    scenario.finish();
+}

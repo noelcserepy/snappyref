@@ -606,7 +606,6 @@ pub(super) fn handle_input(
                         state.mark_dirty(id);
                     }
                 }
-                state.clear_guide_snap_indicators();
             }
             Some(ActiveGesture::Marquee(_)) | None => {}
         }

@@ -2795,6 +2795,94 @@ fn inspect_semantic_search_real_install_writes_artifact() {
 }
 
 #[test]
+fn keyboard_search_placement_keeps_an_acquired_snap_until_click() {
+    let root = TempRoot::new("snappyref-keyboard-snap-retention");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let path = library
+        .store_rgba_image("snap", &solid_rgba([60, 120, 200, 255], 100, 100), 100, 100)
+        .unwrap();
+    let asset = library
+        .register_original(&path, "image/png", 100, 100, 40000, None)
+        .unwrap();
+    let anchor = library
+        .fixture_placement(
+            library.load_user_session().unwrap().active_board_id,
+            Placement::loaded(
+                crate::data::PlacementState::new(
+                    library.allocate_document_id(),
+                    egui::Pos2::ZERO,
+                    1.0,
+                    0.0,
+                    0,
+                    false,
+                ),
+                asset.clone(),
+            ),
+        )
+        .unwrap();
+    let anchor = inspect_prepared_loaded_placement(
+        anchor,
+        [60, 120, 200, 255],
+        100,
+        100,
+        None,
+        crate::image_preparation::ImportOrigin::Existing,
+    );
+    let mut app = test_app(Some(library.clone()));
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+    app.settings.placement_gap = 24.0;
+    app.settings.placement_target_area = 10_000.0;
+    app.canvas.set_placement_gap(24.0);
+    app.search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+    let mut harness = app_full_harness_with_startup(1.0 / 60.0, move |ctx| {
+        app.canvas.add_prepared_placement_image(ctx, anchor);
+        app
+    });
+    harness.state_mut().search.overlay.open = true;
+    harness.state_mut().search.overlay.focus_requested = true;
+    harness.step();
+    harness.state_mut().search.overlay.results = vec![SearchResultAssetEntry {
+        asset_id: asset.id,
+        asset_preview_path: Some(path),
+        asset_width: 100,
+        asset_height: 100,
+    }];
+    harness.state_mut().search.overlay.status = crate::search::palette::SearchOverlayStatus::Ready;
+    harness
+        .state_mut()
+        .search
+        .overlay
+        .result_selection
+        .replace(0);
+    harness.step();
+    // The test screen maps world (0, 0) to screen (600, 400) at zoom 1.
+    harness.hover_at(egui::pos2(722.0, 402.0));
+    harness.key_press(egui::Key::Enter);
+    harness.step();
+    harness.step();
+    let center = |harness: &Harness<'_, SnappyRefApp>| {
+        harness
+            .state()
+            .canvas
+            .selected_bounds_world()
+            .unwrap()
+            .center()
+    };
+    assert_eq!(center(&harness), egui::pos2(124.0, 0.0));
+    // 10px away is past the 8px acquire distance but within the 12px release distance.
+    harness.hover_at(egui::pos2(734.0, 410.0));
+    harness.step();
+    harness.step();
+    assert_eq!(center(&harness), egui::pos2(124.0, 0.0));
+    inspect_click_at(&harness, egui::pos2(734.0, 410.0), egui::Modifiers::NONE);
+    harness.step();
+    harness.step();
+    assert_eq!(center(&harness), egui::pos2(124.0, 0.0));
+    assert_eq!(harness.state().canvas.guide_snap_indicator_count(), 0);
+}
+
+#[test]
 fn inspect_search_keyboard_placement_writes_artifact() {
     let mut scenario = InspectScenario::new("search-keyboard-placement");
     let root = TempRoot::new("snappyref-search-keyboard-placement");
