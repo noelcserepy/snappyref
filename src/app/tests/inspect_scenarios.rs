@@ -240,6 +240,256 @@ fn inspect_semantic_search_install_accepts_prompt() {
 }
 
 #[test]
+fn inspect_image_search_after_install_writes_artifact() {
+    let mut scenario = InspectScenario::new("image-search-after-install");
+    scenario.event(
+        "seed",
+        serde_json::json!({
+            "seed": "unindexed-selected-image-two-indexed-library-images-model-missing",
+            "embedding_helper": "offline fixture: 400 ms load, 150 ms per image, every image embeds as the first unit vector",
+        }),
+    );
+
+    let root = TempRoot::new("snappyref-inspect-image-search-after-install");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let board_id = library.load_user_session().unwrap().active_board_id;
+    // Search shows thumbnails from the canvas cache an import writes.
+    let add_board_image = |name: &str, color: [u8; 4], x: f32, z_index: i32| {
+        let path = library
+            .store_rgba_image(name, &solid_rgba(color, 100, 100), 100, 100)
+            .unwrap();
+        let asset = library
+            .register_original(&path, "image/png", 100, 100, 100 * 100 * 4, None)
+            .unwrap();
+        library
+            .store_canvas_image_cache(
+                asset.id,
+                crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+                &solid_rgba(color, 100, 100),
+                100,
+                100,
+            )
+            .unwrap();
+        library
+            .fixture_placement(
+                board_id,
+                crate::data::Placement::loaded(
+                    crate::data::PlacementState::new(
+                        library.allocate_document_id(),
+                        egui::pos2(x, 0.0),
+                        1.0,
+                        0.0,
+                        z_index,
+                        false,
+                    ),
+                    asset,
+                ),
+            )
+            .unwrap()
+    };
+    // Backfill embeds the lower neighbors first, so the selected image is
+    // still unindexed when the helper reports ready.
+    for (index, color) in [[200, 92, 92, 255], [92, 200, 120, 255], [210, 190, 90, 255]]
+        .into_iter()
+        .enumerate()
+    {
+        add_board_image(
+            &format!("neighbor-{index}"),
+            color,
+            -390.0 + index as f32 * 130.0,
+            index as i32,
+        );
+    }
+    let source = add_board_image("blue-selected", [78, 126, 226, 255], 0.0, 3);
+    // The fixture helper embeds the selected image as the first unit vector,
+    // so the near image ranks above the far one.
+    let dimension = crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL.dimension;
+    let mut indexed = Vec::new();
+    for (name, color, leading) in [
+        ("near-result", [92, 140, 230, 255], [0.9_f32, 0.1]),
+        ("far-result", [228, 171, 72, 255], [0.1_f32, 0.9]),
+    ] {
+        let path = library
+            .store_rgba_image(name, &solid_rgba(color, 160, 160), 160, 160)
+            .unwrap();
+        let asset = library
+            .register_original(&path, "image/png", 160, 160, 160 * 160 * 4, None)
+            .unwrap();
+        library
+            .store_canvas_image_cache(
+                asset.id,
+                crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+                &solid_rgba(color, 160, 160),
+                160,
+                160,
+            )
+            .unwrap();
+        let mut embedding = vec![0.0_f32; dimension];
+        embedding[..2].copy_from_slice(&leading);
+        library
+            .upsert_asset_embedding_blob(
+                asset.id,
+                crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL.model_key,
+                &embedding,
+            )
+            .unwrap();
+        indexed.push(asset.id);
+    }
+
+    let install = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let installer = install.clone();
+    let mut app = test_app(Some(library.clone()));
+    // Canvas image loads must drain, or the app never goes idle for backfill.
+    app.import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
+        library.clone(),
+        egui::Context::default(),
+        None,
+    ));
+    app.settings.semantic_search_first_launch_prompt_seen = true;
+    app.search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Missing);
+    app.search
+        .set_embedding_helper_for_test(crate::search::semantic::EmbeddingHelperLaunch::Fixture);
+    app.search
+        .set_semantic_install_for_test(move |tx| *installer.borrow_mut() = Some(tx));
+    app.board_lifecycle().restore().unwrap();
+    let mut harness = app_full_harness(app);
+    harness.step();
+
+    let source_screen = inspect_world_to_screen(egui::pos2(0.0, 0.0), test_screen_rect());
+    scenario.action("click blue image", source_screen);
+    inspect_click_at(&harness, source_screen, egui::Modifiers::NONE);
+    harness.step();
+    scenario.event("key", serde_json::json!({ "key": "Mod+F" }));
+    harness.key_press_modifiers(inspect_command_modifier(), egui::Key::F);
+    harness.step();
+    harness.step();
+    scenario.assertion(
+        "Mod+F on the selected image opens search on the install card",
+        harness.state().search.is_open()
+            && harness
+                .state()
+                .search
+                .overlay
+                .image_pivot
+                .as_ref()
+                .map(|pivot| pivot.asset_id)
+                == Some(source.require_loaded_asset().id)
+            && harness.state().search.local_model_needs_install(),
+    );
+    scenario.capture_screen("screen-000-install-card", &mut harness);
+
+    let install_rect = harness.get_by_label("Install").rect();
+    scenario.target("snap.search.install-card.install", "button", install_rect);
+    scenario.action("click Install", install_rect.center());
+    harness.get_by_label("Install").click();
+    harness.step();
+    harness.step();
+    let tx = install
+        .borrow_mut()
+        .take()
+        .expect("Install starts the test installer");
+    tx.send(crate::search::semantic::SemanticSearchInstallProgress::Installed)
+        .unwrap();
+
+    let sample = |app: &SnappyRefApp| {
+        let search = &app.search;
+        let line = if search.local_model_needs_install()
+            || matches!(
+                search.local_model_store_status(),
+                LocalModelStoreStatus::Downloading { .. }
+            ) {
+            format!("{:?}", search.local_model_store_status())
+        } else if let crate::search::palette::SearchOverlayStatus::Error(error) =
+            &search.overlay.status
+        {
+            format!("Search error: {error}")
+        } else {
+            crate::search::palette::palette_status_line(&search.overlay.status)
+                .1
+                .to_owned()
+        };
+        let results = search
+            .overlay
+            .results
+            .iter()
+            .map(|result| result.asset_id)
+            .collect::<Vec<_>>();
+        (line, results)
+    };
+    let slug = |(line, results): &(String, Vec<i64>)| {
+        let line = line
+            .trim_end_matches('…')
+            .to_lowercase()
+            .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
+        format!("{line}-{}-results", results.len())
+    };
+    let finished = |(line, results): &(String, Vec<i64>)| {
+        !results.is_empty() || line.starts_with("Search error")
+    };
+    let observed = std::cell::RefCell::new(Vec::<String>::new());
+    // Step without captures until the wait shows. A slow capture between steps
+    // could let the image finish indexing inside one step and hide the wait.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let waiting = loop {
+        harness.step();
+        let state = sample(harness.state());
+        observed.borrow_mut().push(state.0.clone());
+        if state.0 == "Indexing…" || finished(&state) || std::time::Instant::now() >= deadline {
+            break state;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    scenario.capture_screen(&format!("screen-001-{}", slug(&waiting)), &mut harness);
+    let terminal = scenario.drive_progress(
+        &mut harness,
+        InspectProgressConfig {
+            start_frame_index: 2,
+            timeout: Duration::from_secs(30),
+            poll_interval: Duration::from_millis(10),
+            fact_name: "image-search.status",
+            timeout_fact_name: "image-search.timeout",
+            terminal_assertion: "image search shows the indexed results",
+            timeout_assertion: "image search finishes before timeout",
+        },
+        |app| {
+            let state = sample(app);
+            observed.borrow_mut().push(state.0.clone());
+            state
+        },
+        slug,
+        finished,
+        |(_, results)| *results == indexed,
+    );
+    let previews_ready = inspect_wait_for_search_previews(&mut harness);
+    scenario.capture_screen("screen-result-previews", &mut harness);
+    scenario.assertion("result previews decoded before capture", previews_ready);
+    let observed = observed.into_inner();
+    scenario.fact(
+        "image-search.after-install",
+        serde_json::json!({
+            "terminal": format!("{terminal:?}"),
+            "status_lines": observed.iter().fold(Vec::<&String>::new(), |mut lines, line| {
+                if lines.last() != Some(&line) {
+                    lines.push(line);
+                }
+                lines
+            }),
+            "expected_results": indexed,
+        }),
+    );
+    scenario.assertion(
+        "search says Indexing while the selected image is embedded",
+        observed.iter().any(|line| line == "Indexing…"),
+    );
+    scenario.assertion(
+        "search never shows an error on the way",
+        !observed.iter().any(|line| line.starts_with("Search error")),
+    );
+    scenario.finish();
+}
+
+#[test]
 fn inspect_semantic_search_sidebar_status_writes_artifact() {
     let mut scenario = InspectScenario::new("semantic-search-sidebar-status");
     scenario.event(
@@ -1309,7 +1559,7 @@ fn inspect_compact_equal_size_images_writes_artifact() {
 
 #[test]
 fn inspect_search_composer_writes_artifact() {
-    use crate::search::palette::{ImageSearchPivot, SearchAssetPreviewEntry, SearchOverlayStatus};
+    use crate::search::palette::{ImageSearchPivot, SearchOverlayStatus};
 
     let mut scenario = InspectScenario::new("search-composer");
     let root = TempRoot::new("snappyref-inspect-search-composer");
@@ -1381,29 +1631,6 @@ fn inspect_search_composer_writes_artifact() {
             harness.step();
         }
     };
-    let wait_for_previews = |harness: &mut Harness<'static, SnappyRefApp>| -> bool {
-        for _ in 0..200 {
-            harness.step();
-            let overlay = &harness.state().search.overlay;
-            let pending = overlay
-                .results
-                .iter()
-                .map(|entry| entry.asset_id)
-                .chain(overlay.image_pivot.as_ref().map(|pivot| pivot.asset_id))
-                .any(|id| {
-                    !matches!(
-                        overlay.asset_preview_cache.get(&id),
-                        Some(SearchAssetPreviewEntry::Ready(_))
-                    )
-                });
-            if !pending {
-                harness.step();
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        false
-    };
     let mut all_opaque = true;
 
     settle(&mut harness);
@@ -1433,7 +1660,7 @@ fn inspect_search_composer_writes_artifact() {
     search.overlay.has_more_results = true;
     search.overlay.result_selection.replace(1);
     search.overlay.result_selection.toggle(2);
-    let previews_ready = wait_for_previews(&mut harness);
+    let previews_ready = inspect_wait_for_search_previews(&mut harness);
     settle(&mut harness);
     all_opaque &= scenario
         .capture_screen("screen-001-results-selected", &mut harness)
@@ -1489,7 +1716,7 @@ fn inspect_search_composer_writes_artifact() {
     });
     search.overlay.results = entries[1..].to_vec();
     search.overlay.result_selection.replace(0);
-    let previews_ready = previews_ready && wait_for_previews(&mut harness);
+    let previews_ready = previews_ready && inspect_wait_for_search_previews(&mut harness);
     settle(&mut harness);
     all_opaque &= scenario
         .capture_screen("screen-003-similar", &mut harness)

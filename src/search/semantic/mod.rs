@@ -16,6 +16,8 @@ pub(crate) use model::default_local_model_store_status;
 #[cfg(not(test))]
 pub(crate) use model::initialize_default_local_model_store_status;
 pub(crate) use model_store::LocalModelStoreStatus;
+#[cfg(test)]
+pub(crate) use service::EmbeddingHelperLaunch;
 pub use service::{
     IndexResult, SearchQueryResult, SearchResultAssetEntry, SemanticSearchConfig,
     SemanticSearchService,

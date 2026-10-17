@@ -35,10 +35,12 @@ impl AssetIndex {
             cache: Arc::new(Mutex::new(SearchEmbeddingCache::default())),
         }
     }
+    /// Whether the Asset has an embedding that search can use.
     pub(super) fn contains(&self, asset_id: i64) -> Result<bool, String> {
         Ok(self
             .library
             .load_asset_embedding(asset_id, self.model_key)?
+            .and_then(|blob| usable_embedding(&blob, self.dimension))
             .is_some())
     }
 
@@ -48,12 +50,13 @@ impl AssetIndex {
             .map(|cache| cache.warming)
             .unwrap_or(false)
     }
-    pub(super) fn pivot_embedding(&self, asset_id: i64) -> Result<Vec<f32>, String> {
+    /// The Asset's embedding, or None while it has none.
+    pub(super) fn pivot_embedding(&self, asset_id: i64) -> Result<Option<Vec<f32>>, String> {
         let embeddings = self.embeddings()?;
-        embeddings
+        Ok(embeddings
             .binary_search_by_key(&asset_id, |row| row.asset_id)
-            .map(|index| embeddings[index].embedding.clone())
-            .map_err(|_| "Source image not indexed yet".to_owned())
+            .ok()
+            .map(|index| embeddings[index].embedding.clone()))
     }
     pub(super) fn rerank(&self, hits: &mut [AssetSearchHit], query: &[f32]) -> Result<(), String> {
         let embeddings = self.embeddings()?;
@@ -159,10 +162,7 @@ fn load_decoded_library_embeddings(
         .into_iter()
         .filter_map(|row| {
             // A corrupt persisted cache row must not disable the other Assets' search.
-            let embedding = decode_f32_blob(&row.embedding_blob).ok()?;
-            if embedding.len() != dimension || !squared_norm(&embedding).is_finite() {
-                return None;
-            }
+            let embedding = usable_embedding(&row.embedding_blob, dimension)?;
             Some(DecodedAssetEmbedding {
                 asset_id: row.asset_id,
                 cosine_is_zero: squared_norm(&embedding) <= f32::EPSILON,
@@ -171,6 +171,13 @@ fn load_decoded_library_embeddings(
         })
         .collect();
     Ok(Arc::new(embeddings))
+}
+
+/// A stored embedding blob, or None when it is malformed, the wrong
+/// dimension, or not finite.
+fn usable_embedding(blob: &[u8], dimension: usize) -> Option<Vec<f32>> {
+    let embedding = decode_f32_blob(blob).ok()?;
+    (embedding.len() == dimension && squared_norm(&embedding).is_finite()).then_some(embedding)
 }
 
 fn score_decoded_embeddings(

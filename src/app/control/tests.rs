@@ -78,12 +78,21 @@ fn take_search_result(app: &mut SnappyRefApp, request: u64) -> SearchQueryResult
     }
 }
 
-fn assert_unindexed_result(result: SearchQueryResult, expected_request: u64) {
-    let SearchQueryResult::Failed { request_id, error } = result else {
-        panic!("unindexed pivot must fail")
+/// Gives an Asset an embedding, so image searches from it answer without the model.
+fn index_for_search(library: &Library, asset_id: i64) {
+    let model = crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
+    let mut first_axis = vec![0.0; model.dimension];
+    first_axis[0] = 1.0;
+    library
+        .upsert_asset_embedding_blob(asset_id, model.model_key, &first_axis)
+        .unwrap();
+}
+
+fn assert_completed_result(result: SearchQueryResult, expected_request: u64) {
+    let SearchQueryResult::Completed { request_id, .. } = result else {
+        panic!("indexed pivot must complete")
     };
     assert_eq!(request_id, expected_request);
-    assert_eq!(error, "Source image not indexed yet");
 }
 
 #[test]
@@ -108,8 +117,9 @@ fn search_calls_complete_fail_retry_model_pending_and_expire() {
         .register_original(&path, "image/png", 1, 1, 4, None)
         .unwrap()
         .id;
-    // An unindexed image pivot never loads a real model. Controlled service
+    // An indexed image pivot never loads a real model. Controlled service
     // results below exercise the app's continuation, independently of ranking.
+    index_for_search(&library, pivot);
     let args = json!({"similar_to":pivot,"limit":1});
     let (mut waiting, client) = pending(&mut app, &ctx, &root, "search_library", args.clone());
     let request = search_request(&waiting);
@@ -170,7 +180,7 @@ fn search_calls_complete_fail_retry_model_pending_and_expire() {
     );
     let renewed = search_request(&waiting);
     let result = take_search_result(&mut app, renewed);
-    assert_unindexed_result(result, renewed);
+    assert_completed_result(result, renewed);
     assert!(!client.is_finished());
     assert!(
         app.poll_control_search(
@@ -197,10 +207,78 @@ fn search_calls_complete_fail_retry_model_pending_and_expire() {
         .start_direct_search(None, Some(pivot), 1)
         .unwrap();
     let result = take_search_result(&mut app, barrier);
-    assert_unindexed_result(result, barrier);
+    assert_completed_result(result, barrier);
     assert!(
         app.search.take_direct_search_result(expired).is_none(),
         "expired search is still tracked after its late result arrived"
+    );
+}
+
+/// Runs one call the way the app's frame loop does, until it answers.
+fn answered(
+    app: &mut SnappyRefApp,
+    ctx: &egui::Context,
+    root: &TempRoot,
+    tool: &str,
+    args: Value,
+) -> Value {
+    let (waiting, client) = pending(app, ctx, root, tool, args);
+    app.control.waiting.push(waiting);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !client.is_finished() {
+        assert!(Instant::now() < deadline, "call did not answer");
+        app.search.handle_results();
+        app.drive_control_at(ctx, Instant::now());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    reply(client)
+}
+
+#[test]
+fn image_search_calls_wait_for_the_source_embedding_and_report_its_failure() {
+    let root = TempRoot::new("snappyref-control-search-source-embedding");
+    let (mut app, ctx) = app(&root);
+    app.search
+        .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+    app.search
+        .set_embedding_helper_for_test(crate::search::semantic::EmbeddingHelperLaunch::Fixture);
+    app.search
+        .sync_service(app.library.as_ref(), &mut app.status, 8192);
+    let library = app.library.clone().unwrap();
+    let register = |name: &str| {
+        let path = library
+            .store_rgba_image(name, &[0, 0, 255, 255], 1, 1)
+            .unwrap();
+        library
+            .register_original(&path, "image/png", 1, 1, 4, None)
+            .unwrap()
+    };
+    let source = register("source");
+    let near = register("near");
+    let broken = register("unembeddable");
+    index_for_search(&library, near.id);
+
+    let found = answered(
+        &mut app,
+        &ctx,
+        &root,
+        "search_library",
+        json!({"similar_to":source.id,"limit":5}),
+    );
+    let value: Value = serde_json::from_str(found["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        value,
+        json!({"assets":[{"asset":near.id,"width":1,"height":1,"file":near.filename}]})
+    );
+    assert_eq!(
+        answered(
+            &mut app,
+            &ctx,
+            &root,
+            "search_library",
+            json!({"similar_to":broken.id,"limit":5}),
+        ),
+        json!({"content":[{"type":"text","text":"image could not be decoded"}],"isError":true})
     );
 }
 
@@ -253,6 +331,7 @@ fn cancelling_ask_preserves_the_asset_and_revoking_access_answers_waiting_calls(
     );
     let (waiting, client) = pending(&mut app, &ctx, &root, "screenshot", json!({}));
     app.control.waiting.push(waiting);
+    index_for_search(&library, asset.id);
     app.search
         .set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
     app.search
@@ -282,7 +361,7 @@ fn cancelling_ask_preserves_the_asset_and_revoking_access_answers_waiting_calls(
         .start_direct_search(None, Some(asset.id), 1)
         .unwrap();
     let result = take_search_result(&mut app, barrier);
-    assert_unindexed_result(result, barrier);
+    assert_completed_result(result, barrier);
     assert!(
         app.search
             .take_direct_search_result(revoked_search)

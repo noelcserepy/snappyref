@@ -38,6 +38,7 @@ SCENARIOS = {
     'group-operations': ('inspect_group_operations_writes_artifact', 'group-operations', False),
     'group-after-snapped-import': ('inspect_group_after_snapped_import_writes_artifact', 'group-after-snapped-import', False),
     'search-drag-to-canvas': ('inspect_search_result_drag_to_canvas_writes_artifact', 'search-drag-to-canvas', False),
+    'image-search-after-install': ('inspect_image_search_after_install_writes_artifact', 'image-search-after-install', False),
     'semantic-search-install': ('inspect_semantic_search_install_accepts_prompt', 'semantic-search-install', False),
     'semantic-search-sidebar-status': ('inspect_semantic_search_sidebar_status_writes_artifact', 'semantic-search-sidebar-status', False),
     'ai-control': ('inspect_ai_control_writes_artifact', 'ai-control', False),

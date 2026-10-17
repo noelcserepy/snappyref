@@ -760,6 +760,18 @@ fn paint_palette_empty_group(
     selected_recent_search
 }
 
+/// The footer's status dot color and words.
+pub(crate) fn palette_status_line(status: &SearchOverlayStatus) -> (egui::Color32, &str) {
+    match status {
+        SearchOverlayStatus::Loading(message) => (crate::ui::theme::ACCENT, message.as_str()),
+        SearchOverlayStatus::Indexing => (crate::ui::theme::ACCENT, "Indexing…"),
+        SearchOverlayStatus::Error(_) => (crate::ui::theme::DESTRUCTIVE, "Search error"),
+        SearchOverlayStatus::Idle | SearchOverlayStatus::Ready => {
+            (crate::ui::theme::GREEN, "Ready")
+        }
+    }
+}
+
 /// The status line and the key hints for what the keyboard does right now.
 /// Side insets match the input row, so the last hint ends under the esc chip.
 pub(crate) fn paint_palette_footer(
@@ -769,14 +781,7 @@ pub(crate) fn paint_palette_footer(
     has_more_results: bool,
     browsing_recent: bool,
 ) {
-    let (color, text) = match status {
-        SearchOverlayStatus::Loading(message) => (crate::ui::theme::ACCENT, message.as_str()),
-        SearchOverlayStatus::Indexing => (crate::ui::theme::ACCENT, "Indexing…"),
-        SearchOverlayStatus::Error(_) => (crate::ui::theme::DESTRUCTIVE, "Search error"),
-        SearchOverlayStatus::Idle | SearchOverlayStatus::Ready => {
-            (crate::ui::theme::GREEN, "Ready")
-        }
-    };
+    let (color, text) = palette_status_line(status);
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: crate::ui::theme::SPACE_4 as i8,

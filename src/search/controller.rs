@@ -52,6 +52,8 @@ pub(crate) struct SearchController {
     pub(super) local_model_store_status: Option<LocalModelStoreStatus>,
     semantic_install: SemanticSearchInstallController,
     perf_events: Vec<SemanticPerfEvent>,
+    #[cfg(test)]
+    embedding_helper_for_test: crate::search::semantic::EmbeddingHelperLaunch,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -137,6 +139,15 @@ impl SearchController {
     #[cfg(test)]
     pub(crate) fn set_local_model_store_status_for_test(&mut self, status: LocalModelStoreStatus) {
         self.local_model_store_status = Some(status);
+    }
+
+    /// Services this controller starts from now on embed images with `launch`.
+    #[cfg(test)]
+    pub(crate) fn set_embedding_helper_for_test(
+        &mut self,
+        launch: crate::search::semantic::EmbeddingHelperLaunch,
+    ) {
+        self.embedding_helper_for_test = launch;
     }
 
     #[cfg(test)]
@@ -247,17 +258,30 @@ impl SearchController {
             return;
         };
 
-        match SemanticSearchService::new(
+        let config = SemanticSearchConfig {
+            model: DEFAULT_SEMANTIC_SEARCH_MODEL,
+            canvas_image_max_side,
+        };
+        #[cfg(test)]
+        let service = SemanticSearchService::with_embedding_helper(
             library.clone(),
-            SemanticSearchConfig {
-                model: DEFAULT_SEMANTIC_SEARCH_MODEL,
-                canvas_image_max_side,
-            },
-        ) {
+            config,
+            self.embedding_helper_for_test,
+        );
+        #[cfg(not(test))]
+        let service = SemanticSearchService::new(library.clone(), config);
+        match service {
             Ok(service) => {
                 self.overlay.status =
                     SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
                 self.service = Some(service);
+                // A search opened before the install finished runs now.
+                if self.overlay.open
+                    && (self.overlay.image_pivot.is_some() || !self.overlay.query.trim().is_empty())
+                {
+                    self.overlay.last_submitted_query.clear();
+                    self.submit_query();
+                }
             }
             Err(error) => {
                 self.overlay.status = SearchOverlayStatus::Error(error.clone());
@@ -336,7 +360,15 @@ impl SearchController {
         };
         let index_results = service.try_recv_all();
         let search_results = service.try_recv_search_all();
+        self.apply_service_results(index_results, search_results);
+    }
 
+    /// Applies one frame's service answers.
+    fn apply_service_results(
+        &mut self,
+        index_results: Vec<SearchIndexResult>,
+        search_results: Vec<SearchQueryResult>,
+    ) {
         let mut refresh_active_query = false;
         let now = Instant::now();
         for result in index_results {
@@ -352,6 +384,9 @@ impl SearchController {
         }
 
         if refresh_active_query {
+            // The index changed under any search in flight, so its answer may
+            // be stale. A late answer to it is ignored.
+            self.active_search = None;
             self.submit_query();
         }
     }
@@ -484,8 +519,25 @@ impl SearchController {
                         self.note_demand_embedding_drained_at(Instant::now());
                     }
                 }
-                self.overlay.status = SearchOverlayStatus::Error(error);
-                false
+                // An import's failure replaces only the import's Indexing note.
+                // A search keeps its own status and gets its own answer.
+                if matches!(self.overlay.status, SearchOverlayStatus::Indexing) {
+                    self.overlay.status = SearchOverlayStatus::Error(error);
+                }
+                // A search waiting on this image asks again. The service
+                // answers with the failure, whatever order the events came in.
+                let should_refresh = self.overlay.open
+                    && asset_id.is_some()
+                    && self
+                        .overlay
+                        .image_pivot
+                        .as_ref()
+                        .map(|pivot| pivot.asset_id)
+                        == asset_id;
+                if should_refresh {
+                    self.overlay.last_submitted_query.clear();
+                }
+                should_refresh
             }
         }
     }
@@ -526,6 +578,14 @@ impl SearchController {
                         SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
                 }
             }
+            // The service is embedding the source image. The request stays
+            // active, so the palette keeps polling, until the image's Indexed
+            // or Failed result replaces it with a new one.
+            SearchQueryResult::SourcePending { request_id }
+                if Some(request_id) == active_request_id =>
+            {
+                self.overlay.status = SearchOverlayStatus::Loading("Indexing…".to_owned());
+            }
             SearchQueryResult::Failed { request_id, error }
                 if Some(request_id) == active_request_id =>
             {
@@ -538,6 +598,7 @@ impl SearchController {
             }
             SearchQueryResult::Completed { .. }
             | SearchQueryResult::ModelPending { .. }
+            | SearchQueryResult::SourcePending { .. }
             | SearchQueryResult::Failed { .. } => {}
         }
     }
@@ -639,7 +700,10 @@ impl SearchController {
         service.enqueue_asset_index(asset_id, original_path)?;
         self.pending_demand_embeddings.insert(asset_id);
         self.embedding_backfill.exhausted = false;
-        self.overlay.status = SearchOverlayStatus::Indexing;
+        // A search in flight owns the status.
+        if self.active_search.is_none() {
+            self.overlay.status = SearchOverlayStatus::Indexing;
+        }
         Ok(())
     }
 
@@ -807,7 +871,10 @@ impl SearchController {
             }
             return;
         }
-        if matches!(self.overlay.status, SearchOverlayStatus::Error(_)) {
+        // An error, or a search still answering, keeps its status.
+        if matches!(self.overlay.status, SearchOverlayStatus::Error(_))
+            || self.active_search.is_some()
+        {
             return;
         }
 
@@ -1562,6 +1629,238 @@ mod tests {
             ),
             ..SearchController::default()
         }
+    }
+
+    #[test]
+    fn palette_polls_only_while_its_search_waits() {
+        let repaint_delay = |search: &mut SearchController| {
+            let ctx = egui::Context::default();
+            let mut canvas = CanvasState::default();
+            let screen_rect =
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
+            let mut delay = Duration::ZERO;
+            // Later frames are past the palette's entrance animation.
+            for frame in 0..30 {
+                let output = crate::ui::test_frame::run_ui(
+                    &ctx,
+                    egui::RawInput {
+                        time: Some(frame as f64 * 0.5),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let _ = search.show_overlay(
+                            ui.ctx(),
+                            screen_rect,
+                            &mut canvas,
+                            &mut String::new(),
+                            super::SearchPlacementCreationConfig {
+                                placement_target_area: 20_000.0,
+                                placement_gap: 24.0,
+                                visible_canvas_rect: screen_rect,
+                            },
+                        );
+                    },
+                );
+                delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            }
+            delay
+        };
+        let root = TempRoot::new("snappyref-palette-polling");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
+
+        // An image search waits while its source image is embedded, whatever
+        // else writes the palette's status meanwhile.
+        let mut search = search_controller_for_library(library.clone());
+        search.overlay.open = true;
+        search.open_image_pivot_search(crate::search::palette::ImageSearchPivot {
+            asset_id: 7,
+            asset_preview_path: None,
+        });
+        let first = search.active_search.as_ref().unwrap().request_id;
+        search.apply_service_results(
+            Vec::new(),
+            vec![SearchQueryResult::SourcePending { request_id: first }],
+        );
+        // Other writers of the status: an import queues its embedding and
+        // fails, and the user presses Mod+F again.
+        search
+            .queue_asset_index(10, std::path::PathBuf::from("/tmp/imported.png"))
+            .unwrap();
+        search.apply_service_results(
+            vec![SearchIndexResult::Failed {
+                asset_id: Some(10),
+                error: "other image".to_owned(),
+            }],
+            Vec::new(),
+        );
+        search.open_overlay_from_command();
+        assert_eq!(
+            crate::search::palette::palette_status_line(&search.overlay.status).1,
+            "Indexing…"
+        );
+        // egui subtracts the frame time from a 16 ms request, leaving zero.
+        assert_eq!(repaint_delay(&mut search), Duration::ZERO);
+
+        // An import finished while the palette was open. Nothing waits.
+        let mut search = search_controller_for_library(library);
+        search.overlay.open = true;
+        search
+            .queue_asset_index(8, std::path::PathBuf::from("/tmp/imported.png"))
+            .unwrap();
+        search.apply_service_results(vec![SearchIndexResult::Indexed { asset_id: 8 }], Vec::new());
+        assert_eq!(repaint_delay(&mut search), Duration::MAX);
+    }
+
+    #[test]
+    fn source_indexed_a_frame_before_its_pending_answer_still_shows_results() {
+        let root = TempRoot::new("snappyref-pivot-indexed-before-pending");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
+        let register = |name: &str| {
+            let path = library
+                .store_rgba_image(name, &[0, 0, 255, 255], 1, 1)
+                .unwrap();
+            library
+                .register_original(&path, "image/png", 1, 1, 4, None)
+                .unwrap()
+                .id
+        };
+        let source = register("source");
+        let near = register("near");
+        let model = crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL;
+        let mut first_axis = vec![0.0; model.dimension];
+        first_axis[0] = 1.0;
+        library
+            .upsert_asset_embedding_blob(near, model.model_key, &first_axis)
+            .unwrap();
+        let mut search = SearchController::default();
+        search.set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+        search
+            .set_embedding_helper_for_test(crate::search::semantic::EmbeddingHelperLaunch::Fixture);
+        search.sync_service(
+            Some(&library),
+            &mut String::new(),
+            crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+        );
+        search.overlay.open = true;
+        search.open_image_pivot_search(crate::search::palette::ImageSearchPivot {
+            asset_id: source,
+            asset_preview_path: None,
+        });
+        // Collect the search's real pending answer and the source's real
+        // Indexed result, then deliver the Indexed result a frame earlier.
+        let service = search.service.as_ref().unwrap();
+        let mut index_results = Vec::new();
+        let mut search_results = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while search_results.is_empty()
+            || !index_results.iter().any(
+                |result| matches!(result, SearchIndexResult::Indexed { asset_id } if *asset_id == source),
+            )
+        {
+            assert!(Instant::now() < deadline, "source did not finish indexing");
+            index_results.extend(service.try_recv_all());
+            search_results.extend(service.try_recv_search_all());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(matches!(
+            search_results[..],
+            [SearchQueryResult::SourcePending { .. }]
+        ));
+
+        search.apply_service_results(index_results, Vec::new());
+        search.apply_service_results(Vec::new(), search_results);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while search.overlay.results.is_empty() && Instant::now() < deadline {
+            search.handle_results();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(
+            search
+                .overlay
+                .results
+                .iter()
+                .map(|result| result.asset_id)
+                .collect::<Vec<_>>(),
+            vec![near]
+        );
+    }
+
+    #[test]
+    fn image_search_shows_its_source_embedding_failure_when_events_arrive_together() {
+        let root = TempRoot::new("snappyref-pivot-source-failure-controller-test");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
+        let path = library
+            .store_rgba_image("unembeddable", &[0, 0, 255, 255], 1, 1)
+            .unwrap();
+        let source = library
+            .register_original(&path, "image/png", 1, 1, 4, None)
+            .unwrap()
+            .id;
+        let mut search = SearchController::default();
+        search.set_local_model_store_status_for_test(LocalModelStoreStatus::Installed);
+        search
+            .set_embedding_helper_for_test(crate::search::semantic::EmbeddingHelperLaunch::Fixture);
+        search.sync_service(
+            Some(&library),
+            &mut String::new(),
+            crate::data::DEFAULT_CANVAS_IMAGE_MAX_SIDE,
+        );
+        // Start the helper first, so no helper-ready event re-runs the search.
+        let warm_path = library
+            .store_rgba_image("warm", &[0, 0, 255, 255], 1, 1)
+            .unwrap();
+        let warm = library
+            .register_original(&warm_path, "image/png", 1, 1, 4, None)
+            .unwrap()
+            .id;
+        search.queue_asset_index(warm, warm_path).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while search.demand_embedding_pending_count() > 0 {
+            assert!(
+                Instant::now() < deadline,
+                "warm-up embedding did not finish"
+            );
+            search.handle_results();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        search.overlay.open = true;
+        search.open_image_pivot_search(crate::search::palette::ImageSearchPivot {
+            asset_id: source,
+            asset_preview_path: None,
+        });
+        // Hold the UI back until storage has the failure, so SourcePending
+        // and the embedding failure reach one handle_results call together.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while library
+            .next_embedding_retry_at_for_model(
+                crate::search::semantic::DEFAULT_SEMANTIC_SEARCH_MODEL.model_key,
+            )
+            .unwrap()
+            .is_none()
+        {
+            assert!(Instant::now() < deadline, "embedding did not fail");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            search.handle_results();
+            if !matches!(
+                search.overlay.status,
+                SearchOverlayStatus::Loading(_) | SearchOverlayStatus::Indexing
+            ) || Instant::now() >= deadline
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            matches!(
+                &search.overlay.status,
+                SearchOverlayStatus::Error(error) if error == "image could not be decoded"
+            ),
+            "palette must show the embedding failure"
+        );
     }
 
     #[test]
