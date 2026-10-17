@@ -250,16 +250,15 @@ unsafe fn extract_drop_payload(data_object: &IDataObject) -> super::NativeDropPa
         if !payload.paths.is_empty() {
             return payload;
         }
+        let mut urls = super::payload::DragUrls::default();
         for (text, kind) in drop_text_values(data_object) {
             match kind {
-                DropText::Url => super::payload::append_http_url(&text, &mut payload.urls),
-                DropText::Prose => {
-                    super::payload::append_http_urls_from_text(&text, &mut payload.urls)
-                }
+                DropText::Url => urls.append_url(&text),
+                DropText::Prose => urls.append_text(&text),
             }
         }
+        payload.urls = urls.best();
     }
-    payload.urls = super::payload::best_drag_image_urls(payload.urls);
     payload
 }
 
@@ -270,7 +269,8 @@ enum DropText {
     Prose,
 }
 
-// URL formats name the dragged object, so they come first and win selection ties.
+// URL formats name the dragged object, so they come first and win selection ties
+// among object URLs.
 unsafe fn drop_text_values(data_object: &IDataObject) -> Vec<(String, DropText)> {
     let mut values = Vec::new();
     for (format, utf16, kind) in [

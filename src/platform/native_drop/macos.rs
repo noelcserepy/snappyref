@@ -437,7 +437,7 @@ fn extract_pasteboard_payload(pasteboard: &NSPasteboard) -> (super::NativeDropPa
         return (payload, true);
     }
 
-    let mut urls = Vec::new();
+    let mut urls = super::payload::DragUrls::default();
     let mut should_claim_drag = true;
     if let Some(items) = unsafe { pasteboard.pasteboardItems() } {
         for item in items {
@@ -447,10 +447,11 @@ fn extract_pasteboard_payload(pasteboard: &NSPasteboard) -> (super::NativeDropPa
         if !payload.paths.is_empty() {
             return (payload, true);
         }
-        if !urls.is_empty() {
+        let best = urls.best();
+        if !best.is_empty() {
             return (
                 super::NativeDropPayload {
-                    urls: super::payload::best_drag_image_urls(urls),
+                    urls: best,
                     paths: Vec::new(),
                     screen_pos: None,
                 },
@@ -475,7 +476,7 @@ fn extract_pasteboard_payload(pasteboard: &NSPasteboard) -> (super::NativeDropPa
 
     (
         super::NativeDropPayload {
-            urls: super::payload::best_drag_image_urls(urls),
+            urls: urls.best(),
             paths: payload.paths,
             screen_pos: None,
         },
@@ -496,7 +497,7 @@ fn has_file_payload_on_pasteboard(pasteboard: &NSPasteboard) -> bool {
 
 fn extract_drag_urls_from_item(
     item: &objc2_app_kit::NSPasteboardItem,
-    urls: &mut Vec<String>,
+    urls: &mut super::payload::DragUrls,
 ) -> bool {
     let mut should_claim_drag = false;
     for pasteboard_type in types_by_authority(unsafe { item.types() }) {
@@ -512,8 +513,8 @@ fn extract_drag_urls_from_item(
     should_claim_drag
 }
 
-// The URL type names the dragged object, so its candidate comes first and wins
-// best_drag_image_urls ties. HTML and plain text only add page context.
+// The URL type names the dragged object, so it comes before HTML image sources
+// and wins DragUrls::best ties among object URLs.
 fn types_by_authority(
     types: Retained<NSArray<objc2_app_kit::NSPasteboardType>>,
 ) -> Vec<Retained<objc2_app_kit::NSPasteboardType>> {
@@ -538,12 +539,12 @@ fn types_by_authority(
 fn append_drag_urls(
     pasteboard_type: &objc2_app_kit::NSPasteboardType,
     value: &str,
-    urls: &mut Vec<String>,
+    urls: &mut super::payload::DragUrls,
 ) {
     if pasteboard_type.to_string() == unsafe { NSPasteboardTypeURL }.to_string() {
-        super::payload::append_http_url(value, urls);
+        urls.append_url(value);
     } else {
-        super::payload::append_http_urls_from_text(value, urls);
+        urls.append_text(value);
     }
 }
 
