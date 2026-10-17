@@ -440,9 +440,13 @@ pub fn show(
         }
     }
     state.prune_cached_pixels_to_selected_items();
-    // Snap guides show only while a held pointer drags, resizes, or places. A
-    // released gesture or a one-shot import layout leaves no guide behind.
-    if !ui.input(|i| i.pointer.primary_down()) {
+    // Snap guides belong to a running gesture or to provisional placements that
+    // still follow the pointer. A released gesture or a committed import layout
+    // leaves no guide behind.
+    if !state.interaction.guide_snap_indicators.is_empty()
+        && state.interaction.gesture.is_none()
+        && !state.has_provisional_placements()
+    {
         state.clear_guide_snap_indicators();
     }
 

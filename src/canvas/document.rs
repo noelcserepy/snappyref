@@ -39,6 +39,13 @@ impl CanvasState {
             - 1
     }
 
+    pub(crate) fn has_provisional_placements(&self) -> bool {
+        self.document
+            .placements
+            .iter()
+            .any(|image| image.lifecycle == PlacementLifecycle::Provisional)
+    }
+
     pub fn remove_provisional_placements(&mut self) -> Vec<i64> {
         let ids = self
             .document

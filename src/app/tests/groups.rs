@@ -1872,9 +1872,13 @@ fn inspect_group_after_snapped_import_writes_artifact() {
         None,
         crate::image_preparation::ImportOrigin::Existing,
     );
-    let dropped = ["dropped-a.png", "dropped-b.png"].map(|name| {
+    let dropped = [
+        ("dropped-a.png", [226, 160, 78, 255]),
+        ("dropped-b.png", [106, 176, 116, 255]),
+    ]
+    .map(|(name, color)| {
         let file = root.join(name);
-        image::RgbaImage::from_pixel(120, 90, image::Rgba([226, 160, 78, 255]))
+        image::RgbaImage::from_pixel(120, 90, image::Rgba(color))
             .save(&file)
             .unwrap();
         file
@@ -1911,7 +1915,20 @@ fn inspect_group_after_snapped_import_writes_artifact() {
     for _ in 0..5 {
         harness.step();
     }
-    scenario.assertion("drop selects both dropped placements", batch.len() == 2);
+    let dropped_names = batch
+        .iter()
+        .filter_map(|id| harness.state().canvas.placement_for_id(*id))
+        .filter_map(|placement| Some(placement.loaded_asset()?.filename.clone()))
+        .collect::<Vec<_>>();
+    scenario.fact("dropped selection", serde_json::json!(dropped_names));
+    // Stored filenames carry a unique prefix before the dropped name.
+    scenario.assertion(
+        "drop selects the two dropped images",
+        dropped_names.len() == 2
+            && ["-dropped-a.png", "-dropped-b.png"]
+                .iter()
+                .all(|name| dropped_names.iter().any(|stored| stored.ends_with(name))),
+    );
     scenario.capture_screen("screen-001-dropped", &mut harness);
     scenario.fact("guides after load", serde_json::json!(guides(&harness)));
 
