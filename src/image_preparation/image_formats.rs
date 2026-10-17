@@ -158,6 +158,7 @@ fn decode_image_bytes_with_path_hint(
     }
     if effective_path_hint.is_some_and(|path| path_extension_is(path, "jxl"))
         || mime_hint.is_some_and(mime_hint_is_jxl)
+        || bytes_have_jxl_signature(bytes)
     {
         return decode_jxl(bytes, file_size);
     }
@@ -279,6 +280,13 @@ fn mime_hint_is_jxl(mime_hint: &str) -> bool {
         .trim()
         .to_ascii_lowercase();
     mime == "image/jxl"
+}
+
+// The `image` crate cannot sniff JPEG XL, so check both of its signatures here.
+fn bytes_have_jxl_signature(bytes: &[u8]) -> bool {
+    const CODESTREAM_SIGNATURE: &[u8] = b"\xff\x0a";
+    const CONTAINER_SIGNATURE: &[u8] = b"\x00\x00\x00\x0cJXL \x0d\x0a\x87\x0a";
+    bytes.starts_with(CODESTREAM_SIGNATURE) || bytes.starts_with(CONTAINER_SIGNATURE)
 }
 
 fn guess_image_format(
@@ -1874,6 +1882,27 @@ static unsigned char sample_bits[] = { 0x01 };
         assert_eq!(decoded.format_name, "XBM");
         assert_eq!(decoded.width, 2);
         assert_eq!(decoded.height, 2);
+    }
+
+    #[test]
+    fn decode_image_bytes_detects_jxl_by_signature_without_hints() {
+        let codestream = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/images/formats/red-green.jxl"),
+        )
+        .unwrap();
+        let mut container = b"\x00\x00\x00\x0cJXL \x0d\x0a\x87\x0a".to_vec();
+        container.extend_from_slice(b"\x00\x00\x00\x14ftypjxl \x00\x00\x00\x00jxl ");
+        container.extend_from_slice(&(8 + codestream.len() as u32).to_be_bytes());
+        container.extend_from_slice(b"jxlc");
+        container.extend_from_slice(&codestream);
+
+        for (label, bytes) in [("codestream", codestream), ("container", container)] {
+            let decoded = decode_image_bytes_with_max_side(&bytes, None, None, None)
+                .unwrap_or_else(|error| panic!("{label}: {error}"));
+            assert_eq!(decoded.format_name, "JXL", "{label}");
+            assert_eq!(decoded.rgba, [255, 0, 0, 255, 0, 255, 0, 255], "{label}");
+        }
     }
 
     #[test]
