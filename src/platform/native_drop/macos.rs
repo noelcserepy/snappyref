@@ -551,7 +551,11 @@ fn extract_drag_urls_from_item_type(
     let Some(value) = (unsafe { item.stringForType(pasteboard_type) }) else {
         return should_claim_drag;
     };
-    super::payload::append_http_urls_from_text(&value.to_string(), urls);
+    if pasteboard_type.to_string() == unsafe { NSPasteboardTypeURL }.to_string() {
+        super::payload::append_http_url(&value.to_string(), urls);
+    } else {
+        super::payload::append_http_urls_from_text(&value.to_string(), urls);
+    }
     should_claim_drag
 }
 
@@ -601,7 +605,7 @@ mod tests {
             [
                 (
                     NSPasteboardTypeURL,
-                    "https://cdn.example.com/image?width=800",
+                    "https://cdn.example.com/image_(1)?width=800",
                 ),
                 (
                     NSPasteboardTypeHTML,
@@ -629,7 +633,7 @@ mod tests {
                 );
             } else {
                 let expected = if kind == unsafe { NSPasteboardTypeURL } {
-                    "https://cdn.example.com/image?width=800"
+                    "https://cdn.example.com/image_(1)?width=800"
                 } else {
                     "https://cdn.example.com/image.webp?width=800"
                 };

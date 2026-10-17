@@ -250,31 +250,58 @@ unsafe fn extract_drop_payload(data_object: &IDataObject) -> super::NativeDropPa
         if !payload.paths.is_empty() {
             return payload;
         }
-        for text in drop_text_values(data_object) {
-            super::payload::append_http_urls_from_text(&text, &mut payload.urls);
+        for (text, kind) in drop_text_values(data_object) {
+            match kind {
+                DropText::Url => super::payload::append_http_url(&text, &mut payload.urls),
+                DropText::Prose => {
+                    super::payload::append_http_urls_from_text(&text, &mut payload.urls)
+                }
+            }
         }
     }
     payload.urls = super::payload::best_drag_image_urls(payload.urls);
     payload
 }
 
-unsafe fn drop_text_values(data_object: &IDataObject) -> Vec<String> {
+#[derive(Clone, Copy)]
+enum DropText {
+    // Holds one complete URL, which may contain delimiters that end a URL in prose.
+    Url,
+    Prose,
+}
+
+// URL formats name the dragged object, so they come first and win selection ties.
+unsafe fn drop_text_values(data_object: &IDataObject) -> Vec<(String, DropText)> {
     let mut values = Vec::new();
-    for format in [
-        CF_UNICODETEXT,
-        registered_clipboard_format("UniformResourceLocatorW"),
-        registered_clipboard_format("UniformResourceLocator"),
-        registered_clipboard_format("text/html"),
-        registered_clipboard_format("HTML Format"),
+    for (format, utf16, kind) in [
+        (
+            registered_clipboard_format("UniformResourceLocatorW"),
+            true,
+            DropText::Url,
+        ),
+        (
+            registered_clipboard_format("UniformResourceLocator"),
+            false,
+            DropText::Url,
+        ),
+        (CF_UNICODETEXT, true, DropText::Prose),
+        (
+            registered_clipboard_format("text/html"),
+            false,
+            DropText::Prose,
+        ),
+        (
+            registered_clipboard_format("HTML Format"),
+            false,
+            DropText::Prose,
+        ),
     ] {
         if format == 0 {
             continue;
         }
-        let is_utf16 = format == CF_UNICODETEXT
-            || format == registered_clipboard_format("UniformResourceLocatorW");
         let value = unsafe {
             with_hglobal_data(data_object, format, |_hglobal, pointer, size| {
-                if is_utf16 {
+                if utf16 {
                     utf16_hglobal_text(pointer, size)
                 } else {
                     bytes_hglobal_text(pointer, size)
@@ -285,7 +312,7 @@ unsafe fn drop_text_values(data_object: &IDataObject) -> Vec<String> {
         if let Some(value) = value
             && !value.is_empty()
         {
-            values.push(value);
+            values.push((value, kind));
         }
     }
     values

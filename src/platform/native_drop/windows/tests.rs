@@ -268,7 +268,8 @@ fn verify_native_drop(check_desktop_cursor: bool) {
 // arrive only as a virtual FileGroupDescriptorW/FileContents file.
 fn chromium_image_drag() -> IDataObject {
     let format = |name: &str| unsafe { RegisterClipboardFormatW(wide(name).as_ptr()) as u16 };
-    let image = "https://cdn.example.com/photos/web-drop.png";
+    // Extensionless, like many CDN images, so it scores the same as the page.
+    let image = "https://images.example.com/photo_(1)?w=800";
     let fragment = format!(r#"<img src="{image}" alt="drop">"#);
     let html = format!(
         "Version:0.9\r\nStartHTML:0000000000\r\nEndHTML:0000000000\r\nStartFragment:0000000000\r\nEndFragment:0000000000\r\nSourceURL:https://example.com/gallery\r\n<html><body><!--StartFragment-->{fragment}<!--EndFragment--></body></html>\0"
@@ -359,7 +360,7 @@ fn app_window_bridge_accepts_browser_image_drags() {
     let received = browser_drop.received.unwrap();
     assert_eq!(
         received.urls,
-        ["https://cdn.example.com/photos/web-drop.png"]
+        ["https://images.example.com/photo_(1)?w=800"]
     );
     assert_eq!(received.paths, Vec::<PathBuf>::new());
 }
