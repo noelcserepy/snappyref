@@ -578,13 +578,12 @@ impl SearchController {
                         SearchOverlayStatus::Loading("Preparing semantic search…".to_owned());
                 }
             }
-            // The service is embedding the source image. Its Indexed or
-            // Failed result runs the search again. Loading keeps the palette
-            // polling until then.
+            // The service is embedding the source image. The request stays
+            // active, so the palette keeps polling, until the image's Indexed
+            // or Failed result replaces it with a new one.
             SearchQueryResult::SourcePending { request_id }
                 if Some(request_id) == active_request_id =>
             {
-                self.active_search = None;
                 self.overlay.status = SearchOverlayStatus::Loading("Indexing…".to_owned());
             }
             SearchQueryResult::Failed { request_id, error }
@@ -869,7 +868,10 @@ impl SearchController {
             }
             return;
         }
-        if matches!(self.overlay.status, SearchOverlayStatus::Error(_)) {
+        // An error, or a search still answering, keeps its status.
+        if matches!(self.overlay.status, SearchOverlayStatus::Error(_))
+            || self.active_search.is_some()
+        {
             return;
         }
 
@@ -1663,8 +1665,8 @@ mod tests {
         let root = TempRoot::new("snappyref-palette-polling");
         let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
 
-        // An image search waits while its source image is embedded, and an
-        // unrelated embedding failure leaves that wait alone.
+        // An image search waits while its source image is embedded, whatever
+        // else writes the palette's status meanwhile.
         let mut search = search_controller_for_library(library.clone());
         search.overlay.open = true;
         search.open_image_pivot_search(crate::search::palette::ImageSearchPivot {
@@ -1683,6 +1685,12 @@ mod tests {
             }],
             Vec::new(),
         );
+        // Other writers of the status: an import queues its embedding, and
+        // the user presses Mod+F again.
+        search
+            .queue_asset_index(10, std::path::PathBuf::from("/tmp/imported.png"))
+            .unwrap();
+        search.open_overlay_from_command();
         assert_eq!(
             crate::search::palette::palette_status_line(&search.overlay.status).1,
             "Indexing…"
