@@ -269,8 +269,6 @@ enum DropText {
     Prose,
 }
 
-// URL formats name the dragged object, so they come first and win selection ties
-// among object URLs.
 unsafe fn drop_text_values(data_object: &IDataObject) -> Vec<(String, DropText)> {
     let mut values = Vec::new();
     for (format, utf16, kind) in [

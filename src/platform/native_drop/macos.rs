@@ -463,7 +463,7 @@ fn extract_pasteboard_payload(pasteboard: &NSPasteboard) -> (super::NativeDropPa
     let Some(types) = (unsafe { pasteboard.types() }) else {
         return (super::NativeDropPayload::default(), should_claim_drag);
     };
-    for pasteboard_type in types_by_authority(types) {
+    for pasteboard_type in types {
         should_claim_drag |= is_claimable_drag_type(&pasteboard_type);
         if !is_text_pasteboard_type(&pasteboard_type) {
             continue;
@@ -500,7 +500,7 @@ fn extract_drag_urls_from_item(
     urls: &mut super::payload::DragUrls,
 ) -> bool {
     let mut should_claim_drag = false;
-    for pasteboard_type in types_by_authority(unsafe { item.types() }) {
+    for pasteboard_type in unsafe { item.types() } {
         should_claim_drag |= is_claimable_drag_type(&pasteboard_type);
         if !is_text_pasteboard_type(&pasteboard_type) {
             continue;
@@ -511,29 +511,6 @@ fn extract_drag_urls_from_item(
         append_drag_urls(&pasteboard_type, &value.to_string(), urls);
     }
     should_claim_drag
-}
-
-// The URL type names the dragged object, so it comes before HTML image sources
-// and wins DragUrls::best ties among object URLs.
-fn types_by_authority(
-    types: Retained<NSArray<objc2_app_kit::NSPasteboardType>>,
-) -> Vec<Retained<objc2_app_kit::NSPasteboardType>> {
-    let ranked = unsafe {
-        [
-            NSPasteboardTypeURL.to_string(),
-            NSPasteboardTypeHTML.to_string(),
-            NSPasteboardTypeString.to_string(),
-        ]
-    };
-    let mut types = types.into_iter().collect::<Vec<_>>();
-    types.sort_by_key(|pasteboard_type| {
-        let name = pasteboard_type.to_string();
-        ranked
-            .iter()
-            .position(|ranked| *ranked == name)
-            .unwrap_or(ranked.len())
-    });
-    types
 }
 
 fn append_drag_urls(
@@ -633,16 +610,20 @@ mod tests {
     }
 
     #[test]
-    fn url_type_outranks_page_links_offered_before_it() {
+    fn linked_image_drag_selects_the_img_source_over_the_link() {
         use objc2_app_kit::{NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeURL};
         use objc2_foundation::NSString;
+        // A linked image: the URL type names the link, the HTML the image.
         let image = "https://images.example.com/photo_(1)?w=800";
         let pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName() };
         unsafe {
             pasteboard.clearContents();
-            let html = format!(r#"<a href="https://example.com/gallery"><img src="{image}"></a>"#);
+            let html = format!(r#"<img src="{image}">"#);
             assert!(pasteboard.setString_forType(&NSString::from_str(&html), NSPasteboardTypeHTML));
-            assert!(pasteboard.setString_forType(&NSString::from_str(image), NSPasteboardTypeURL));
+            assert!(pasteboard.setString_forType(
+                &NSString::from_str("https://example.com/gallery"),
+                NSPasteboardTypeURL
+            ));
         }
         assert_eq!(
             super::extract_pasteboard_payload(&pasteboard).0.urls,
