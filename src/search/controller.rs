@@ -360,7 +360,15 @@ impl SearchController {
         };
         let index_results = service.try_recv_all();
         let search_results = service.try_recv_search_all();
+        self.apply_service_results(index_results, search_results);
+    }
 
+    /// Applies one frame's service answers.
+    fn apply_service_results(
+        &mut self,
+        index_results: Vec<SearchIndexResult>,
+        search_results: Vec<SearchQueryResult>,
+    ) {
         let mut refresh_active_query = false;
         let now = Instant::now();
         for result in index_results {
@@ -376,6 +384,9 @@ impl SearchController {
         }
 
         if refresh_active_query {
+            // The index changed under any search in flight, so its answer may
+            // be stale. A late answer to it is ignored.
+            self.active_search = None;
             self.submit_query();
         }
     }
@@ -1608,6 +1619,35 @@ mod tests {
             ),
             ..SearchController::default()
         }
+    }
+
+    #[test]
+    fn source_indexed_a_frame_before_its_pending_answer_still_runs_the_search() {
+        let root = TempRoot::new("snappyref-pivot-indexed-before-pending");
+        let library = crate::library::storage::Library::initialize(root.to_path_buf()).unwrap();
+        let mut search = search_controller_for_library(library);
+        search.overlay.open = true;
+        search.open_image_pivot_search(crate::search::palette::ImageSearchPivot {
+            asset_id: 7,
+            asset_preview_path: None,
+        });
+        let first = search.active_search.as_ref().unwrap().request_id;
+
+        search.apply_service_results(vec![SearchIndexResult::Indexed { asset_id: 7 }], Vec::new());
+        search.apply_service_results(
+            Vec::new(),
+            vec![SearchQueryResult::SourcePending { request_id: first }],
+        );
+
+        let rerun = search
+            .active_search
+            .as_ref()
+            .map(|search| search.request_id);
+        assert!(rerun.is_some_and(|rerun| rerun != first), "{rerun:?}");
+        assert!(matches!(
+            &search.overlay.status,
+            SearchOverlayStatus::Loading(message) if message == "Searching…"
+        ));
     }
 
     #[test]

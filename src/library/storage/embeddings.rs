@@ -1,8 +1,8 @@
 use super::boards::active_board_id;
 use super::connection::Library;
 use super::files::unix_timestamp_seconds;
-use rusqlite::params;
 use rusqlite::params_from_iter;
+use rusqlite::{OptionalExtension, params};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -378,6 +378,30 @@ impl Library {
 
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("failed to collect library embeddings: {error}"))
+    }
+
+    /// The stored error of the Asset's failed embedding while no retry is
+    /// due: a terminal failure, or a retryable one before `next_retry_at`.
+    pub fn asset_embedding_failure_before_retry(
+        &self,
+        asset_id: i64,
+        model_key: &str,
+        now: i64,
+    ) -> Result<Option<String>, String> {
+        let connection = self.connection()?;
+        connection
+            .query_row(
+                "SELECT COALESCE(last_error, 'embedding failed')
+                 FROM asset_embeddings
+                 WHERE asset_id = ?1
+                   AND model_key = ?2
+                   AND status = 'failed'
+                   AND (failure_kind = 'terminal' OR next_retry_at > ?3)",
+                params![asset_id, model_key, now],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("failed to read embedding failure: {error}"))
     }
 
     pub fn load_asset_embedding(

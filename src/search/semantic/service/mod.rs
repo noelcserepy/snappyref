@@ -1,7 +1,7 @@
 mod helper;
 use helper::{EmbeddingHelperClient, embed_image_in_helper, ensure_embedding_helper};
 pub(crate) use helper::{EmbeddingHelperLaunch, run_embed_image_server};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -164,7 +164,7 @@ impl SemanticSearchService {
         let (search_result_tx, search_result_rx) = mpsc::channel::<SearchQueryResult>();
         let model_state = Arc::new(Mutex::new(ModelState::Uninitialized));
         let text_embedding_cache = Arc::new(Mutex::new(HashMap::new()));
-        let search_source_embeddings = SearchSourceEmbeddings::default();
+        let search_source_embeddings = SearchSourceEmbeddings::new(config.model.model_key);
         let asset_index = AssetIndex::new(
             library.clone(),
             config.model.model_key,
@@ -477,18 +477,22 @@ fn process_index_request(
                 helper,
                 true,
             );
-            // Settled before the result, so a search it starts sees the outcome.
-            source_embeddings.settle(asset_id, indexed.as_ref().err());
-            if let Err(error) = indexed {
-                let _ = record_embedding_failure(worker_library, asset_id, model_spec, &error);
-                let _ = result_tx.send(IndexResult::Failed {
+            match &indexed {
+                Ok(()) => worker_index.refresh(),
+                Err(error) => {
+                    let _ = record_embedding_failure(worker_library, asset_id, model_spec, error);
+                }
+            }
+            // Finished once searches can see the outcome and before the result,
+            // so a search the result starts finds the embedding or its failure.
+            source_embeddings.finished(asset_id);
+            let _ = result_tx.send(match indexed {
+                Ok(()) => IndexResult::Indexed { asset_id },
+                Err(error) => IndexResult::Failed {
                     asset_id: Some(asset_id),
                     error,
-                });
-            } else {
-                worker_index.refresh();
-                let _ = result_tx.send(IndexResult::Indexed { asset_id });
-            }
+                },
+            });
         }
         IndexRequest::BackfillOne => {
             let now = unix_timestamp_seconds();
@@ -537,18 +541,23 @@ fn process_index_request(
     }
 }
 
-/// Source images that searches asked the index worker to embed, by Asset.
-/// A search asks once while the embedding runs. The next search after a
-/// failure answers with its error, and the one after that asks again.
-#[derive(Clone, Default)]
-struct SearchSourceEmbeddings(Arc<Mutex<HashMap<i64, SourceEmbedding>>>);
-
-enum SourceEmbedding {
-    Running,
-    Failed(String),
+/// Source images that searches asked the index worker to embed and that it
+/// has not finished. A search asks once while the embedding runs. A failed
+/// embedding follows the stored retry rules, so every waiter gets its error.
+#[derive(Clone)]
+struct SearchSourceEmbeddings {
+    model_key: &'static str,
+    running: Arc<Mutex<HashSet<i64>>>,
 }
 
 impl SearchSourceEmbeddings {
+    fn new(model_key: &'static str) -> Self {
+        Self {
+            model_key,
+            running: Arc::default(),
+        }
+    }
+
     /// What a search for an unindexed source answers.
     fn wait_for(
         &self,
@@ -556,19 +565,20 @@ impl SearchSourceEmbeddings {
         index_tx: &mpsc::Sender<IndexRequest>,
         asset_id: i64,
     ) -> SearchQueryError {
-        let Ok(mut sources) = self.0.lock() else {
+        let Ok(mut running) = self.running.lock() else {
             return SearchQueryError::Failed("semantic-search source embeddings poisoned".into());
         };
-        match sources.remove(&asset_id) {
-            Some(SourceEmbedding::Failed(error)) => return SearchQueryError::Failed(error),
-            Some(SourceEmbedding::Running) => {
-                sources.insert(asset_id, SourceEmbedding::Running);
-                return SearchQueryError::SourcePending;
-            }
-            None => {}
+        if running.contains(&asset_id) {
+            return SearchQueryError::SourcePending;
         }
         let request = library
-            .asset_original_paths_for_assets(&[asset_id])
+            .asset_embedding_failure_before_retry(
+                asset_id,
+                self.model_key,
+                unix_timestamp_seconds(),
+            )
+            .and_then(|failure| failure.map_or(Ok(()), Err))
+            .and_then(|()| library.asset_original_paths_for_assets(&[asset_id]))
             .and_then(|mut paths| {
                 paths
                     .remove(&asset_id)
@@ -584,26 +594,16 @@ impl SearchSourceEmbeddings {
             });
         match request {
             Ok(()) => {
-                sources.insert(asset_id, SourceEmbedding::Running);
+                running.insert(asset_id);
                 SearchQueryError::SourcePending
             }
             Err(error) => SearchQueryError::Failed(error),
         }
     }
 
-    /// Records how an embedding a search asked for ended. Other embeddings
-    /// leave no record.
-    fn settle(&self, asset_id: i64, error: Option<&String>) {
-        let Ok(mut sources) = self.0.lock() else {
-            return;
-        };
-        match error {
-            Some(error) if sources.contains_key(&asset_id) => {
-                sources.insert(asset_id, SourceEmbedding::Failed(error.clone()));
-            }
-            _ => {
-                sources.remove(&asset_id);
-            }
+    fn finished(&self, asset_id: i64) {
+        if let Ok(mut running) = self.running.lock() {
+            running.remove(&asset_id);
         }
     }
 }
@@ -1045,18 +1045,21 @@ mod tests {
         assert!(service.try_recv_all().is_empty());
         assert_eq!(search(3, source), Ok(vec![near]));
 
+        // Storage retries a first failure at once and a second after 5 minutes.
         assert_eq!(search(4, broken), Err("pending".to_owned()));
         index_results_until_settled(broken);
-        assert_eq!(
-            search(5, broken),
-            Err("image could not be decoded".to_owned())
-        );
-        // The failure is reported once. The next search embeds again.
-        assert_eq!(search(6, broken), Err("pending".to_owned()));
+        assert_eq!(search(5, broken), Err("pending".to_owned()));
         assert_eq!(
             embedding_starts(&index_results_until_settled(broken)),
             vec![broken]
         );
+        for request_id in [6, 7] {
+            assert_eq!(
+                search(request_id, broken),
+                Err("image could not be decoded".to_owned())
+            );
+        }
+        assert!(service.try_recv_all().is_empty());
     }
 
     #[test]
