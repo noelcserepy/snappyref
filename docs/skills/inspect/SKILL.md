@@ -52,7 +52,9 @@ docs/skills/inspect/scripts/doctor.sh
 ```
 
 It exits 1 when `CARGO_TARGET_DIR` points outside this checkout. In that case a
-different worktree's binary would answer for this one, so unset it. It also
+different worktree's binary would answer for this one, so unset it. A target
+that no other checkout uses while this one runs is safe. Mark it with
+`SNAPPYREF_EXCLUSIVE_TARGET=1` and the doctor and runner accept it. It also
 lists test binaries and debug-build apps from this checkout that are still
 running, and prints the latest artifact and its status.
 

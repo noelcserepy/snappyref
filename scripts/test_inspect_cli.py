@@ -33,10 +33,8 @@ mode = os.environ['EVIDENCE_MODE']
 if mode == 'missing':
     sys.exit(0)
 scenario = os.environ['ARTIFACT_SCENARIO']
-target = pathlib.Path(os.environ.get('CARGO_TARGET_DIR', 'target'))
-if target.is_absolute():
-    sys.exit(7)
-folder = root / target / 'snappyref-inspect' / scenario
+target = root / os.environ.get('CARGO_TARGET_DIR', 'target')
+folder = target / 'snappyref-inspect' / scenario
 artifact = folder / 'run-1'
 artifact.mkdir(parents=True, exist_ok=True)
 frame = artifact / 'frame.png'
@@ -88,6 +86,12 @@ if mode == 'stale':
             self.assertEqual(result.returncode, 1)
             self.assertIn('CARGO_TARGET_DIR points outside this checkout', result.stdout)
             self.assertFalse((root / 'arguments.json').exists())
+            with tempfile.TemporaryDirectory() as slot:
+                slot = Path(slot).resolve()
+                result = subprocess.run(['bash', str(runner), 'sample-image-import'],
+                                        env={**env, 'CARGO_TARGET_DIR': str(slot), 'SNAPPYREF_EXCLUSIVE_TARGET': '1', 'EVIDENCE_MODE': 'fresh'}, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f'artifact={slot / "snappyref-inspect/sample-image-import/run-1"}\n', result.stdout)
             result = subprocess.run(['bash', str(runner), 'unknown'], env=env, capture_output=True)
             self.assertEqual(result.returncode, 2)
 

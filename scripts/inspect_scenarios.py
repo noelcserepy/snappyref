@@ -72,8 +72,9 @@ def inspect_root(root=ROOT):
     # Mirrors inspect_artifact_dir in src/app/tests/support.rs.
     target = Path(os.environ.get('CARGO_TARGET_DIR', 'target'))
     target = (target if target.is_absolute() else root / target).resolve()
-    if not target.is_relative_to(root.resolve()):
-        raise RuntimeError('CARGO_TARGET_DIR points outside this checkout; unset it')
+    # SNAPPYREF_EXCLUSIVE_TARGET=1 says no other checkout builds into this target while this one uses it.
+    if not target.is_relative_to(root.resolve()) and os.environ.get('SNAPPYREF_EXCLUSIVE_TARGET') != '1':
+        raise RuntimeError('CARGO_TARGET_DIR points outside this checkout; unset it, or set SNAPPYREF_EXCLUSIVE_TARGET=1 if no other checkout uses it')
     return target / 'snappyref-inspect'
 
 
