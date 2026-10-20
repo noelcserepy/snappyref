@@ -13,11 +13,18 @@ echo "checkout=$repo_root"
 echo "head=$(git -C "$repo_root" rev-parse --short HEAD)$(git -C "$repo_root" diff --quiet HEAD || echo ' (uncommitted changes)')"
 echo "artifacts=$target_dir/snappyref-inspect"
 
-resolved_target="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$target_dir")"
-resolved_root="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$repo_root")"
-# SNAPPYREF_EXCLUSIVE_TARGET=1 says no other checkout builds into this target while this one uses it.
-if [[ "$resolved_target" != "$resolved_root"/* && "${SNAPPYREF_EXCLUSIVE_TARGET:-}" != 1 ]]; then
-  echo "problem: CARGO_TARGET_DIR points outside this checkout; another worktree's binaries can answer for this one. Unset it, or set SNAPPYREF_EXCLUSIVE_TARGET=1 if no other checkout uses it."
+# inspect_root owns which targets this checkout may build into.
+problem="$(python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from inspect_scenarios import inspect_root
+try:
+    inspect_root()
+except RuntimeError as error:
+    print(error)
+' "$repo_root/scripts")"
+if [[ -n "$problem" ]]; then
+  echo "problem: $problem"
   status=1
 fi
 

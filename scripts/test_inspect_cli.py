@@ -56,6 +56,7 @@ if mode == 'stale':
             cargo.chmod(0o755)
             env = dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}', ARTIFACT_SCENARIO='sample-image-import')
             env.pop('CARGO_TARGET_DIR', None)
+            env.pop('SNAPPYREF_EXCLUSIVE_TARGET', None)
             for mode in ('fresh', 'missing', 'stale', 'cargo-failure', 'wrong-scenario', 'corrupt'):
                 with self.subTest(mode=mode):
                     shutil.rmtree(root / 'target', ignore_errors=True)
