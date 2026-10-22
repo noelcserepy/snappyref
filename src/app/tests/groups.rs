@@ -261,13 +261,7 @@ fn inspect_group_operations_writes_artifact() {
             && geometries(&harness) == detached_geometry,
     );
     let last_member = center(&harness, ids[0]);
-    for _ in 0..40 {
-        harness.step();
-    }
-    for _ in 0..2 {
-        inspect_click_at(&harness, last_member, egui::Modifiers::NONE);
-        harness.step();
-    }
+    inspect_double_click_at(&mut harness, last_member);
     let last_drop = last_member + egui::vec2(250.0, 0.0);
     scenario.action("drag last member outside Group", last_drop);
     drag(&mut harness, last_member, last_drop, egui::Modifiers::NONE);
@@ -288,13 +282,7 @@ fn inspect_group_operations_writes_artifact() {
     shortcut(&mut harness, CMD, egui::Key::Z);
     // Continue the existing Group controls checks after restoring the members.
     let member = center(&harness, ids[0]);
-    for _ in 0..40 {
-        harness.step();
-    }
-    for _ in 0..2 {
-        inspect_click_at(&harness, member, egui::Modifiers::NONE);
-        harness.step();
-    }
+    inspect_double_click_at(&mut harness, member);
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::Escape);
     scenario.assertion(
         "Escape returns to Group selection",
