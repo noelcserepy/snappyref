@@ -2968,7 +2968,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
     });
 
     let mut harness = app_full_harness(app);
-    harness.get_by_label("Search").click();
+    harness.get_by_label("SEMANTIC SEARCH").scroll_to_me();
     harness.run();
     scenario.capture_screen("screen-000-before-install", &mut harness);
     scenario.fact(
