@@ -3,6 +3,9 @@
 # that status.
 param([Parameter(Mandatory)][int]$TimeoutSeconds)
 
+# Windows PowerShell reads and writes the ANSI and OEM code pages by default;
+# everything that crosses to the Mac is UTF-8.
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
 $taskName = 'SnappyRefAgentUi'
 $done = Join-Path $PSScriptRoot 'done.txt'
 $log = Join-Path $PSScriptRoot 'step.log'

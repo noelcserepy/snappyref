@@ -15,6 +15,11 @@ ADAPTERS = r'''
 function Add-Type {}
 class SnappyRefUi { static [bool] SetProcessDPIAware() { return $true } }
 function Set-Location { param($Path) }
+# Windows PowerShell 5.1 reads a file without a BOM in the ANSI code page.
+function Get-Content {
+    param($Path, [switch]$Raw, $Encoding = [Text.Encoding]::Latin1)
+    Microsoft.PowerShell.Management\Get-Content -Path $Path -Raw:$Raw -Encoding $Encoding
+}
 function Join-Path {
     param($Path, $ChildPath)
     if ($Path -like 'C:\*') { "$Path\$ChildPath" }
@@ -122,7 +127,7 @@ class WindowsUiTests(unittest.TestCase):
                         TASK_LOG=str(self.task_log), SESSION_STATE='signed-in',
                         SNAPPYREF_WINDOWS_ENV=str(self.root / 'no-env-file'),
                         SNAPPYREF_WINDOWS_HOST='windows-host-placeholder',
-                        SNAPPYREF_WINDOWS_REPO=r'C:\checkout-placeholder',
+                        SNAPPYREF_WINDOWS_REPO=r'C:\Users\José\checkout',
                         USERNAME='account-placeholder', USERDOMAIN='WORKGROUP')
 
     def run_ui(self, *args):
@@ -163,8 +168,8 @@ class WindowsUiTests(unittest.TestCase):
         result = self.run_ui('windows-launch-gui.sh')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(self.launch_log.read_text()), {
-            'executable': r'C:\checkout-placeholder\target\release-fast\snappyref.exe',
-            'directory': r'C:\checkout-placeholder',
+            'executable': r'C:\Users\José\checkout\target\release-fast\snappyref.exe',
+            'directory': r'C:\Users\José\checkout',
         })
         self.assertEqual(self.tasks(), ['register SnappyRefAgentUi Interactive',
                                         'unregister SnappyRefAgentUi'])

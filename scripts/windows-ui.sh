@@ -41,7 +41,8 @@ finish() {
 trap finish EXIT
 
 cp "$script_dir"/windows-ui/{run,host,app}.ps1 "$stage/"
-cp "$step" "$stage/step.ps1"
+# Windows PowerShell parses a script as UTF-8 only when it starts with a BOM.
+{ printf '\xef\xbb\xbf'; LC_ALL=C sed $'1s/^\xef\xbb\xbf//' "$step"; } >"$stage/step.ps1"
 printf '%s' "$SNAPPYREF_WINDOWS_REPO" >"$stage/repo.txt"
 scp -rq "$stage" "$SNAPPYREF_WINDOWS_HOST:$remote_dir"
 

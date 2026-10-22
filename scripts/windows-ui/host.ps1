@@ -7,7 +7,7 @@ $env:SNAPPYREF_UI_CAPTURES = Join-Path $PSScriptRoot 'captures'
 $status = 1
 try {
     New-Item -ItemType Directory -Force $env:SNAPPYREF_UI_CAPTURES | Out-Null
-    $env:SNAPPYREF_WINDOWS_REPO = Get-Content (Join-Path $PSScriptRoot 'repo.txt') -Raw
+    $env:SNAPPYREF_WINDOWS_REPO = Get-Content (Join-Path $PSScriptRoot 'repo.txt') -Raw -Encoding UTF8
     Set-Location $env:SNAPPYREF_WINDOWS_REPO
     . (Join-Path $PSScriptRoot 'app.ps1')
     $global:LASTEXITCODE = 0
