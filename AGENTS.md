@@ -27,9 +27,9 @@ another and corrupts test results.
 
 ```sh
 cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
-python3 -m unittest discover -s scripts -p 'test_*.py'
+cargo clippy --quiet --locked --all-targets -- -D warnings
+cargo test --quiet --locked
+python3 -m unittest discover --buffer -s scripts -p 'test_*.py'
 docs/skills/inspect/scripts/run-scenario.sh --list
 docs/skills/inspect/scripts/run-scenario.sh <scenario>
 ```

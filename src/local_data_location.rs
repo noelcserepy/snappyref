@@ -200,9 +200,12 @@ mod tests {
                     .env("LOCALAPPDATA", &*root)
                     .env("XDG_DATA_HOME", &*root);
             }
+            let output = child.output().unwrap();
             assert!(
-                child.status().unwrap().success(),
-                "{kind} root resolution failed"
+                output.status.success(),
+                "{kind} root resolution failed:\n{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
             );
         }
     }

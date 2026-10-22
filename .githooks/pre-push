@@ -19,16 +19,20 @@ done
 # scratch directory would otherwise write to the pushing repository's config.
 unset $(git rev-parse --local-env-vars)
 
-echo "[pre-push] cargo fmt --check"
-cargo fmt --check
+# A passing check prints only its name, so a reader of a passing push sees one
+# line per check. A failing check prints everything it wrote.
+check() {
+  echo "[pre-push] $*"
+  local output
+  if ! output=$("$@" 2>&1); then
+    printf '%s\n' "$output"
+    exit 1
+  fi
+}
 
-echo "[pre-push] cargo clippy --locked --all-targets -- -D warnings"
-cargo clippy --locked --all-targets -- -D warnings
-
-echo "[pre-push] cargo test --locked"
-cargo test --locked
-
-echo "[pre-push] Python script tests"
-python3 -m unittest discover -s scripts -p 'test_*.py'
+check cargo fmt --check
+check cargo clippy --quiet --locked --all-targets -- -D warnings
+check cargo test --quiet --locked
+check python3 -m unittest discover --buffer -s scripts -p 'test_*.py'
 
 echo "[pre-push] ok"
