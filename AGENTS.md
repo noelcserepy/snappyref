@@ -37,7 +37,10 @@ docs/skills/inspect/scripts/run-scenario.sh <scenario>
 The [pre-push hook](.githooks/pre-push) runs fmt, clippy, Rust tests, and Python
 script tests in that order and stops at the first failure. Rust tests include
 every non-ignored inspect scenario and the helper subprocess tests. Ref-deletion
-pushes and branches without Cargo.toml skip the checks. Hook setup is in the
+pushes and branches without Cargo.toml skip the checks. Before those, every push,
+`pr-assets` included, runs [check-private-values.py](scripts/check-private-values.py).
+It refuses new commits that contain the values in the private `.env.windows` or
+`$HOME`, so it can only run locally. Hook setup is in the
 [README](README.md#development-checks).
 
 [CI](.github/workflows/ci.yml) runs the same checks on macOS for every pull request in about 2-3 minutes.
