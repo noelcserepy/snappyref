@@ -197,7 +197,6 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
     let mut scenario = InspectScenario::new("annotation-editing");
     let root = TempRoot::new("snappyref-release-annotations");
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    // Press/release frames must fit egui's double-click interval.
     let mut harness = app_full_harness_with_step_dt(test_app(Some(library)), 1. / 60.);
     let screen = test_screen_rect();
     let center = screen.center();
@@ -517,21 +516,7 @@ fn inspect_annotation_creation_editing_and_styles_writes_artifact() {
         (moved.start() - label.start() - egui::vec2(-30., 50.)).length() < 1.,
     );
     let text_point = inspect_world_to_screen(moved.start().lerp(moved.end(), 0.5), screen);
-    for _ in 0..40 {
-        harness.step();
-    }
-    harness.hover_at(text_point);
-    for _ in 0..2 {
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton {
-                pos: text_point,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            });
-            harness.step();
-        }
-    }
+    inspect_double_click_at(&mut harness, text_point);
     scenario.assertion(
         "double click edits the moved label",
         harness.ctx.egui_wants_keyboard_input(),

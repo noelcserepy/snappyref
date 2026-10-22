@@ -120,19 +120,7 @@ fn inspect_annotation_board_writes_artifact() {
     scenario.capture_screen("selected-rectangle", &mut harness);
 
     let ridge_center = center_of(&harness, ridge);
-    // Wait out the last click so the next two read as a double-click.
-    settle_at(&mut harness, None, ridge_center);
-    for _ in 0..2 {
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton {
-                pos: ridge_center,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            });
-            harness.step();
-        }
-    }
+    inspect_double_click_at(&mut harness, ridge_center);
     shortcut(&mut harness, egui::Modifiers::NONE, egui::Key::End);
     harness.event(egui::Event::Text(" at dusk".into()));
     settle_at(&mut harness, None, empty);

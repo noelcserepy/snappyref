@@ -13,11 +13,11 @@ use support::{
     add_loaded_record, app_full_harness, app_full_harness_with_startup,
     app_full_harness_with_step_dt, app_harness, compact_selection_fact, drag_test_pos,
     dropped_file, inspect_bright_red_pixels_in_rect, inspect_click_at, inspect_command_modifier,
-    inspect_placement, inspect_pos, inspect_prepared_loaded_placement, inspect_rect,
-    inspect_search_result_entry, inspect_search_result_tile_center, inspect_status_slug,
-    inspect_wait_for_search_previews, inspect_world_to_screen, key_press_input, loaded_record,
-    persisted_loaded_item, render_sidebar_for_test, solid_rgba, test_app, test_canvas_annotation,
-    test_loaded_item, test_screen_rect, test_viewport_world,
+    inspect_double_click_at, inspect_placement, inspect_pos, inspect_prepared_loaded_placement,
+    inspect_rect, inspect_search_result_entry, inspect_search_result_tile_center,
+    inspect_status_slug, inspect_wait_for_search_previews, inspect_world_to_screen,
+    key_press_input, loaded_record, persisted_loaded_item, render_sidebar_for_test, solid_rgba,
+    test_app, test_canvas_annotation, test_loaded_item, test_screen_rect, test_viewport_world,
 };
 
 use super::perf_scenario::{EmbeddingPhaseMarkers, ModelLoadTimingSummary};

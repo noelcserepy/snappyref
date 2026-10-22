@@ -230,6 +230,10 @@ harness.drop_at(target);
 harness.step();
 ```
 
+Double-click with `inspect_double_click_at(&mut harness, pos)`. It waits out
+egui's click history first, so an earlier click cannot turn it into a triple
+click. It needs a harness step dt under 0.15 s, such as `1.0 / 60.0`.
+
 Use `harness.step()` for held input, animations, downloads, imports, search
 progress, and anything that intentionally keeps repainting. Use `harness.run()`
 only when the UI should settle.

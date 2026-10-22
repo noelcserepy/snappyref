@@ -192,28 +192,7 @@ fn inspect_group_operations_writes_artifact() {
 
     let member = center(&harness, ids[0]);
     scenario.action("double click member to edit", member);
-    harness.hover_at(member);
-    for _ in 0..40 {
-        harness.step();
-    }
-    for _ in 0..2 {
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton {
-                pos: member,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            });
-            harness.step();
-            scenario.event("member-pointer", serde_json::json!({ "pressed": pressed, "time": harness.ctx.input(|i| i.time), "double": harness.ctx.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)), "click": harness.ctx.input(|i| i.pointer.any_click()), "groups": harness.state().canvas.selected_group_ids(), "placements": harness.state().canvas.selected_placement_ids() }));
-        }
-    }
-    scenario.event("member-double-click-state", serde_json::json!({
-        "pointer_double_clicked": harness.ctx.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)),
-        "selected_placements": harness.state().canvas.selected_placement_ids(),
-        "selected_groups": harness.state().canvas.selected_group_ids(),
-        "member_screen": [member.x,member.y],
-    }));
+    inspect_double_click_at(&mut harness, member);
     scenario.capture_screen("screen-002-member-edit", &mut harness);
     scenario.assertion(
         "double click selects one member",

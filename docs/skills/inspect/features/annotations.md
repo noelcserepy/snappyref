@@ -99,8 +99,7 @@ Preconditions:
 - The HUD lasts about a second at 60 steps a second. Capture it within 60
   steps of the key, and wait it out before a frame that should show the key
   row.
-- Two clicks within egui's double-click interval of an earlier click read as a
-  triple click. Let a few frames pass before a scripted double-click.
+- Double-click a label with `inspect_double_click_at`.
 - Dragging the end of an unselected line moves the whole line. Select the line
   first.
 - Draw keys are ignored while a text field has focus. Typing T in a label types
