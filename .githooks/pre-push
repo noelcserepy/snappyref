@@ -15,6 +15,10 @@ while read -r _ local_sha _ _; do
 done
 (( pushes_code )) || exit 0
 
+# Git exports GIT_DIR and friends to hooks. A check that runs `git init` in a
+# scratch directory would otherwise write to the pushing repository's config.
+unset $(git rev-parse --local-env-vars)
+
 echo "[pre-push] cargo fmt --check"
 cargo fmt --check
 
