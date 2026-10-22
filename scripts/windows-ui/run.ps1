@@ -1,7 +1,7 @@
 # Runs over SSH. Starts host.ps1 on the signed-in desktop as a scheduled task,
 # waits for the exit status it records, prints the step's log and exits with
 # that status.
-param([int]$TimeoutSeconds = 120)
+param([Parameter(Mandatory)][int]$TimeoutSeconds)
 
 $taskName = 'SnappyRefAgentUi'
 $done = Join-Path $PSScriptRoot 'done.txt'
@@ -25,9 +25,14 @@ if ($signedIn.Count -eq 0) {
     Fail 'No signed-in interactive session is available. Sign in at the PC first.'
 }
 
-# One step at a time owns the desktop's mouse and keyboard.
+# One step at a time owns the desktop's mouse and keyboard, and with it the
+# task. Windows releases the mutex when this process exits, however it exits.
+$desktop = New-Object Threading.Mutex($false, 'Global\SnappyRefAgentUi')
+try { $owned = $desktop.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
+if (-not $owned) { Fail 'Another step is running on the desktop.' }
+# A run that lost its SSH connection can leave its step running.
 if ((Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue).State -eq 'Running') {
-    Fail "Another step is running on the desktop. Stop it with Stop-ScheduledTask $taskName."
+    Fail "An earlier step is still running. Stop it with Stop-ScheduledTask $taskName."
 }
 
 $hostScript = Join-Path $PSScriptRoot 'host.ps1'
@@ -41,15 +46,15 @@ try {
     while (-not (Test-Path $done) -and (Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 250
     }
-    $stillRunning = (Get-ScheduledTask -TaskName $taskName).State -eq 'Running'
-    if ($stillRunning) { Stop-ScheduledTask -TaskName $taskName }
+    $timedOut = -not (Test-Path $done) -and (Get-ScheduledTask -TaskName $taskName).State -eq 'Running'
+    if ($timedOut) { Stop-ScheduledTask -TaskName $taskName }
 } finally {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
 }
 
 if (Test-Path $log) { Get-Content $log }
 if (-not (Test-Path $done)) {
-    if ($stillRunning) { Fail "Step timed out after $TimeoutSeconds s." 124 }
+    if ($timedOut) { Fail "Step timed out after $TimeoutSeconds s." 124 }
     Fail 'Step ended without recording an exit status.'
 }
 $status = (Get-Content $done -Raw).Trim()

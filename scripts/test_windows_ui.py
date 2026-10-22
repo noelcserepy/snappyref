@@ -65,7 +65,7 @@ function Unregister-ScheduledTask { param($TaskName, $Confirm) $global:task = $n
 '''
 
 POWERSHELL = r'''#!/usr/bin/env python3
-import os, subprocess, sys
+import os, subprocess, sys, time
 args = sys.argv[1:]
 prelude = f". '{os.environ['PS_ADAPTERS']}'"
 if '-File' in args:
@@ -74,7 +74,11 @@ if '-File' in args:
     body = f"{prelude}; & '{script}' {' '.join(args[at + 2:])}; exit $LASTEXITCODE"
 else:
     body = f"{prelude}; {args[args.index('-Command') + 1]}"
-sys.exit(subprocess.run([os.environ['REAL_PWSH'], '-NoProfile', '-Command', body]).returncode)
+status = subprocess.run([os.environ['REAL_PWSH'], '-NoProfile', '-Command', body]).returncode
+if '-File' in args and script.endswith('host.ps1'):
+    # A process can outlive the status it has already recorded.
+    time.sleep(float(os.environ.get('HOST_EXIT_DELAY', '0')))
+sys.exit(status)
 '''
 
 SSH = r'''#!/usr/bin/env python3
@@ -142,7 +146,7 @@ class WindowsUiTests(unittest.TestCase):
             ('other-owner', 'Sign in at the PC first.'),
             ('other-process', 'Sign in at the PC first.'),
             ('session-zero', 'Sign in at the PC first.'),
-            ('busy', 'Another step is running on the desktop.'),
+            ('busy', 'An earlier step is still running.'),
         ]:
             with self.subTest(state=state):
                 busy = state == 'busy'
@@ -155,7 +159,7 @@ class WindowsUiTests(unittest.TestCase):
                 self.assert_nothing_left_on_the_pc()
 
         # USERDOMAIN reads WORKGROUP over SSH, as on the real PC; the account still matches.
-        self.env.update(SESSION_STATE='signed-in', TASK_BUSY='')
+        self.env.update(SESSION_STATE='signed-in', TASK_BUSY='', HOST_EXIT_DELAY='1')
         result = self.run_ui('windows-launch-gui.sh')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(self.launch_log.read_text()), {
@@ -185,6 +189,32 @@ class WindowsUiTests(unittest.TestCase):
         self.assertIn('before', result.stdout)
         self.assertIn('ERROR: boom', result.stdout)
         self.assertNotIn('Captures:', result.stdout)
+        self.assert_nothing_left_on_the_pc()
+
+    def test_refuses_a_second_step_while_one_holds_the_desktop(self):
+        started = self.root / 'started'
+        first = subprocess.Popen(
+            ['bash', str(ROOT / 'scripts' / 'windows-ui.sh'),
+             self.step(f'Set-Content "{started}" yes\nStart-Sleep -Seconds 4\n"first done"\n')],
+            cwd=ROOT, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.addCleanup(first.kill)
+        for _ in range(200):
+            if started.exists() or first.poll() is not None:
+                break
+            subprocess.run(['sleep', '0.1'])
+        second_step = self.root / 'second.ps1'
+        second_step.write_text('"second ran"\n')
+
+        second = self.run_ui('windows-ui.sh', str(second_step))
+        out, err = first.communicate(timeout=60)
+
+        self.assertEqual(second.returncode, 1, second.stderr)
+        self.assertIn('Another step is running on the desktop.', second.stderr)
+        self.assertNotIn('second ran', second.stdout)
+        self.assertEqual(first.returncode, 0, err)
+        self.assertIn('first done', out)
+        self.assertEqual(self.tasks(), ['register SnappyRefAgentUi Interactive',
+                                        'unregister SnappyRefAgentUi'])
         self.assert_nothing_left_on_the_pc()
 
     def test_stops_a_stalled_step_at_the_timeout(self):
