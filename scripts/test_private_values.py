@@ -77,6 +77,17 @@ class PrivateValuesPushTests(unittest.TestCase):
         self.assertEqual(push.returncode, 1)
         self.assertIn('café notes.md:2: SNAPPYREF_WINDOWS_HOST', push.stderr)
 
+    def test_takes_a_submodule_entry_and_still_reads_the_files_beside_it(self):
+        head = self.git('rev-parse', 'HEAD').stdout.strip()
+        self.git('update-index', '--add', '--cacheinfo', f'160000,{head},dependency')
+        self.commit('beside.md', 'pc-hidden-alias\n', 'Add dependency')
+
+        self.assertIn('beside.md:1: SNAPPYREF_WINDOWS_HOST',
+                      self.git('push', 'origin', 'main').stderr)
+        (self.repo / 'beside.md').write_text('clean\n')
+        self.git('commit', '-qa', '--amend', '--no-edit')
+        self.assertEqual(self.git('push', 'origin', 'main').returncode, 0)
+
     def test_does_not_rescan_commits_the_remote_already_has(self):
         self.commit('old.md', 'pc-hidden-alias\n', 'Old leak')
         self.assertEqual(self.git('push', '--no-verify', 'origin', 'main').returncode, 0)

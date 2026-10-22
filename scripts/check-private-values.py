@@ -58,11 +58,17 @@ def new_commits(lines):
     return text(git('rev-list', *tips, '--not', '--remotes')).split()
 
 
-def changed_paths(commit):
+def changed_files(commit):
+    """(path, blob) for each file the commit adds or changes, gitlinks left out."""
     # -z keeps paths raw, so no quoting or diff prefix setting can hide one.
-    listed = git('diff-tree', '-r', '-m', '-z', '--root', '--no-commit-id', '--name-only',
-                 '--diff-filter=d', commit)
-    return sorted({path for path in listed.split(b'\0') if path})
+    raw = git('diff-tree', '-r', '-m', '-z', '--root', '--no-commit-id', '--diff-filter=d',
+              commit).split(b'\0')
+    files = set()
+    for header, path in zip(raw[0::2], raw[1::2]):
+        _, mode, _, blob, _ = header.split()
+        if mode != b'160000':
+            files.add((path, blob.decode()))
+    return sorted(files)
 
 
 def leaks(commit, values):
@@ -72,8 +78,8 @@ def leaks(commit, values):
 
     for label in hits(text(git('show', '-s', '--format=%B', commit))):
         yield f'{commit[:7]} commit message: {label}'
-    for path in changed_paths(commit):
-        data = git('cat-file', 'blob', f'{commit}:'.encode() + path)
+    for path, blob in changed_files(commit):
+        data = git('cat-file', 'blob', blob)
         if b'\0' in data:
             continue
         for line_no, line in enumerate(text(data).splitlines(), 1):
