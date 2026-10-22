@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Refuse a push whose new commits contain this machine's private values.
+"""Refuse a push whose new commits publish this machine's private values or
+any image outside the repo's asset folders.
 
 Reads pre-push lines (`<local ref> <local sha> <remote ref> <remote sha>`) on
-stdin and scans each commit not yet on any remote: its message and the text
-files it adds or changes. The values are `$HOME` and the SNAPPYREF_WINDOWS_*
+stdin and scans each commit not yet on any remote: its message and the files
+it adds or changes. The values are `$HOME` and the SNAPPYREF_WINDOWS_*
 settings that windows-env.sh loads from the private `.env.windows`, so only
 this machine can run the check. Output names the place, never the value.
+
+Screenshots stay with the agent and the user. When the user wants one on
+GitHub, they upload it to the PR themselves.
 """
 import os
 import re
@@ -16,6 +20,8 @@ from pathlib import Path
 ZERO = re.compile(r'^0+$')
 WINDOWS_ENV = Path(__file__).resolve().parent / 'windows-env.sh'
 MIN_LENGTH = 6
+IMAGE = re.compile(r'\.(png|jpe?g|gif|webp|bmp|tiff?|heic|avif)$', re.IGNORECASE)
+ASSET_FOLDERS = ('assets/', 'tests/fixtures/', 'vendor/')
 
 
 def git(*args):
@@ -79,6 +85,9 @@ def leaks(commit, values):
     for label in hits(text(git('show', '-s', '--format=%B', commit))):
         yield f'{commit[:7]} commit message: {label}'
     for path, blob in changed_files(commit):
+        if IMAGE.search(text(path)) and not text(path).startswith(ASSET_FOLDERS):
+            yield f'{commit[:7]} {text(path)}: image outside {", ".join(ASSET_FOLDERS)}'
+            continue
         data = git('cat-file', 'blob', blob)
         if b'\0' in data:
             continue
@@ -92,7 +101,9 @@ def main():
     found = [leak for commit in new_commits(sys.stdin.read().splitlines())
              for leak in leaks(commit, values)]
     if found:
-        print('Private values in pushed commits. Remove them and amend:', file=sys.stderr)
+        print('Private values or images in pushed commits. Remove them and amend.', file=sys.stderr)
+        print('Show screenshots in the thread; the user uploads any they want on GitHub.',
+              file=sys.stderr)
         for leak in found:
             print(f'  {leak}', file=sys.stderr)
         return 1

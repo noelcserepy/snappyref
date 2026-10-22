@@ -10,9 +10,9 @@ refs="$(cat)"
 
 # Before the Cargo.toml exit, so pushing a code-free branch such as pr-assets
 # from this checkout is checked too. A checkout of pr-assets has no hooks.
-if [[ -f scripts/check-private-values.py ]]; then
-  echo "[pre-push] private values"
-  python3 scripts/check-private-values.py <<<"$refs"
+if [[ -f scripts/check-push-privacy.py ]]; then
+  echo "[pre-push] push privacy"
+  python3 scripts/check-push-privacy.py <<<"$refs"
 fi
 
 # A push that only deletes remote refs (local sha all zeros) carries no code,

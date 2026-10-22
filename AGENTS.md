@@ -38,7 +38,7 @@ The [pre-push hook](.githooks/pre-push) runs fmt, clippy, Rust tests, and Python
 script tests in that order and stops at the first failure. Rust tests include
 every non-ignored inspect scenario and the helper subprocess tests. Ref-deletion
 pushes and branches without Cargo.toml skip the checks. The hook also runs
-[check-private-values.py](scripts/check-private-values.py), which needs this
+[check-push-privacy.py](scripts/check-push-privacy.py), which needs this
 machine's private values and so has no CI equivalent. Hook setup is in the
 [README](README.md#development-checks).
 
@@ -110,6 +110,8 @@ first, and otherwise ask one question at a time.
 - Never launch the GUI by hand when an inspect scenario covers the behavior.
   Add a scenario if none does.
 - Never commit `library/`, `models/`, downloaded model files, or perf corpora.
+- Never commit or push a screenshot, on any branch. Show it to the user in the
+  thread; they upload any they want on GitHub themselves.
 - Keep changes fast-path aware. Startup, import, and canvas interaction never
   wait on decoding, embedding, or persistence. That work belongs in the existing
   helpers and queues. Measure with perf-profiling when touching those paths.

@@ -9,7 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class PrivateValuesPushTests(unittest.TestCase):
+class PushPrivacyTests(unittest.TestCase):
     def setUp(self):
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
@@ -17,7 +17,7 @@ class PrivateValuesPushTests(unittest.TestCase):
         self.repo = base / 'checkout'
         (self.repo / 'scripts').mkdir(parents=True)
         shutil.copytree(ROOT / '.githooks', self.repo / '.githooks')
-        for script in ('check-private-values.py', 'windows-env.sh'):
+        for script in ('check-push-privacy.py', 'windows-env.sh'):
             shutil.copy(ROOT / 'scripts' / script, self.repo / 'scripts')
         env_file = base / 'env.windows'
         env_file.write_text("SNAPPYREF_WINDOWS_HOST='pc-hidden-alias'\n"
@@ -86,6 +86,21 @@ class PrivateValuesPushTests(unittest.TestCase):
                       self.git('push', 'origin', 'main').stderr)
         (self.repo / 'beside.md').write_text('clean\n')
         self.git('commit', '-qa', '--amend', '--no-edit')
+        self.assertEqual(self.git('push', 'origin', 'main').returncode, 0)
+
+    def test_keeps_screenshots_off_every_branch_but_takes_asset_images(self):
+        self.git('switch', '-q', '-c', 'pr-assets')
+        (self.repo / 'this-pr').mkdir()
+        self.commit('this-pr/sidebar.PNG', 'pixels', 'Sidebar screenshot')
+
+        push = self.git('push', 'origin', 'pr-assets')
+
+        self.assertEqual(push.returncode, 1)
+        self.assertIn('this-pr/sidebar.PNG: image outside assets/, tests/fixtures/, vendor/',
+                      push.stderr)
+        self.git('switch', '-q', 'main')
+        (self.repo / 'tests' / 'fixtures').mkdir(parents=True)
+        self.commit('tests/fixtures/board.png', 'pixels', 'Add a fixture image')
         self.assertEqual(self.git('push', 'origin', 'main').returncode, 0)
 
     def test_does_not_rescan_commits_the_remote_already_has(self):

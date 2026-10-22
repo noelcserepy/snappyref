@@ -154,10 +154,10 @@ code, 1 when it throws, 124 when it outlives the timeout (default 120 s).
 
 - A capture holds the SnappyRef window alone, so the rest of the desktop never
   reaches an image. Click coordinates are pixels in such a capture. The window
-  still shows the boards open on the PC, so look at a capture before attaching
-  it to a PR.
+  still shows the boards open on the PC.
 - Captures come back to a fresh directory under `$TMPDIR/snappyref-windows-ui`,
-  outside every checkout, printed as `Captures:`.
+  outside every checkout, printed as `Captures:`. Look at them and show them to
+  the user in the thread. They never go to GitHub; the push check refuses them.
 - The step runs as the scheduled task `SnappyRefAgentUi` in the SSH account's
   signed-in session. Without that session it fails with "Sign in at the PC
   first." One step runs at a time. The task and the step's files on the PC are
