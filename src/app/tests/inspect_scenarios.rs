@@ -3556,22 +3556,8 @@ fn inspect_sidebar_board_shortcuts_writes_artifact() {
         harness.get_by_label("Board References").rect().center(),
         egui::Modifiers::NONE,
     );
-    // Let the previous navigation click expire before the double-click.
-    harness.run_steps(45);
     let pos = harness.get_by_label("Board References").rect().center();
-    harness.hover_at(pos);
-    harness.step();
-    for _ in 0..2 {
-        for pressed in [true, false] {
-            harness.event(egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            });
-        }
-        harness.step();
-    }
+    inspect_double_click_at(&mut harness, pos);
     harness.step();
     harness.get_by_label("Board name");
     harness.key_press_modifiers(inspect_command_modifier(), egui::Key::A);

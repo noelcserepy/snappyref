@@ -747,6 +747,36 @@ pub(super) fn inspect_click_at(
     );
 }
 
+/// Double-clicks `pos` and runs the frames that deliver it. egui counts a
+/// click within twice `max_double_click_delay` of the click before last as a
+/// triple click, so this first waits out that history at the harness step dt.
+pub(super) fn inspect_double_click_at(harness: &mut Harness<'_, SnappyRefApp>, pos: egui::Pos2) {
+    let delay = harness
+        .ctx
+        .options(|o| o.input_options.max_double_click_delay) as f32;
+    harness.hover_at(pos);
+    harness.step();
+    while harness.ctx.input(|i| i.pointer.time_since_last_click()) < 2. * delay {
+        harness.step();
+    }
+    // Each click event runs its own frame, so the two releases are two steps apart.
+    let dt = harness.ctx.input(|i| i.predicted_dt);
+    assert!(
+        2. * dt < delay,
+        "a double-click needs a harness step dt under {}s, got {dt}s",
+        delay / 2.
+    );
+    for pressed in [true, false, true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    harness.step();
+}
+
 pub(super) fn inspect_bright_red_pixels_in_rect(path: &PathBuf, rect: egui::Rect) -> usize {
     let image = image::open(path)
         .expect("inspect frame should exist")
