@@ -2,9 +2,10 @@
 """Refuse a push whose new commits contain this machine's private values.
 
 Reads pre-push lines (`<local ref> <local sha> <remote ref> <remote sha>`) on
-stdin and scans each commit not yet on any remote: its message and the lines
-its diff adds. The values come from the private `.env.windows` and `$HOME`, so
-only this machine can run the check. Output names the place, never the value.
+stdin and scans each commit not yet on any remote: its message and the text
+files it adds or changes. The values are `$HOME` and the SNAPPYREF_WINDOWS_*
+settings that windows-env.sh loads from the private `.env.windows`, so only
+this machine can run the check. Output names the place, never the value.
 """
 import os
 import re
@@ -13,54 +14,40 @@ import sys
 from pathlib import Path
 
 ZERO = re.compile(r'^0+$')
-HUNK = re.compile(r'^@@ -\d+(?:,\d+)? \+(\d+)')
-USERS_FOLDER = re.compile(r'^([A-Za-z]:\\Users\\[^\\]+)', re.IGNORECASE)
-MIN_WORD = 6
+WINDOWS_ENV = Path(__file__).resolve().parent / 'windows-env.sh'
+MIN_LENGTH = 6
 
 
 def git(*args):
-    return subprocess.run(['git', *args], check=True, text=True, capture_output=True,
-                          errors='replace').stdout
+    return subprocess.run(['git', *args], check=True, capture_output=True).stdout
 
 
-def env_file():
-    if os.environ.get('SNAPPYREF_WINDOWS_ENV'):
-        return Path(os.environ['SNAPPYREF_WINDOWS_ENV'])
-    checkout = Path(git('rev-parse', '--show-toplevel').strip())
-    if (checkout / '.env.windows').is_file():
-        return checkout / '.env.windows'
-    # A linked worktree has no copy; the main checkout holds the private file.
-    common = Path(git('rev-parse', '--path-format=absolute', '--git-common-dir').strip())
-    return common.parent / '.env.windows'
+def text(data):
+    return data.decode('utf-8', errors='replace')
 
 
-def env_values(path):
-    if not path.is_file():
-        return []
-    values = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith('#') or '=' not in line:
-            continue
-        key, value = line.removeprefix('export ').split('=', 1)
-        value = value.strip().strip('\'"')
-        values.append((key.strip(), value))
-    return values
-
-
-def normalize(text):
+def normalize(value):
     """Compare paths whatever their separators or escaping, and ignore case."""
-    return re.sub(r'[\\/]+', '\\\\', text).lower()
+    return re.sub(r'[\\/]+', r'\\', value).lower()
+
+
+def windows_settings():
+    # Without a .env.windows the loader fails and only $HOME is checked.
+    loaded = subprocess.run(['bash', '-c', 'source "$1" >/dev/null 2>&1 && env -0', '_',
+                             str(WINDOWS_ENV)], capture_output=True).stdout
+    for entry in text(loaded).split('\0'):
+        key, _, value = entry.partition('=')
+        if key.startswith('SNAPPYREF_WINDOWS_'):
+            yield key, value
 
 
 def private_values():
-    found = [('HOME', os.environ['HOME'])] if os.environ.get('HOME') else []
-    for key, value in env_values(env_file()):
+    found = [('HOME', os.environ.get('HOME', ''))]
+    for key, value in windows_settings():
         found.append((key, value))
         found += [(key, word) for word in value.split() if word != value]
-        if folder := USERS_FOLDER.match(value):
-            found.append((key, folder.group(1)))
-    return [(label, normalize(value)) for label, value in found if len(value) >= MIN_WORD]
+    return [(label, normalize(value)) for label, value in found
+            if len(normalize(value)) >= MIN_LENGTH]
 
 
 def new_commits(lines):
@@ -68,29 +55,30 @@ def new_commits(lines):
             and not ZERO.match(sha := parts[1])]
     if not tips:
         return []
-    return git('rev-list', *tips, '--not', '--remotes').split()
+    return text(git('rev-list', *tips, '--not', '--remotes')).split()
+
+
+def changed_paths(commit):
+    # -z keeps paths raw, so no quoting or diff prefix setting can hide one.
+    listed = git('diff-tree', '-r', '-m', '-z', '--root', '--no-commit-id', '--name-only',
+                 '--diff-filter=d', commit)
+    return sorted({path for path in listed.split(b'\0') if path})
 
 
 def leaks(commit, values):
-    def hits(text):
-        text = normalize(text)
-        return sorted({label for label, value in values if value in text})
+    def hits(content):
+        content = normalize(content)
+        return sorted({label for label, value in values if value in content})
 
-    message = git('show', '-s', '--format=%B', commit)
-    for label in hits(message):
+    for label in hits(text(git('show', '-s', '--format=%B', commit))):
         yield f'{commit[:7]} commit message: {label}'
-    path, line_no = None, 0
-    for line in git('show', '--format=', '--no-color', '--no-ext-diff', commit).splitlines():
-        if line.startswith('+++ '):
-            path = line[6:] if line.startswith('+++ b/') else None
-        elif match := HUNK.match(line):
-            line_no = int(match.group(1))
-        elif line.startswith('+') and path:
-            for label in hits(line[1:]):
-                yield f'{commit[:7]} {path}:{line_no}: {label}'
-            line_no += 1
-        elif line.startswith(' '):
-            line_no += 1
+    for path in changed_paths(commit):
+        data = git('cat-file', 'blob', f'{commit}:'.encode() + path)
+        if b'\0' in data:
+            continue
+        for line_no, line in enumerate(text(data).splitlines(), 1):
+            for label in hits(line):
+                yield f'{commit[:7]} {text(path)}:{line_no}: {label}'
 
 
 def main():

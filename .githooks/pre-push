@@ -8,7 +8,8 @@ set -euo pipefail
 
 refs="$(cat)"
 
-# Every push, pr-assets included, since the repo is public.
+# Before the Cargo.toml exit, so pushing a code-free branch such as pr-assets
+# from this checkout is checked too. A checkout of pr-assets has no hooks.
 if [[ -f scripts/check-private-values.py ]]; then
   echo "[pre-push] private values"
   python3 scripts/check-private-values.py <<<"$refs"

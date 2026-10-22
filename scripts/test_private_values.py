@@ -17,10 +17,11 @@ class PrivateValuesPushTests(unittest.TestCase):
         self.repo = base / 'checkout'
         (self.repo / 'scripts').mkdir(parents=True)
         shutil.copytree(ROOT / '.githooks', self.repo / '.githooks')
-        shutil.copy(ROOT / 'scripts' / 'check-private-values.py', self.repo / 'scripts')
+        for script in ('check-private-values.py', 'windows-env.sh'):
+            shutil.copy(ROOT / 'scripts' / script, self.repo / 'scripts')
         env_file = base / 'env.windows'
         env_file.write_text("SNAPPYREF_WINDOWS_HOST='pc-hidden-alias'\n"
-                            "SNAPPYREF_WINDOWS_REPO='C:\\Users\\fakeperson\\src\\snappyref'\n")
+                            "SNAPPYREF_WINDOWS_REPO='C:/Users/fakeperson/src/snappyref'\n")
         home = base / 'home-of-tester'
         home.mkdir()
         self.env = dict(os.environ, HOME=str(home), GIT_CONFIG_GLOBAL=os.devnull,
@@ -44,7 +45,7 @@ class PrivateValuesPushTests(unittest.TestCase):
         self.assertEqual(self.git('commit', '-q', '-m', message).returncode, 0)
 
     def test_refuses_a_windows_path_in_any_spelling_then_takes_the_cleaned_commit(self):
-        self.commit('notes.md', 'Build there:\nC:/users/FakePerson/other\n', 'Add notes')
+        self.commit('notes.md', 'Build there:\n"C:\\\\users\\\\FakePerson\\\\src\\\\SnappyRef"\n', 'Add notes')
 
         push = self.git('push', 'origin', 'main')
 
@@ -66,6 +67,15 @@ class PrivateValuesPushTests(unittest.TestCase):
         self.assertIn('commit message: SNAPPYREF_WINDOWS_HOST', push.stderr)
         self.assertIn('log.txt:1: HOME', push.stderr)
         self.assertNotIn('pc-hidden-alias', push.stderr)
+
+    def test_reads_added_text_whatever_git_shows_for_names_and_lines(self):
+        self.git('config', 'diff.noprefix', 'true')
+        self.commit('café notes.md', '++ heading\npc-hidden-alias\n', 'Add notes')
+
+        push = self.git('push', 'origin', 'main')
+
+        self.assertEqual(push.returncode, 1)
+        self.assertIn('café notes.md:2: SNAPPYREF_WINDOWS_HOST', push.stderr)
 
     def test_does_not_rescan_commits_the_remote_already_has(self):
         self.commit('old.md', 'pc-hidden-alias\n', 'Old leak')
