@@ -94,12 +94,13 @@ scripts/windows-remote.sh '<powershell-command>'
 The helper regression tests run without connecting to a PC or launching a GUI:
 
 ```sh
-python3 -m unittest scripts.test_windows_helpers
+python3 -m unittest scripts.test_windows_helpers scripts.test_windows_ui
 ```
 
-The session/launch test executes PowerShell with stubbed OS adapters. It uses
-`pwsh` on PATH, or the executable path in `SNAPPYREF_TEST_PWSH`; without that
-runtime it reports a skip. Wake tests need only Python, bash and stub SSH.
+The desktop-runner tests execute PowerShell with stubbed OS adapters. They use
+`pwsh` on PATH (`brew install powershell`), or the executable path in
+`SNAPPYREF_TEST_PWSH`; without that runtime they report a skip. Wake tests need
+only Python, bash and stub SSH.
 
 ## Native file and URL drops
 
@@ -135,25 +136,32 @@ Then launch the GUI:
 scripts/windows-launch-gui.sh
 ```
 
-Verify that the process started:
+It stops any running `snappyref`, starts the checkout's release-fast build, and
+waits for its window, so one GUI instance remains.
+
+To drive the desktop, write a PowerShell step and run it there:
 
 ```sh
-scripts/windows-remote.sh 'Get-Process snappyref -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,MainWindowTitle,StartTime | Format-List'
+scripts/windows-ui.sh <step.ps1> [--timeout <seconds>]
 ```
 
-Notes:
+The step runs in the checkout and can call the helpers in
+[app.ps1](../../../scripts/windows-ui/app.ps1): `Wait-AppWindow`,
+`Save-AppShot <name>`, `Invoke-AppClick <x> <y>` and `Send-AppKeys <keys>`.
+For example, a step of `Send-AppKeys '^b'` then `Save-AppShot sidebar`.
+`windows-ui.sh` prints the step's output and exits with its status: its `exit`
+code, 1 when it throws, 124 when it outlives the timeout (default 120 s).
 
-- `/IT` requires a signed-in desktop for the SSH account. The launcher checks
-  for that account's user-owned `explorer.exe` in an interactive session before
-  stopping any app or creating a task. If absent, it fails with "Sign in at the
-  PC first."
-- The task name is `SnappyRefAgentLaunch`; the launcher deletes/recreates it,
-  runs it, waits for SnappyRef to appear, then deletes the task before the
-  one-shot scheduled time can fire a second GUI later.
-- The launcher stops existing `snappyref` processes before starting a new one,
-  so a manual verification request leaves exactly one GUI instance.
-- Do not use this for automated checks. It is for human-visible GUI
-  verification on the Windows machine.
+- A capture holds the SnappyRef window alone, so the rest of the desktop never
+  reaches an image. Click coordinates are pixels in such a capture. The window
+  still shows the boards open on the PC, so look at a capture before attaching
+  it to a PR.
+- Captures come back to a fresh directory under `$TMPDIR/snappyref-windows-ui`,
+  outside every checkout, printed as `Captures:`.
+- The step runs as the scheduled task `SnappyRefAgentUi` in the SSH account's
+  signed-in session. Without that session it fails with "Sign in at the PC
+  first." One step runs at a time. The task and the step's files on the PC are
+  removed after every run.
 
 For explicit update verification, use the canonical
 [update smoke procedure](../../release-operations.md#update-smokes).
