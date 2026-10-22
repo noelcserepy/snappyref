@@ -6,13 +6,22 @@
 
 set -euo pipefail
 
+refs="$(cat)"
+
+# Before the Cargo.toml exit, so pushing a code-free branch such as pr-assets
+# from this checkout is checked too. A checkout of pr-assets has no hooks.
+if [[ -f scripts/check-private-values.py ]]; then
+  echo "[pre-push] private values"
+  python3 scripts/check-private-values.py <<<"$refs"
+fi
+
 # A push that only deletes remote refs (local sha all zeros) carries no code,
 # and neither does a code-free branch such as pr-assets.
 [[ -f Cargo.toml ]] || exit 0
 pushes_code=0
 while read -r _ local_sha _ _; do
-  [[ "$local_sha" =~ ^0+$ ]] || pushes_code=1
-done
+  [[ -z "$local_sha" || "$local_sha" =~ ^0+$ ]] || pushes_code=1
+done <<<"$refs"
 (( pushes_code )) || exit 0
 
 # Git exports GIT_DIR and friends to hooks. A check that runs `git init` in a
