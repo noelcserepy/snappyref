@@ -43,5 +43,8 @@ check cargo fmt --check
 check cargo clippy --quiet --locked --all-targets -- -D warnings
 check cargo test --quiet --locked
 check python3 -m unittest discover --buffer -s scripts -p 'test_*.py'
+# macOS's own openssl is LibreSSL, which cannot sign with ed25519.
+PATH="$(brew --prefix openssl@3 2>/dev/null)/bin:$PATH" \
+  check tests/scripts/test-build-signed-manifest.sh
 
 echo "[pre-push] ok"

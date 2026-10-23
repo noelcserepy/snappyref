@@ -9,7 +9,14 @@ HOOK = Path(__file__).resolve().parents[1] / '.githooks/pre-push'
 
 
 CHECKS = ['cargo fmt --check', 'cargo clippy --quiet --locked --all-targets -- -D warnings',
-          'cargo test --quiet --locked', "python3 -m unittest discover --buffer -s scripts -p test_*.py"]
+          'cargo test --quiet --locked', "python3 -m unittest discover --buffer -s scripts -p test_*.py",
+          'tests/scripts/test-build-signed-manifest.sh']
+
+# Each stub logs and prints the command as the hook names it, and fails when
+# that is FAIL_CHECK. Tools resolve through PATH, the manifest test by path.
+STUB = ('#!/bin/sh\nline="${0#"$STUB_ROOT"/}${*:+ $*}"\n'
+        'printf "%s\\n" "$line${GIT_DIR+ GIT_DIR=$GIT_DIR}" >> "$CHECK_LOG"\n'
+        'echo "$line output"\n[ "$line" != "$FAIL_CHECK" ]\n')
 
 
 class PrePushTests(unittest.TestCase):
@@ -19,13 +26,13 @@ class PrePushTests(unittest.TestCase):
             if code:
                 (root / 'Cargo.toml').touch()
             log = root / 'commands'
-            for command in ('cargo', 'python3'):
+            for command in ('cargo', 'python3', 'tests/scripts/test-build-signed-manifest.sh'):
                 stub = root / command
-                stub.write_text('#!/bin/sh\nprintf "%s\\n" "$(basename "$0") $*${GIT_DIR+ GIT_DIR=$GIT_DIR}" >> "$CHECK_LOG"\n'
-                                'echo "$(basename "$0") $* output"\n[ "$*" != "$FAIL_CHECK" ]\n')
+                stub.parent.mkdir(parents=True, exist_ok=True)
+                stub.write_text(STUB)
                 stub.chmod(0o755)
-            env = dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}', CHECK_LOG=str(log), FAIL_CHECK=fail,
-                       **(git_env or {}))
+            env = dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}', STUB_ROOT=str(root), CHECK_LOG=str(log),
+                       FAIL_CHECK=fail, **(git_env or {}))
             sha = '0' * 40 if deletion else '1' * 40
             result = subprocess.run(['bash', str(HOOK)], cwd=root, env=env,
                                     input=f'refs/heads/topic {sha} refs/heads/topic {"2" * 40}\n',
@@ -36,7 +43,7 @@ class PrePushTests(unittest.TestCase):
         self.assertEqual(self.run_hook()[:2], (0, CHECKS))
         for index, command in enumerate(CHECKS):
             with self.subTest(command=command):
-                self.assertEqual(self.run_hook(fail=command.split(' ', 1)[1])[:2],
+                self.assertEqual(self.run_hook(fail=command)[:2],
                                  (1, CHECKS[:index + 1]))
         self.assertEqual(self.run_hook(deletion=True)[:2], (0, []))
         self.assertEqual(self.run_hook(code=False)[:2], (0, []))
@@ -44,7 +51,7 @@ class PrePushTests(unittest.TestCase):
     def test_only_a_failing_check_prints_its_output(self):
         self.assertEqual(self.run_hook()[2], ''.join(f'[pre-push] {command}\n' for command in CHECKS)
                          + '[pre-push] ok\n')
-        self.assertEqual(self.run_hook(fail='clippy --quiet --locked --all-targets -- -D warnings')[2],
+        self.assertEqual(self.run_hook(fail='cargo clippy --quiet --locked --all-targets -- -D warnings')[2],
                          '[pre-push] cargo fmt --check\n'
                          '[pre-push] cargo clippy --quiet --locked --all-targets -- -D warnings\n'
                          'cargo clippy --quiet --locked --all-targets -- -D warnings output\n')

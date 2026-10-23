@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 
-SCRIPT = Path(__file__).with_name('report-windows-ci-failure.sh')
+SCRIPT = Path(__file__).with_name('report-ci-failure.sh')
 
 STUB_GH = r'''#!/usr/bin/env python3
 import json, os, subprocess, sys
@@ -42,18 +42,19 @@ json.dump(state, open(state_path, 'w'))
 
 
 @unittest.skipUnless(shutil.which('jq'), 'jq is needed to evaluate gh --jq')
-class WindowsCiFailureTests(unittest.TestCase):
+class CiFailureReportTests(unittest.TestCase):
     def test_creates_report_or_comments_on_existing_exact_title(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             stub = root / 'gh'
             stub.write_text(STUB_GH)
             stub.chmod(0o755)
-            title = 'Windows CI is red on main'
+            title = 'macOS CI is red on main'
             body = 'Run: https://github.com/fixture/repo/actions/runs/42\nCommit: abc123'
             unrelated = [
-                {'number': 11, 'state': 'open', 'title': 'Windows CI is red on main follow-up'},
-                {'number': 12, 'state': 'closed', 'title': 'Windows CI is red on main'},
+                {'number': 10, 'state': 'open', 'title': 'Windows CI is red on main'},
+                {'number': 11, 'state': 'open', 'title': 'macOS CI is red on main follow-up'},
+                {'number': 12, 'state': 'closed', 'title': 'macOS CI is red on main'},
             ]
             for present in (False, True):
                 with self.subTest(present=present):
@@ -63,7 +64,7 @@ class WindowsCiFailureTests(unittest.TestCase):
                     env = dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}', ISSUE_STATE=str(state),
                                GITHUB_SERVER_URL='https://github.com', GITHUB_REPOSITORY='fixture/repo',
                                GITHUB_RUN_ID='42', GITHUB_SHA='abc123')
-                    subprocess.run(['bash', str(SCRIPT)], env=env, check=True)
+                    subprocess.run(['bash', str(SCRIPT), 'macOS'], env=env, check=True)
                     expected = ({'issues': issues, 'comments': [{'issue': 17, 'body': body}]} if present else
                                 {'issues': [*unrelated, {'number': 13, 'state': 'open', 'title': title, 'body': body}],
                                  'comments': []})

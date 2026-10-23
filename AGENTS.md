@@ -30,21 +30,25 @@ cargo fmt --check
 cargo clippy --quiet --locked --all-targets -- -D warnings
 cargo test --quiet --locked
 python3 -m unittest discover --buffer -s scripts -p 'test_*.py'
+PATH="$(brew --prefix openssl@3)/bin:$PATH" tests/scripts/test-build-signed-manifest.sh
 docs/skills/inspect/scripts/run-scenario.sh --list
 docs/skills/inspect/scripts/run-scenario.sh <scenario>
 ```
 
-The [pre-push hook](.githooks/pre-push) runs fmt, clippy, Rust tests, and Python
-script tests in that order and stops at the first failure. Rust tests include
+The [pre-push hook](.githooks/pre-push) runs fmt, clippy, Rust tests, Python
+script tests and the signed-manifest test in that order and stops at the first
+failure. Rust tests include
 every non-ignored inspect scenario and the helper subprocess tests. Ref-deletion
 pushes and branches without Cargo.toml skip the checks. The hook also runs
 [check-push-privacy.py](scripts/check-push-privacy.py), which needs this
 machine's private values and so has no CI equivalent. Hook setup is in the
 [README](README.md#development-checks).
 
-[CI](.github/workflows/ci.yml) runs the same checks on macOS for every pull request in about 2-3 minutes.
-Windows CI takes about 10 minutes, so it runs on `main` after the merge and opens an issue when it fails.
-Merge without waiting for it. `gh workflow run ci.yml --ref <branch>` runs both jobs on a branch.
+Pull requests run no CI, so a PR merges once its review passes. The hook and
+the Bugs reviewer already run these checks.
+[CI](.github/workflows/ci.yml) runs them on `main` after the merge, on macOS in
+about 3-4 minutes and on Windows in about 10, and each job opens an issue when it fails.
+`gh workflow run ci.yml --ref <branch>` runs both jobs on a branch.
 
 When the user wants to test a build by hand, stop the previous instance and run
 `SNAPPYREF_DATA_ROOT="$HOME/dev/snappyref-dev-data" cargo run --locked --release --bin snappyref`
