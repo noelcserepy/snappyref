@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Opens one issue when the Windows CI job fails on main, or comments on the
-# open one. Needs GH_TOKEN and GH_REPO, plus the run variables Actions sets.
+# Opens one issue per CI job when that job fails on main, or comments on its
+# open one. Takes the job name, such as macOS or Windows. Needs GH_TOKEN and
+# GH_REPO, plus the run variables Actions sets.
 set -euo pipefail
 
-title="Windows CI is red on main"
+title="${1:?usage: report-ci-failure.sh <job>} CI is red on main"
 body="Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 Commit: ${GITHUB_SHA}"
 

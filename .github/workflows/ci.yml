@@ -3,7 +3,6 @@ name: CI
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -11,16 +10,22 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A run on main is the only CI a merge gets, so let it finish. A newer merge
+  # still replaces one that is waiting.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# Pull requests wait for the macOS job only, about 2-3 minutes. A ruleset on
-# main requires that job name, so rename it only together with the ruleset.
-# The Windows job takes about 10 minutes. It runs after the merge and on manual
-# dispatch, and opens an issue when it fails on main.
+# CI runs after each merge to main and on manual dispatch, never on pull
+# requests. The pre-push hook runs the same checks before each push, and the
+# Bugs reviewer runs them again in a fresh checkout. Each job opens an issue
+# when it fails on main. The macOS job still finds what only a slower runner
+# shows, such as a timing-dependent test.
 jobs:
   macos:
     name: macOS
     runs-on: macos-latest
+    permissions:
+      contents: read
+      issues: write
 
     steps:
       - uses: actions/checkout@v4
@@ -56,9 +61,15 @@ jobs:
           export PATH="$(brew --prefix openssl@3)/bin:$PATH"
           bash tests/scripts/test-build-signed-manifest.sh
 
+      - name: Report a failure on main
+        if: failure() && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: scripts/report-ci-failure.sh macOS
+
   windows:
     name: Windows
-    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     permissions:
       contents: read
@@ -92,4 +103,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: scripts/report-windows-ci-failure.sh
+        run: scripts/report-ci-failure.sh Windows
