@@ -35,20 +35,15 @@ docs/skills/inspect/scripts/run-scenario.sh --list
 docs/skills/inspect/scripts/run-scenario.sh <scenario>
 ```
 
-The [pre-push hook](.githooks/pre-push) runs fmt, clippy, Rust tests, Python
-script tests and the signed-manifest test in that order and stops at the first
-failure. Rust tests include
-every non-ignored inspect scenario and the helper subprocess tests. Ref-deletion
-pushes and branches without Cargo.toml skip the checks. The hook also runs
+Rust tests include every non-ignored inspect scenario and the helper subprocess
+tests. The [pre-push hook](.githooks/pre-push) skips ref-deletion pushes and
+branches without Cargo.toml. It also runs
 [check-push-privacy.py](scripts/check-push-privacy.py), which needs this
 machine's private values and so has no CI equivalent. Hook setup is in the
 [README](README.md#development-checks).
 
-Pull requests run no CI, so a PR merges once its review passes. The hook and
-the Bugs reviewer already run these checks.
-[CI](.github/workflows/ci.yml) runs them on `main` after the merge, on macOS in
-about 3-4 minutes and on Windows in about 10, and each job opens an issue when it fails.
-`gh workflow run ci.yml --ref <branch>` runs both jobs on a branch.
+A PR merges once its review passes. `gh workflow run ci.yml --ref <branch>` runs
+[CI](.github/workflows/ci.yml) on a branch.
 
 When the user wants to test a build by hand, stop the previous instance and run
 `SNAPPYREF_DATA_ROOT="$HOME/dev/snappyref-dev-data" cargo run --locked --release --bin snappyref`
