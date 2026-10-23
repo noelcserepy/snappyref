@@ -74,6 +74,11 @@ Preconditions:
 - **Settings row.** Run `run-scenario.sh semantic-search-sidebar-status`. It
   injects a download in progress and asserts "Downloading 42%" with Cancel.
   Its output does not depend on this machine's model files.
+- **Settings install.** Run `run-scenario.sh semantic-search-stubbed-install`.
+  It drives the same clicks as `semantic-search-real-install` through one
+  shared function, with a stub installer that reports Installed at
+  once. `cargo test` runs it, so a Settings change that breaks the
+  real-install selectors fails a normal test.
 
 ## Gotchas
 

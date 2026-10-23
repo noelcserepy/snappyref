@@ -41,6 +41,7 @@ SCENARIOS = {
     'image-search-after-install': ('inspect_image_search_after_install_writes_artifact', 'image-search-after-install', False),
     'semantic-search-install': ('inspect_semantic_search_install_accepts_prompt', 'semantic-search-install', False),
     'semantic-search-sidebar-status': ('inspect_semantic_search_sidebar_status_writes_artifact', 'semantic-search-sidebar-status', False),
+    'semantic-search-stubbed-install': ('inspect_semantic_search_stubbed_install_writes_artifact', 'semantic-search-stubbed-install', False),
     'ai-control': ('inspect_ai_control_writes_artifact', 'ai-control', False),
     'sidebar-board-shortcuts': ('inspect_sidebar_board_shortcuts_writes_artifact', 'sidebar-board-shortcuts', False),
     'sidebar-pages': ('inspect_sidebar_pages_writes_artifact', 'sidebar-pages', False),
