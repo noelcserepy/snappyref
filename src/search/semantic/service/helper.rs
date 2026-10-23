@@ -270,7 +270,8 @@ mod tests {
             .env(FIXTURE_ENV, scenario)
     }
 
-    /// The test runner prints a header before the fixture owns stdout.
+    /// The test runner prints a header before the fixture owns stdout. With one
+    /// test thread it also prints `test <name> ... ` on the marker's line.
     pub(super) fn skip_test_runner_header(stdout: &mut BufReader<ChildStdout>) {
         loop {
             let mut line = String::new();
@@ -279,7 +280,7 @@ mod tests {
                 0,
                 "fixture did not start"
             );
-            if line.trim() == "embedding-protocol-fixture" {
+            if line.trim_end().ends_with("embedding-protocol-fixture") {
                 break;
             }
         }
