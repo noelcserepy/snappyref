@@ -2926,46 +2926,79 @@ fn inspect_pending_drop_batch_undo_writes_artifact() {
 #[test]
 #[ignore]
 fn inspect_semantic_search_real_install_writes_artifact() {
-    let mut scenario = InspectScenario::new("semantic-search-real-install");
+    drive_semantic_search_settings_install(
+        "semantic-search-real-install",
+        crate::search::semantic::default_local_model_store_status(),
+        Duration::from_secs(15 * 60),
+        |tx| {
+            std::thread::spawn(move || {
+                let data_root = match crate::local_data_location::resolve_data_root() {
+                    Ok(root) => root,
+                    Err(error) => {
+                        let _ = tx.send(
+                            crate::search::semantic::SemanticSearchInstallProgress::Failed {
+                                error,
+                            },
+                        );
+                        return;
+                    }
+                };
+                let descriptor =
+                    crate::search::semantic::default_semantic_search_asset_descriptor();
+                let canceled = std::sync::atomic::AtomicBool::new(false);
+                let _ = crate::search::semantic::install_semantic_search_asset(
+                    &data_root,
+                    &descriptor,
+                    &canceled,
+                    |progress| {
+                        let _ = tx.send(progress);
+                    },
+                );
+            });
+        },
+    );
+}
+
+/// The real-install clicks with a stubbed download, so `cargo test` catches
+/// the selectors drifting from the Settings page.
+#[test]
+fn inspect_semantic_search_stubbed_install_writes_artifact() {
+    drive_semantic_search_settings_install(
+        "semantic-search-stubbed-install",
+        LocalModelStoreStatus::Missing,
+        Duration::from_secs(10),
+        |tx| {
+            tx.send(crate::search::semantic::SemanticSearchInstallProgress::Installed)
+                .unwrap();
+        },
+    );
+}
+
+fn drive_semantic_search_settings_install(
+    name: &str,
+    initial_status: LocalModelStoreStatus,
+    timeout: Duration,
+    installer: impl FnMut(
+        std::sync::mpsc::Sender<crate::search::semantic::SemanticSearchInstallProgress>,
+    ) + 'static,
+) {
+    let mut scenario = InspectScenario::new(name);
     scenario.event(
         "seed",
         serde_json::json!({
-            "seed": "sidebar-open-settings-tab-real-semantic-install",
+            "seed": "sidebar-open-settings-tab-semantic-install",
         }),
     );
 
-    let root = TempRoot::new("snappyref-inspect-semantic-real-install");
+    let root = TempRoot::new(&format!("snappyref-inspect-{name}"));
     let library = Library::initialize(root.to_path_buf()).unwrap();
-    let initial_status = crate::search::semantic::default_local_model_store_status();
     let mut app = test_app(Some(library));
     app.sidebar_open = true;
     app.sidebar_tab = SidebarTab::Settings;
     app.settings.semantic_search_first_launch_prompt_seen = true;
     app.search
         .set_local_model_store_status_for_test(initial_status.clone());
-    app.search.set_semantic_install_for_test(|tx| {
-        std::thread::spawn(move || {
-            let data_root = match crate::local_data_location::resolve_data_root() {
-                Ok(root) => root,
-                Err(error) => {
-                    let _ = tx.send(
-                        crate::search::semantic::SemanticSearchInstallProgress::Failed { error },
-                    );
-                    return;
-                }
-            };
-            let descriptor = crate::search::semantic::default_semantic_search_asset_descriptor();
-            let canceled = std::sync::atomic::AtomicBool::new(false);
-            let _ = crate::search::semantic::install_semantic_search_asset(
-                &data_root,
-                &descriptor,
-                &canceled,
-                |progress| {
-                    let _ = tx.send(progress);
-                },
-            );
-        });
-    });
+    app.search.set_semantic_install_for_test(installer);
 
     let mut harness = app_full_harness(app);
     harness.get_by_label("SEMANTIC SEARCH").scroll_to_me();
@@ -3000,7 +3033,7 @@ fn inspect_semantic_search_real_install_writes_artifact() {
         &mut harness,
         InspectProgressConfig {
             start_frame_index: 2,
-            timeout: Duration::from_secs(15 * 60),
+            timeout,
             poll_interval: Duration::from_millis(250),
             fact_name: "semantic-search.install-status",
             timeout_fact_name: "semantic-search.install-timeout-status",
