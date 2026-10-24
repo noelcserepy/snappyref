@@ -1140,7 +1140,7 @@ impl CanvasState {
 
     /// Each selected Group becomes one block the size of its frame, and its
     /// members leave the list, so arranging moves the Group as a whole and
-    /// keeps its own layout.
+    /// keeps its own layout and size.
     fn selected_arrangement_blocks(
         &self,
         placements: Vec<PlacementArrangementInput>,
@@ -1159,11 +1159,13 @@ impl CanvasState {
                     group.container.unrotated_bounds(),
                     0,
                 ),
+                // Labels refit to their text, so a Group can't be resized exactly.
+                keep_size: true,
             }))
             .collect()
     }
 
-    /// How many images `blocks` cover, counting a Group block's members.
+    /// How many images `blocks` cover, counting a Group block's images.
     fn arrangement_image_count(&self, blocks: &[PlacementArrangementInput]) -> usize {
         blocks
             .iter()
@@ -1171,41 +1173,32 @@ impl CanvasState {
                 self.groups()
                     .iter()
                     .find(|group| group.id == block.id)
-                    .map_or(1, |group| group.members.len())
+                    .map_or(1, |group| self.group_image_count(group))
             })
             .sum()
     }
 
-    /// Scales a Group block by `factor`, then moves its frame and members so
-    /// the frame centers on `center`. Returns how many members changed, or
-    /// `None` when `id` is not a Group.
-    fn place_group_block(&mut self, id: GroupId, center: egui::Pos2, factor: f32) -> Option<usize> {
-        let mut group = self.groups().iter().find(|group| group.id == id)?.clone();
-        let mut changed = false;
-        if (factor - 1.0).abs() > 0.001 {
-            let members = group
-                .members
-                .iter()
-                .filter_map(|&member| Some((member, self.group_member_geometry(member)?)))
-                .collect::<Vec<_>>();
-            if let Ok(layout) =
-                crate::placement::group_layout::scale_group(&group, &members, factor)
-            {
-                self.apply_group_layout(&mut group, layout);
-                let mut groups = self.groups().to_vec();
-                if let Some(target) = groups.iter_mut().find(|target| target.id == id) {
-                    *target = group.clone();
-                }
-                self.replace_groups(groups);
-                changed = true;
-            }
-        }
+    /// A Group's image members, leaving out its labels and shapes.
+    fn group_image_count(&self, group: &crate::data::Group) -> usize {
+        group
+            .members
+            .iter()
+            .filter(|&&member| self.placement_by_id(member).is_some())
+            .count()
+    }
+
+    /// Moves a Group block's frame and members so the frame centers on
+    /// `center`. Returns how many of its images moved, or `None` when `id` is
+    /// not a Group.
+    fn place_group_block(&mut self, id: GroupId, center: egui::Pos2) -> Option<usize> {
+        let group = self.groups().iter().find(|group| group.id == id)?;
         let delta = center - group.container.unrotated_bounds().center();
-        if delta.length() > 0.001 {
-            self.move_group(id, delta);
-            changed = true;
+        if delta.length() <= 0.001 {
+            return Some(0);
         }
-        Some(if changed { group.members.len() } else { 0 })
+        let images = self.group_image_count(group);
+        self.move_group(id, delta);
+        Some(images)
     }
 
     fn selected_compact_input_items(&self) -> Vec<PlacementArrangementInput> {
@@ -1230,12 +1223,12 @@ impl CanvasState {
         offset: egui::Vec2,
     ) -> usize {
         let mut arranged_ids = Vec::with_capacity(placements.len());
-        let mut group_members = 0;
+        let mut group_images = 0;
 
         for (placement_id, local_center) in placements {
             let world_center = local_center + offset;
-            if let Some(moved) = self.place_group_block(placement_id, world_center, 1.0) {
-                group_members += moved;
+            if let Some(moved) = self.place_group_block(placement_id, world_center) {
+                group_images += moved;
                 continue;
             }
             if let Some(image) = self
@@ -1254,7 +1247,7 @@ impl CanvasState {
             self.mark_dirty(*placement_id);
         }
 
-        arranged_ids.len() + group_members
+        arranged_ids.len() + group_images
     }
 
     fn apply_arrangement_if_changed(
@@ -1263,12 +1256,12 @@ impl CanvasState {
         offset: egui::Vec2,
     ) -> usize {
         let mut arranged_ids = Vec::with_capacity(placements.len());
-        let mut group_members = 0;
+        let mut group_images = 0;
 
         for (placement_id, local_center) in placements {
             let world_center = local_center + offset;
-            if let Some(moved) = self.place_group_block(placement_id, world_center, 1.0) {
-                group_members += moved;
+            if let Some(moved) = self.place_group_block(placement_id, world_center) {
+                group_images += moved;
                 continue;
             }
             if let Some(image) = self
@@ -1292,7 +1285,7 @@ impl CanvasState {
             self.mark_dirty(*placement_id);
         }
 
-        arranged_ids.len() + group_members
+        arranged_ids.len() + group_images
     }
 
     fn apply_compact_arrangement(
@@ -1302,17 +1295,12 @@ impl CanvasState {
         offset: egui::Vec2,
     ) -> usize {
         let mut changed_ids = Vec::with_capacity(placements.len());
-        let mut group_members = 0;
+        let mut group_images = 0;
 
         for (placement_id, local_center) in placements {
             let world_center = local_center + offset;
-            let scale_factor = scale_factors
-                .iter()
-                .find(|(scale_item_id, _)| *scale_item_id == placement_id)
-                .map(|(_, factor)| *factor)
-                .unwrap_or(1.0);
-            if let Some(moved) = self.place_group_block(placement_id, world_center, scale_factor) {
-                group_members += moved;
+            if let Some(moved) = self.place_group_block(placement_id, world_center) {
+                group_images += moved;
                 continue;
             }
             if let Some(image) = self
@@ -1321,6 +1309,11 @@ impl CanvasState {
                 .iter_mut()
                 .find(|image| image.state.id == placement_id)
             {
+                let scale_factor = scale_factors
+                    .iter()
+                    .find(|(scale_item_id, _)| *scale_item_id == placement_id)
+                    .map(|(_, factor)| *factor)
+                    .unwrap_or(1.0);
                 let next_scale = (image.state.geometry.scale * scale_factor).max(0.01);
                 let position_changed = (image.state.geometry.center.x - world_center.x).abs()
                     > 0.001
@@ -1343,7 +1336,7 @@ impl CanvasState {
             self.mark_dirty(*placement_id);
         }
 
-        changed_ids.len() + group_members
+        changed_ids.len() + group_images
     }
 
     pub fn apply_target_area_to_selected_placements(&mut self, target_area: f32) -> usize {

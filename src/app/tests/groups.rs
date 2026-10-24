@@ -2051,18 +2051,19 @@ fn arranging_a_selection_moves_each_group_as_one_block() {
                 [-72.5, 27.5, 107.5, 147.5],
             ],
         ),
-        // Q evens the frame's width to the loose images' and scales its members.
+        // Q evens the loose images but keeps the Group's size, since a label
+        // in it would refit to its text.
         (
             [(300, 150), (300, 160), (300, 120)],
             egui::Key::Q,
             "Compacted 5 images",
             [
-                [-312.5, -147.5, -12.5, 36.4],
-                [-312.5, -147.5, -167.3, 36.4],
-                [-167.3, -147.5, -22.2, -41.0],
-                [-12.5, 12.5, 287.5, 162.5],
-                [-12.5, -147.5, 287.5, 12.5],
-                [-312.5, 36.4, -12.5, 156.4],
+                [-317.5, -167.5, -7.5, 22.5],
+                [-317.5, -167.5, -167.5, 22.5],
+                [-167.5, -167.5, -17.5, -57.5],
+                [-17.5, 22.5, 282.5, 172.5],
+                [-317.5, 22.5, -17.5, 182.5],
+                [-7.5, -167.5, 292.5, -47.5],
             ],
         ),
         (
@@ -2110,10 +2111,25 @@ fn arranging_a_selection_moves_each_group_as_one_block() {
 }
 
 #[test]
-fn arranging_a_lone_group_counts_its_images_and_leaves_it_in_place() {
+fn arranging_a_lone_group_counts_only_its_images_and_leaves_it_in_place() {
     let (_root, mut h, ids) = arrange_fixture([(200, 150), (120, 160), (180, 120)]);
     let group = h.state().canvas.groups()[0].id;
-    h.state_mut().canvas.select_group(group);
+    let app = h.state_mut();
+    let label = app.library.as_ref().unwrap().new_canvas_annotation(
+        CanvasAnnotationKind::Textbox,
+        egui::pos2(-470.0, -90.0),
+        egui::pos2(-400.0, -70.0),
+        "note".to_owned(),
+        CanvasTextSize::M,
+        CanvasStrokeWidth::M,
+        crate::data::CanvasAnnotationColor::Sky,
+    );
+    app.canvas.add_annotation(label.clone());
+    app.canvas.add_members_to_group(group, &[label.id]).unwrap();
+    app.canvas.select_group(group);
+    for _ in 0..20 {
+        h.step();
+    }
     let before = arranged_layout(&h, &ids);
     for (key, status) in [
         (egui::Key::Q, "Compacted 2 images"),
