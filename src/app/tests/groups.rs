@@ -808,26 +808,20 @@ fn copied_group_survives_dedupe_and_reopen() {
     assert!(second_paste.iter().all(|id| !pasted.contains(id)));
 }
 
-fn dock_fixture() -> (TempRoot, Harness<'static, SnappyRefApp>, Vec<i64>) {
-    let root = TempRoot::new("snappyref-dock-artboards");
-    let library = Library::initialize(root.to_path_buf()).unwrap();
+/// Loaded solid-colour images, each `(width, height, center, color)`.
+fn loaded_images(
+    library: &Library,
+    prefix: &str,
+    specs: &[(u32, u32, egui::Pos2, [u8; 4])],
+) -> (Vec<PreparedPlacementImage>, Vec<i64>) {
     let mut items = Vec::new();
     let mut ids = Vec::new();
-    for (i, (height, color)) in [
-        (190, [59, 53, 50, 255]),
-        (110, [74, 67, 64, 255]),
-        (150, [47, 58, 58, 255]),
-        (120, [61, 51, 68, 255]),
-        (150, [68, 64, 58, 255]),
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    for (i, &(width, height, center, color)) in specs.iter().enumerate() {
         let path = library
             .store_rgba_image(
-                &format!("dock-{i}"),
-                &solid_rgba(color, 150, height),
-                150,
+                &format!("{prefix}-{i}"),
+                &solid_rgba(color, width, height),
+                width,
                 height,
             )
             .unwrap();
@@ -837,7 +831,7 @@ fn dock_fixture() -> (TempRoot, Harness<'static, SnappyRefApp>, Vec<i64>) {
                 crate::data::Placement::loaded(
                     crate::data::PlacementState::new(
                         library.allocate_document_id(),
-                        egui::pos2(i as f32 * 160.0 - 184.0, -119.0),
+                        center,
                         1.0,
                         0.0,
                         0,
@@ -847,9 +841,9 @@ fn dock_fixture() -> (TempRoot, Harness<'static, SnappyRefApp>, Vec<i64>) {
                         .register_original(
                             &path,
                             "image/png",
-                            150,
+                            width,
                             height,
-                            (150 * height * 4) as u64,
+                            (width * height * 4) as u64,
                             None,
                         )
                         .unwrap(),
@@ -860,12 +854,37 @@ fn dock_fixture() -> (TempRoot, Harness<'static, SnappyRefApp>, Vec<i64>) {
         items.push(inspect_prepared_loaded_placement(
             placement,
             color,
-            150,
+            width,
             height,
             None,
             crate::image_preparation::ImportOrigin::Existing,
         ));
     }
+    (items, ids)
+}
+
+fn dock_fixture() -> (TempRoot, Harness<'static, SnappyRefApp>, Vec<i64>) {
+    let root = TempRoot::new("snappyref-dock-artboards");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let specs = [
+        (190, [59, 53, 50, 255]),
+        (110, [74, 67, 64, 255]),
+        (150, [47, 58, 58, 255]),
+        (120, [61, 51, 68, 255]),
+        (150, [68, 64, 58, 255]),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (height, color))| {
+        (
+            150,
+            height,
+            egui::pos2(i as f32 * 160.0 - 184.0, -119.0),
+            color,
+        )
+    })
+    .collect::<Vec<_>>();
+    let (items, ids) = loaded_images(&library, "dock", &specs);
     let mut app = test_app(Some(library));
     let selected = ids.clone();
     let mut harness = app_full_harness_with_startup(1.0 / 60.0, move |ctx| {
@@ -1959,4 +1978,133 @@ fn inspect_group_after_snapped_import_writes_artifact() {
         held > 0 && picker_opened && guides(&harness) == 0,
     );
     scenario.finish();
+}
+
+/// Two grouped images on the left and three loose ones, all selected.
+fn arrange_fixture(loose: [(u32, u32); 3]) -> (TempRoot, Harness<'static, SnappyRefApp>, Vec<i64>) {
+    let root = TempRoot::new("snappyref-arrange-groups");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let [a, b, c] = loose;
+    let (items, ids) = loaded_images(
+        &library,
+        "arrange",
+        &[
+            (150, 190, egui::pos2(-400.0, -200.0), [59, 53, 50, 255]),
+            (150, 110, egui::pos2(-240.0, -200.0), [74, 67, 64, 255]),
+            (a.0, a.1, egui::pos2(100.0, 150.0), [47, 58, 58, 255]),
+            (b.0, b.1, egui::pos2(300.0, -100.0), [61, 51, 68, 255]),
+            (c.0, c.1, egui::pos2(-100.0, 250.0), [68, 64, 58, 255]),
+        ],
+    );
+    let mut app = test_app(Some(library));
+    let grouped = ids[..2].to_vec();
+    let mut harness = app_full_harness_with_startup(1.0 / 60.0, move |ctx| {
+        for item in items {
+            app.canvas.add_prepared_placement_image(ctx, item);
+        }
+        app.canvas.select_placements(&grouped);
+        app.group_selection();
+        app
+    });
+    harness.set_size(egui::vec2(1280.0, 800.0));
+    for _ in 0..80 {
+        harness.step();
+    }
+    shortcut(&mut harness, CMD, egui::Key::A);
+    (root, harness, ids)
+}
+
+/// The Group's frame, then each image, as `[min.x, min.y, max.x, max.y]`
+/// rounded to a tenth.
+fn arranged_layout(h: &Harness<'_, SnappyRefApp>, ids: &[i64]) -> Vec<[f32; 4]> {
+    let canvas = &h.state().canvas;
+    let round = |rect: egui::Rect| {
+        [rect.min.x, rect.min.y, rect.max.x, rect.max.y].map(|v| (v * 10.0).round() / 10.0)
+    };
+    std::iter::once(canvas.groups()[0].container.unrotated_bounds())
+        .chain(ids.iter().map(|&id| {
+            canvas
+                .placement_for_id(id)
+                .unwrap()
+                .state
+                .geometry
+                .visual_bounds()
+        }))
+        .map(round)
+        .collect()
+}
+
+#[test]
+fn arranging_a_selection_moves_each_group_as_one_block() {
+    let loose = [(200, 150), (120, 160), (180, 120)];
+    for (loose, key, status, layout) in [
+        (
+            loose,
+            egui::Key::Q,
+            "Compacted 5 images",
+            [
+                [-272.5, -162.5, 37.5, 27.5],
+                [-272.5, -162.5, -122.5, 27.5],
+                [-122.5, -162.5, 27.5, -52.5],
+                [-272.5, 27.5, -72.5, 177.5],
+                [37.5, -162.5, 157.5, -2.5],
+                [-72.5, 27.5, 107.5, 147.5],
+            ],
+        ),
+        // Q evens the frame's width to the loose images' and scales its members.
+        (
+            [(300, 150), (300, 160), (300, 120)],
+            egui::Key::Q,
+            "Compacted 5 images",
+            [
+                [-312.5, -147.5, -12.5, 36.4],
+                [-312.5, -147.5, -167.3, 36.4],
+                [-167.3, -147.5, -22.2, -41.0],
+                [-12.5, 12.5, 287.5, 162.5],
+                [-12.5, -147.5, 287.5, 12.5],
+                [-312.5, 36.4, -12.5, 156.4],
+            ],
+        ),
+        (
+            loose,
+            egui::Key::W,
+            "Arranged 5 images in a row",
+            [
+                [-455.0, -90.0, -145.0, 100.0],
+                [-455.0, -90.0, -305.0, 100.0],
+                [-305.0, -90.0, -155.0, 20.0],
+                [35.0, -50.0, 235.0, 100.0],
+                [235.0, -60.0, 355.0, 100.0],
+                [-145.0, -20.0, 35.0, 100.0],
+            ],
+        ),
+        (
+            loose,
+            egui::Key::ArrowRight,
+            "Settled 4 images right",
+            [
+                [-70.0, -295.0, 240.0, -105.0],
+                [-70.0, -295.0, 80.0, -105.0],
+                [80.0, -295.0, 230.0, -185.0],
+                [160.0, 75.0, 360.0, 225.0],
+                [240.0, -180.0, 360.0, -20.0],
+                [-20.0, 190.0, 160.0, 310.0],
+            ],
+        ),
+    ] {
+        let (_root, mut h, ids) = arrange_fixture(loose);
+        let before = arranged_layout(&h, &ids);
+        shortcut(&mut h, egui::Modifiers::NONE, key);
+        // The Group reflows its members a few frames later, inside its frame.
+        for _ in 0..120 {
+            h.step();
+        }
+        assert_eq!(h.state().status, status);
+        assert_eq!(arranged_layout(&h, &ids), layout, "{key:?} {loose:?}");
+        shortcut(&mut h, CMD, egui::Key::Z);
+        for _ in 0..10 {
+            h.step();
+        }
+        assert_eq!(arranged_layout(&h, &ids), before, "{key:?} {loose:?} undo");
+    }
 }
