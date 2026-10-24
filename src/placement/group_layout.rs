@@ -8,6 +8,7 @@ pub(crate) struct GroupLayout {
     pub container: RectGeometry,
     pub members: Vec<(PlacementId, RectGeometry)>,
     pub gap: f32,
+    pub row_gap: f32,
     pub padding: f32,
 }
 
@@ -40,6 +41,7 @@ pub(crate) fn scale_group(
             .map(|&(id, geometry)| transform(geometry).map(|geometry| (id, geometry)))
             .collect::<Result<_, GroupLayoutError>>()?,
         gap: group.gap * factor,
+        row_gap: group.layout.row_gap * factor,
         padding: group.padding * factor,
     };
     if !valid_geometry(result.container)
@@ -48,6 +50,7 @@ pub(crate) fn scale_group(
             .iter()
             .any(|&(_, geometry)| !valid_geometry(geometry))
         || !result.gap.is_finite()
+        || !result.row_gap.is_finite()
         || !result.padding.is_finite()
     {
         return Err(GroupLayoutError::InvalidGeometry);
@@ -159,6 +162,7 @@ mod tests {
         members[1].1.center = Pos2::new(110.0, 50.0);
         let scaled = scale_group(&group, &members, 2.0).unwrap();
         assert_eq!(scaled.gap, 10.0);
+        assert_eq!(scaled.row_gap, 10.0);
         assert_eq!(scaled.padding, 20.0);
         assert_eq!(
             scaled.container.scaled_size(),

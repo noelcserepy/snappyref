@@ -1178,18 +1178,12 @@ impl CanvasState {
             if let Ok(layout) =
                 crate::placement::group_layout::scale_group(&group, &members, factor)
             {
-                group.container = layout.container;
-                group.gap = layout.gap;
-                group.layout.row_gap *= factor;
-                group.padding = layout.padding;
+                self.apply_group_layout(&mut group, layout);
                 let mut groups = self.groups().to_vec();
                 if let Some(target) = groups.iter_mut().find(|target| target.id == id) {
                     *target = group.clone();
                 }
                 self.replace_groups(groups);
-                for (member, geometry) in layout.members {
-                    self.set_group_member_geometry(member, geometry);
-                }
                 changed = true;
             }
         }
