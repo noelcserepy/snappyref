@@ -2108,3 +2108,20 @@ fn arranging_a_selection_moves_each_group_as_one_block() {
         assert_eq!(arranged_layout(&h, &ids), before, "{key:?} {loose:?} undo");
     }
 }
+
+#[test]
+fn arranging_a_lone_group_counts_its_images_and_leaves_it_in_place() {
+    let (_root, mut h, ids) = arrange_fixture([(200, 150), (120, 160), (180, 120)]);
+    let group = h.state().canvas.groups()[0].id;
+    h.state_mut().canvas.select_group(group);
+    let before = arranged_layout(&h, &ids);
+    for (key, status) in [
+        (egui::Key::Q, "Compacted 2 images"),
+        (egui::Key::W, "Arranged 2 images in a row"),
+        (egui::Key::E, "Arranged 2 images in a column"),
+    ] {
+        shortcut(&mut h, egui::Modifiers::NONE, key);
+        assert_eq!(h.state().status, status);
+        assert_eq!(arranged_layout(&h, &ids), before, "{key:?}");
+    }
+}

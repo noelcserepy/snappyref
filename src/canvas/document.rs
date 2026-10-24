@@ -523,7 +523,7 @@ impl CanvasState {
     pub fn arrange_selected_horizontal(&mut self, gap: f32) -> usize {
         let mut items = self.selected_arrangement_blocks(self.selected_arrangement_inputs());
         if items.len() <= 1 {
-            return items.len();
+            return self.arrangement_image_count(&items);
         }
 
         items.sort_by(|left, right| left.center().x.total_cmp(&right.center().x));
@@ -543,7 +543,7 @@ impl CanvasState {
     pub fn arrange_selected_vertical(&mut self, gap: f32) -> usize {
         let mut items = self.selected_arrangement_blocks(self.selected_arrangement_inputs());
         if items.len() <= 1 {
-            return items.len();
+            return self.arrangement_image_count(&items);
         }
 
         items.sort_by(|left, right| left.center().y.total_cmp(&right.center().y));
@@ -563,7 +563,7 @@ impl CanvasState {
     pub fn arrange_selected_compact(&mut self, gap: f32) -> usize {
         let items = self.selected_arrangement_blocks(self.selected_compact_input_items());
         if items.len() <= 1 {
-            return items.len();
+            return self.arrangement_image_count(&items);
         }
 
         let current_center = self
@@ -610,7 +610,7 @@ impl CanvasState {
     ) -> usize {
         let items = self.selected_arrangement_blocks(self.selected_arrangement_inputs());
         if items.len() <= 1 {
-            return items.len();
+            return self.arrangement_image_count(&items);
         }
 
         let cross_axis_grace = crate::placement::arrangement::SETTLE_BLOCK_GRACE_SCREEN
@@ -1161,6 +1161,19 @@ impl CanvasState {
                 ),
             }))
             .collect()
+    }
+
+    /// How many images `blocks` cover, counting a Group block's members.
+    fn arrangement_image_count(&self, blocks: &[PlacementArrangementInput]) -> usize {
+        blocks
+            .iter()
+            .map(|block| {
+                self.groups()
+                    .iter()
+                    .find(|group| group.id == block.id)
+                    .map_or(1, |group| group.members.len())
+            })
+            .sum()
     }
 
     /// Scales a Group block by `factor`, then moves its frame and members so
