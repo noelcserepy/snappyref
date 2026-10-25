@@ -16,6 +16,21 @@ impl CanvasState {
                 })
             })
     }
+    /// Writes a scaled layout onto `group` and its members. The caller stores
+    /// `group`, so a gesture can keep it out of history until release.
+    pub(crate) fn apply_group_layout(
+        &mut self,
+        group: &mut Group,
+        layout: crate::placement::group_layout::GroupLayout,
+    ) {
+        group.container = layout.container;
+        group.gap = layout.gap;
+        group.layout.row_gap = layout.row_gap;
+        group.padding = layout.padding;
+        for (id, geometry) in layout.members {
+            self.set_group_member_geometry(id, geometry);
+        }
+    }
     pub(super) fn set_group_member_geometry(&mut self, id: i64, geometry: RectGeometry) {
         if let Some(p) = self
             .document

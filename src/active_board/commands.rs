@@ -530,13 +530,8 @@ mod group_tests {
                 factor,
             )
             .unwrap();
-            let mut scaled = source.placement_for_id(placement.id()).unwrap();
-            scaled.state.geometry = layout.members[0].1;
-            source.apply_placement_history_state(Some(scaled));
             let mut group = source.groups()[0].clone();
-            group.container = layout.container;
-            group.gap = layout.gap;
-            group.padding = layout.padding;
+            source.apply_group_layout(&mut group, layout);
             source.replace_groups(vec![group]);
             source.select_group(group_id);
             let expected = source

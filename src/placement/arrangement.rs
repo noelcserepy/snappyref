@@ -15,6 +15,8 @@ const COMPACT_NORMALIZE_OCCUPANCY_GAIN: f32 = 0.025;
 pub(crate) struct PlacementArrangementInput {
     pub(crate) id: PlacementId,
     pub(crate) geometry: RectGeometry,
+    /// Compacting may move this item but never resize it.
+    pub(crate) keep_size: bool,
 }
 
 impl PlacementArrangementInput {
@@ -22,6 +24,7 @@ impl PlacementArrangementInput {
         Self {
             id,
             geometry: RectGeometry::new(center, display_size, 1.0, 0.0, 0),
+            keep_size: false,
         }
     }
 
@@ -72,6 +75,7 @@ impl Placement {
         PlacementArrangementInput {
             id: self.id(),
             geometry: RectGeometry::from_bounds(self.visual_bounds(), 0),
+            keep_size: false,
         }
     }
 
@@ -548,6 +552,9 @@ fn compact_axis_scale_factor(
     axis_buckets: &[SizeBucket],
     other_buckets: &[SizeBucket],
 ) -> (f32, ScaleCandidateKind) {
+    if item.keep_size {
+        return (1.0, ScaleCandidateKind::Original);
+    }
     let dimension = compact_item_dimension(item, axis);
     let Some(bucket) = axis_buckets
         .iter()

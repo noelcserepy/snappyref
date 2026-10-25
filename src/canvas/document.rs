@@ -13,7 +13,7 @@ use super::{
 };
 use crate::data::{
     CanvasAnnotation, CanvasAnnotationColor, CanvasAnnotationKind, CanvasRectangleFill,
-    CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, Placement, PlacementLifecycle,
+    CanvasStackItem, CanvasStrokeWidth, CanvasTextSize, GroupId, Placement, PlacementLifecycle,
 };
 use crate::placement::arrangement::PlacementArrangementInput;
 
@@ -521,9 +521,9 @@ impl CanvasState {
     }
 
     pub fn arrange_selected_horizontal(&mut self, gap: f32) -> usize {
-        let mut items = self.selected_arrangement_inputs();
+        let mut items = self.selected_arrangement_blocks(self.selected_arrangement_inputs());
         if items.len() <= 1 {
-            return items.len();
+            return self.arrangement_image_count(&items);
         }
 
         items.sort_by(|left, right| left.center().x.total_cmp(&right.center().x));
@@ -541,9 +541,9 @@ impl CanvasState {
     }
 
     pub fn arrange_selected_vertical(&mut self, gap: f32) -> usize {
-        let mut items = self.selected_arrangement_inputs();
+        let mut items = self.selected_arrangement_blocks(self.selected_arrangement_inputs());
         if items.len() <= 1 {
-            return items.len();
+            return self.arrangement_image_count(&items);
         }
 
         items.sort_by(|left, right| left.center().y.total_cmp(&right.center().y));
@@ -561,9 +561,9 @@ impl CanvasState {
     }
 
     pub fn arrange_selected_compact(&mut self, gap: f32) -> usize {
-        let items = self.selected_compact_input_items();
+        let items = self.selected_arrangement_blocks(self.selected_compact_input_items());
         if items.len() <= 1 {
-            return items.len();
+            return self.arrangement_image_count(&items);
         }
 
         let current_center = self
@@ -608,9 +608,9 @@ impl CanvasState {
         direction: crate::placement::arrangement::SettleDirection,
         gap: f32,
     ) -> usize {
-        let items = self.selected_arrangement_inputs();
+        let items = self.selected_arrangement_blocks(self.selected_arrangement_inputs());
         if items.len() <= 1 {
-            return items.len();
+            return self.arrangement_image_count(&items);
         }
 
         let cross_axis_grace = crate::placement::arrangement::SETTLE_BLOCK_GRACE_SCREEN
@@ -1138,6 +1138,69 @@ impl CanvasState {
             .collect()
     }
 
+    /// Each selected Group becomes one block the size of its frame, and its
+    /// members leave the list, so arranging moves the Group as a whole and
+    /// keeps its own layout and size.
+    fn selected_arrangement_blocks(
+        &self,
+        placements: Vec<PlacementArrangementInput>,
+    ) -> Vec<PlacementArrangementInput> {
+        let groups = self
+            .groups()
+            .iter()
+            .filter(|group| self.interaction.selected_group_ids.contains(&group.id))
+            .collect::<Vec<_>>();
+        placements
+            .into_iter()
+            .filter(|item| !groups.iter().any(|group| group.members.contains(&item.id)))
+            .chain(groups.iter().map(|group| PlacementArrangementInput {
+                id: group.id,
+                geometry: crate::data::RectGeometry::from_bounds(
+                    group.container.unrotated_bounds(),
+                    0,
+                ),
+                // Labels refit to their text, so a Group can't be resized exactly.
+                keep_size: true,
+            }))
+            .collect()
+    }
+
+    /// How many images `blocks` cover, counting a Group block's images.
+    fn arrangement_image_count(&self, blocks: &[PlacementArrangementInput]) -> usize {
+        blocks
+            .iter()
+            .map(|block| {
+                self.groups()
+                    .iter()
+                    .find(|group| group.id == block.id)
+                    .map_or(1, |group| self.group_image_count(group))
+            })
+            .sum()
+    }
+
+    /// A Group's image members, leaving out its labels and shapes.
+    fn group_image_count(&self, group: &crate::data::Group) -> usize {
+        group
+            .members
+            .iter()
+            .filter(|&&member| self.placement_by_id(member).is_some())
+            .count()
+    }
+
+    /// Moves a Group block's frame and members so the frame centers on
+    /// `center`. Returns how many of its images moved, or `None` when `id` is
+    /// not a Group.
+    fn place_group_block(&mut self, id: GroupId, center: egui::Pos2) -> Option<usize> {
+        let group = self.groups().iter().find(|group| group.id == id)?;
+        let delta = center - group.container.unrotated_bounds().center();
+        if delta.length() <= 0.001 {
+            return Some(0);
+        }
+        let images = self.group_image_count(group);
+        self.move_group(id, delta);
+        Some(images)
+    }
+
     fn selected_compact_input_items(&self) -> Vec<PlacementArrangementInput> {
         self.document
             .placements
@@ -1160,15 +1223,20 @@ impl CanvasState {
         offset: egui::Vec2,
     ) -> usize {
         let mut arranged_ids = Vec::with_capacity(placements.len());
+        let mut group_images = 0;
 
         for (placement_id, local_center) in placements {
+            let world_center = local_center + offset;
+            if let Some(moved) = self.place_group_block(placement_id, world_center) {
+                group_images += moved;
+                continue;
+            }
             if let Some(image) = self
                 .document
                 .placements
                 .iter_mut()
                 .find(|image| image.state.id == placement_id)
             {
-                let world_center = local_center + offset;
                 image.state.geometry.center.x = world_center.x;
                 image.state.geometry.center.y = world_center.y;
                 arranged_ids.push(placement_id);
@@ -1179,7 +1247,7 @@ impl CanvasState {
             self.mark_dirty(*placement_id);
         }
 
-        arranged_ids.len()
+        arranged_ids.len() + group_images
     }
 
     fn apply_arrangement_if_changed(
@@ -1188,15 +1256,20 @@ impl CanvasState {
         offset: egui::Vec2,
     ) -> usize {
         let mut arranged_ids = Vec::with_capacity(placements.len());
+        let mut group_images = 0;
 
         for (placement_id, local_center) in placements {
+            let world_center = local_center + offset;
+            if let Some(moved) = self.place_group_block(placement_id, world_center) {
+                group_images += moved;
+                continue;
+            }
             if let Some(image) = self
                 .document
                 .placements
                 .iter_mut()
                 .find(|image| image.state.id == placement_id)
             {
-                let world_center = local_center + offset;
                 if (image.state.geometry.center.x - world_center.x).abs() <= 0.001
                     && (image.state.geometry.center.y - world_center.y).abs() <= 0.001
                 {
@@ -1212,7 +1285,7 @@ impl CanvasState {
             self.mark_dirty(*placement_id);
         }
 
-        arranged_ids.len()
+        arranged_ids.len() + group_images
     }
 
     fn apply_compact_arrangement(
@@ -1222,15 +1295,20 @@ impl CanvasState {
         offset: egui::Vec2,
     ) -> usize {
         let mut changed_ids = Vec::with_capacity(placements.len());
+        let mut group_images = 0;
 
         for (placement_id, local_center) in placements {
+            let world_center = local_center + offset;
+            if let Some(moved) = self.place_group_block(placement_id, world_center) {
+                group_images += moved;
+                continue;
+            }
             if let Some(image) = self
                 .document
                 .placements
                 .iter_mut()
                 .find(|image| image.state.id == placement_id)
             {
-                let world_center = local_center + offset;
                 let scale_factor = scale_factors
                     .iter()
                     .find(|(scale_item_id, _)| *scale_item_id == placement_id)
@@ -1258,7 +1336,7 @@ impl CanvasState {
             self.mark_dirty(*placement_id);
         }
 
-        changed_ids.len()
+        changed_ids.len() + group_images
     }
 
     pub fn apply_target_area_to_selected_placements(&mut self, target_area: f32) -> usize {

@@ -903,13 +903,7 @@ impl CanvasState {
                             &gesture.members,
                             factor,
                         ) {
-                            group.container = layout.container;
-                            group.gap = layout.gap;
-                            group.layout.row_gap *= factor;
-                            group.padding = layout.padding;
-                            for (id, geometry) in layout.members {
-                                self.set_group_member_geometry(id, geometry);
-                            }
+                            self.apply_group_layout(&mut group, layout);
                             if let Some(target) =
                                 self.document.groups.iter_mut().find(|g| g.id == group.id)
                             {
