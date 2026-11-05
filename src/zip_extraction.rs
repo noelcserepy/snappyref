@@ -32,7 +32,10 @@ pub(crate) fn extract(
         let mut entry = archive
             .by_index(i)
             .map_err(|error| ExtractError::InvalidZip(error.to_string()))?;
-        let raw_name = entry.name().to_owned();
+        let raw_name = entry
+            .name()
+            .map_err(|error| ExtractError::InvalidZip(error.to_string()))?
+            .into_owned();
         let safe_relative = sanitize_entry_path(&raw_name)?;
         let out_path = staging_root.join(&safe_relative);
 
