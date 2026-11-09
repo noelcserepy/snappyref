@@ -593,7 +593,14 @@ impl SnappyRefApp {
         };
         let before = self.canvas.all_placement_ids();
         // -1 appends to the Group.
-        self.enqueue_sources_at(sources, screen_rect, center, group.map(|group| (group, -1)));
+        // An AI client's images go exactly where it asks.
+        self.enqueue_sources_at(
+            sources,
+            screen_rect,
+            center,
+            None,
+            group.map(|group| (group, -1)),
+        );
         let mut added = self.canvas.all_placement_ids();
         added.retain(|id| !before.contains(id));
         if added.is_empty() {

@@ -94,11 +94,61 @@ pub(crate) fn fit_selection_bounds_if_needed(
     )
 }
 
+/// The part of the canvas the user sees, in screen space: the whole canvas and
+/// what the sidebar leaves of it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct VisibleCanvas {
+    pub(crate) canvas_rect: egui::Rect,
+    pub(crate) visible_rect: egui::Rect,
+}
+
+impl VisibleCanvas {
+    /// A pasted or dropped batch lands where the user can see it. Returns the
+    /// smallest move that puts `bounds` inside the visible canvas, keeping focus
+    /// padding. On an axis where the batch is too big, it centers the batch and
+    /// zooms out until the batch fits.
+    pub(crate) fn land(self, canvas: &mut CanvasState, bounds: egui::Rect) -> egui::Vec2 {
+        let padding_world =
+            crate::canvas::FOCUS_SELECTION_PADDING_SCREEN / canvas.viewport_state().camera_zoom;
+        let area = egui::Rect::from_two_pos(
+            canvas.screen_to_world(self.visible_rect.min, self.canvas_rect),
+            canvas.screen_to_world(self.visible_rect.max, self.canvas_rect),
+        )
+        .shrink(padding_world);
+        let offset = egui::vec2(
+            axis_offset_inside(bounds.x_range(), area.x_range()),
+            axis_offset_inside(bounds.y_range(), area.y_range()),
+        );
+        fit_selection_bounds_if_needed(
+            canvas,
+            bounds.translate(offset),
+            self.canvas_rect,
+            self.visible_rect,
+        );
+        offset
+    }
+}
+
+fn axis_offset_inside(span: egui::Rangef, area: egui::Rangef) -> f32 {
+    if span.span() > area.span() {
+        area.center() - span.center()
+    } else if span.min < area.min {
+        area.min - span.min
+    } else if span.max > area.max {
+        area.max - span.max
+    } else {
+        0.0
+    }
+}
+
+/// Lays a batch out around `anchor_world`. With `landing`, the batch then moves
+/// inside the visible canvas; without it, it stays centered on the anchor.
 pub(crate) fn plan_source_intent_geometries(
     canvas: &mut CanvasState,
     intents: &[SourceIntent],
     anchor_world: egui::Pos2,
     screen_rect: egui::Rect,
+    landing: Option<VisibleCanvas>,
     settings: PlacementCreationSettings,
 ) -> Vec<RectGeometry> {
     let uses_approximate_dimensions = intents.iter().any(|intent| intent.approximate_dimensions);
@@ -109,6 +159,29 @@ pub(crate) fn plan_source_intent_geometries(
             display_size_for_dimensions(width, height, settings.placement_target_area)
         })
         .collect::<Vec<_>>();
+    let mut anchor_world = anchor_world;
+    if let Some(landing) = landing {
+        let layout = if uses_approximate_dimensions && sizes.len() > 1 {
+            crate::placement::arrangement::balanced_grid_layout_for_sizes(
+                &sizes,
+                settings.gap,
+                anchor_world,
+            )
+        } else {
+            crate::placement::arrangement::compact_layout_for_sizes(
+                &sizes,
+                settings.gap,
+                anchor_world,
+            )
+        };
+        if let Some(bounds) = layout
+            .into_iter()
+            .map(|(center, size)| egui::Rect::from_center_size(center, size))
+            .reduce(|left, right| left.union(right))
+        {
+            anchor_world += landing.land(canvas, bounds);
+        }
+    }
     let centers = if uses_approximate_dimensions && sizes.len() > 1 {
         canvas.balanced_guided_layout_for_sizes(&sizes, anchor_world, screen_rect, settings.gap)
     } else {
@@ -192,11 +265,18 @@ pub(crate) fn create_committed_loading_placements(
     intents: Vec<SourceIntent>,
     anchor_world: egui::Pos2,
     screen_rect: egui::Rect,
+    landing: Option<VisibleCanvas>,
     settings: PlacementCreationSettings,
 ) -> CommittedLoadingPlacementBatch {
     let stack_before = canvas.canvas_stack_order();
-    let geometry =
-        plan_source_intent_geometries(canvas, &intents, anchor_world, screen_rect, settings);
+    let geometry = plan_source_intent_geometries(
+        canvas,
+        &intents,
+        anchor_world,
+        screen_rect,
+        landing,
+        settings,
+    );
     let mut created = Vec::with_capacity(intents.len());
     for (intent, geometry) in intents.into_iter().zip(geometry) {
         created.push(create_one_committed_loading_placement(
@@ -520,6 +600,7 @@ mod tests {
                 eframe::egui::Pos2::ZERO,
                 eframe::egui::vec2(800.0, 600.0),
             ),
+            None,
             settings,
         );
 

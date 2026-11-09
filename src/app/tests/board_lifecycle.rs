@@ -165,7 +165,7 @@ fn cross_board_paste_creates_new_images_and_annotations_on_active_board() {
     library.set_active_board(second.id).unwrap();
     app.active_board_id = second.id;
     app.refresh_board_summaries();
-    app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
+    app.paste_board_payload_at(&payload, test_screen_rect(), egui::pos2(300.0, 300.0))
         .unwrap();
 
     app.flush_persistence();

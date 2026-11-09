@@ -708,3 +708,141 @@ fn reopening_board_keeps_failed_placements_without_loading_them_as_assets() {
         0
     );
 }
+
+/// Every paste lands fully inside the visible canvas: copied selections at the
+/// pointer even when their source is far away or the view is full, and image
+/// batches near the edge or bigger than the view (after a zoom out).
+#[test]
+fn pasted_content_lands_inside_visible_canvas() {
+    use crate::data::ViewportState;
+
+    let ctx = egui::Context::default();
+    let screen = test_screen_rect();
+    let near_right_edge = Some(egui::pos2(1150.0, 400.0));
+    let row = [
+        egui::pos2(0., 0.),
+        egui::pos2(320., 0.),
+        egui::pos2(640., 0.),
+    ];
+    let grid = (-2..=2)
+        .flat_map(|x| (-1..=1).map(move |y| egui::pos2(x as f32 * 320., y as f32 * 320.)))
+        .collect::<Vec<_>>();
+    enum Paste {
+        Selection { copied: usize },
+        Images(usize),
+    }
+    let cases: [(&str, &[egui::Pos2], egui::Pos2, Option<egui::Pos2>, Paste); 6] = [
+        (
+            "copied row, view panned far away",
+            &row,
+            egui::pos2(6000., 3000.),
+            None,
+            Paste::Selection { copied: 3 },
+        ),
+        (
+            "two copied items, view full of items",
+            &grid,
+            egui::Pos2::ZERO,
+            None,
+            Paste::Selection { copied: 2 },
+        ),
+        (
+            "copied item just off the right edge",
+            &row[..1],
+            egui::pos2(-1000., 0.),
+            Some(egui::pos2(300.0, 400.0)),
+            Paste::Selection { copied: 1 },
+        ),
+        (
+            "six images near the right edge",
+            &[],
+            egui::Pos2::ZERO,
+            near_right_edge,
+            Paste::Images(6),
+        ),
+        (
+            "one image near the right edge",
+            &[],
+            egui::Pos2::ZERO,
+            near_right_edge,
+            Paste::Images(1),
+        ),
+        (
+            "24 images, bigger than the view",
+            &[],
+            egui::Pos2::ZERO,
+            None,
+            Paste::Images(24),
+        ),
+    ];
+
+    for (case, existing, view_center, pointer, paste) in cases {
+        let root = TempRoot::new("snappyref-paste-lands-in-view");
+        let library = Library::initialize(root.to_path_buf()).unwrap();
+        let mut app = test_app(Some(library.clone()));
+        app.import_worker = Some(crate::image_preparation::ImagePrepWorker::new(
+            library.clone(),
+            ctx.clone(),
+            None,
+        ));
+        for center in existing {
+            let mut item = persisted_loaded_item(&library, library.allocate_document_id(), 1);
+            item.placement.state.geometry.center = *center;
+            item.placement.state.geometry.scale = 300.0;
+            item.placement = library.fixture_placement(1, item.placement).unwrap();
+            app.canvas.add_prepared_placement_image(&ctx, item);
+        }
+        let before = app.canvas.all_placement_ids();
+        let (payload, expected_count) = match paste {
+            Paste::Selection { copied } => {
+                app.canvas.select_placements(&before[..copied]);
+                (app.copy_selected_board_payload(), copied)
+            }
+            Paste::Images(count) => (None, count),
+        };
+        app.canvas.apply_viewport_state(&ViewportState {
+            camera_pan_x: -view_center.x,
+            camera_pan_y: -view_center.y,
+            camera_zoom: 1.0,
+            ..Default::default()
+        });
+        let anchor = app.preferred_import_world_with_pointer(screen, pointer);
+        match paste {
+            Paste::Selection { .. } => app
+                .paste_board_payload_at(&payload.unwrap(), screen, anchor)
+                .unwrap(),
+            Paste::Images(count) => app.enqueue_import_sources(
+                (0..count)
+                    .map(|i| {
+                        crate::image_preparation::ImportSource::Path(
+                            root.join(format!("missing-{i}.png")),
+                        )
+                    })
+                    .collect(),
+                screen,
+                anchor,
+            ),
+        }
+
+        let visible = app.import_viewport_world_rect(screen);
+        let pasted = app
+            .canvas
+            .all_placement_ids()
+            .into_iter()
+            .filter(|id| !before.contains(id))
+            .map(|id| {
+                let geometry = app.canvas.placement_for_id(id).unwrap().state.geometry;
+                egui::Rect::from_center_size(geometry.center, geometry.scaled_size())
+            })
+            .collect::<Vec<_>>();
+        let outside = pasted
+            .iter()
+            .filter(|rect| !visible.contains_rect(**rect))
+            .collect::<Vec<_>>();
+        assert_eq!(pasted.len(), expected_count, "{case}");
+        assert!(
+            outside.is_empty(),
+            "{case}: {outside:?} outside visible canvas {visible:?}"
+        );
+    }
+}

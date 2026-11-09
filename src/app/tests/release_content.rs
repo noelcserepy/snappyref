@@ -114,7 +114,7 @@ fn group_copy_duplicate_delete_ungroup_and_paste_history_preserve_structure() {
         None,
     ));
     app.switch_to_board(other.id);
-    app.paste_board_payload_at(&payload, egui::pos2(0., 0.))
+    app.paste_board_payload_at(&payload, test_screen_rect(), egui::pos2(0., 0.))
         .unwrap();
     let pasted = app.canvas.groups()[0].clone();
     assert_eq!(
@@ -146,26 +146,20 @@ fn group_copy_duplicate_delete_ungroup_and_paste_history_preserve_structure() {
             );
         }
     }
-    app.paste_board_payload_at(&payload, egui::pos2(0., 0.))
+    app.paste_board_payload_at(&payload, test_screen_rect(), egui::pos2(0., 0.))
         .unwrap();
     assert_eq!(app.canvas.groups().len(), 2);
     let second = app.canvas.groups()[1].clone();
-    for new_id in &second.members {
-        for old_id in &pasted.members {
-            assert!(
-                !app.canvas
-                    .placement_for_id(*new_id)
-                    .unwrap()
-                    .visual_bounds()
-                    .intersects(
-                        app.canvas
-                            .placement_for_id(*old_id)
-                            .unwrap()
-                            .visual_bounds()
-                    )
-            );
-        }
-    }
+    // A paste lands at the pointer, on top of what is already there.
+    let geometries = |group: &crate::data::Group| {
+        group
+            .members
+            .iter()
+            .map(|id| app.canvas.placement_for_id(*id).unwrap().state.geometry)
+            .map(|geometry| (geometry.center, geometry.scaled_size()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(geometries(&second), geometries(&pasted));
 
     app.undo_document_history(&ctx);
     assert_eq!(app.canvas.groups(), std::slice::from_ref(&pasted));

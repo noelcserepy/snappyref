@@ -763,11 +763,18 @@ impl SnappyRefApp {
     fn paste_board_payload_at(
         &mut self,
         payload: &crate::sources::clipboard::ClipboardBoardSelection,
+        screen_rect: egui::Rect,
         anchor: egui::Pos2,
     ) -> Result<(), String> {
+        // A Group reflows what it admits, so only a canvas paste lands in view.
+        let landing = self
+            .canvas
+            .group_paste_context()
+            .is_none()
+            .then(|| self.visible_canvas(screen_rect));
         let viewport = self.startup_viewport_world_rect();
         let (owner, mut context) = self.board_edit_context(viewport);
-        self.status = owner.paste_payload(&mut context, payload, anchor)?;
+        self.status = owner.paste_payload(&mut context, payload, anchor, landing)?;
         self.refresh_board_summaries();
         Ok(())
     }

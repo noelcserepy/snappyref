@@ -761,7 +761,7 @@ fn copied_group_survives_dedupe_and_reopen() {
         .register_original(&path, "image/png", 1, 1, 4, None)
         .unwrap();
     assert!(fresh.id > payload.placements.iter().map(|p| p.asset_id).max().unwrap());
-    app.paste_board_payload_at(&payload, egui::pos2(300., 0.))
+    app.paste_board_payload_at(&payload, test_screen_rect(), egui::pos2(300., 0.))
         .unwrap();
     let pasted = app.canvas.groups()[0].members.clone();
     assert_eq!(app.canvas.all_placement_ids(), pasted);
@@ -795,7 +795,7 @@ fn copied_group_survives_dedupe_and_reopen() {
             .collect::<Vec<_>>()
     );
     assert_eq!(app.canvas.groups()[0].members, pasted);
-    app.paste_board_payload_at(&payload, egui::pos2(600., 0.))
+    app.paste_board_payload_at(&payload, test_screen_rect(), egui::pos2(600., 0.))
         .unwrap();
     let second_paste = &app.canvas.groups().last().unwrap().members;
     assert_eq!(
@@ -920,7 +920,7 @@ fn group_paste_undo_removes_only_pasted_members() {
     let payload = h.state().copy_selected_board_payload().unwrap();
     let app = h.state_mut();
     app.canvas.select_group(group);
-    app.paste_board_payload_at(&payload, egui::pos2(700., 100.))
+    app.paste_board_payload_at(&payload, test_screen_rect(), egui::pos2(700., 100.))
         .unwrap();
     assert_eq!(app.canvas.groups()[0].members.len(), 7);
     app.undo_document_history(&ctx);
@@ -929,7 +929,7 @@ fn group_paste_undo_removes_only_pasted_members() {
     let mut repeated = payload;
     repeated.stack_order[1] = repeated.stack_order[0].clone();
     app.canvas.select_content(&[], &[]);
-    app.paste_board_payload_at(&repeated, egui::pos2(700., 100.))
+    app.paste_board_payload_at(&repeated, test_screen_rect(), egui::pos2(700., 100.))
         .unwrap();
     app.undo_document_history(&ctx);
     assert_eq!(app.canvas.all_placement_ids().len(), 5);
@@ -965,7 +965,7 @@ fn member_paste_redo_restores_reflowed_members() {
     };
     let before = geometry(&h);
     h.state_mut()
-        .paste_board_payload_at(&payload, egui::pos2(700., 100.))
+        .paste_board_payload_at(&payload, test_screen_rect(), egui::pos2(700., 100.))
         .unwrap();
     let pasted = geometry(&h);
     assert_eq!(pasted.len(), 6);

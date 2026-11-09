@@ -168,6 +168,6 @@ fn assert_copy_keeps_stack_order(
 
 fn paste_selection(app: &mut SnappyRefApp) {
     let payload = app.copy_selected_board_payload().unwrap();
-    app.paste_board_payload_at(&payload, egui::pos2(300.0, 300.0))
+    app.paste_board_payload_at(&payload, test_screen_rect(), egui::pos2(300.0, 300.0))
         .unwrap();
 }
