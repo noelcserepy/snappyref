@@ -23,11 +23,11 @@ const LABEL_EMPTY_WIDTH_EM: f32 = 2.0;
 pub(crate) fn textbox_font_size(text_size: CanvasTextSize) -> f32 {
     let baseline = crate::placement::placement_target_reference_span();
     match text_size {
-        CanvasTextSize::S => baseline * (11.0 / 300.0),
+        CanvasTextSize::S => baseline * (8.0 / 300.0),
         CanvasTextSize::M => baseline * (16.0 / 300.0),
-        CanvasTextSize::L => baseline * (24.0 / 300.0),
-        CanvasTextSize::Xl => baseline * (36.0 / 300.0),
-        CanvasTextSize::Xxl => baseline * (56.0 / 300.0),
+        CanvasTextSize::L => baseline * (32.0 / 300.0),
+        CanvasTextSize::Xl => baseline * (64.0 / 300.0),
+        CanvasTextSize::Xxl => baseline * (128.0 / 300.0),
     }
 }
 
