@@ -165,20 +165,7 @@ impl CanvasState {
         arrangement_inputs
     }
 
-    pub fn balanced_guided_layout_for_sizes(
-        &mut self,
-        sizes: &[egui::Vec2],
-        center_world: egui::Pos2,
-        screen_rect: egui::Rect,
-        gap: f32,
-    ) -> Vec<(egui::Pos2, egui::Vec2)> {
-        let mut arrangement_inputs =
-            crate::placement::arrangement::balanced_grid_layout_for_sizes(sizes, gap, center_world);
-        self.guide_snap_arrangement_inputs(&mut arrangement_inputs, screen_rect);
-        arrangement_inputs
-    }
-
-    fn guide_snap_arrangement_inputs(
+    pub(crate) fn guide_snap_arrangement_inputs(
         &mut self,
         arrangement_inputs: &mut [(egui::Pos2, egui::Vec2)],
         screen_rect: egui::Rect,

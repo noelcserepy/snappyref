@@ -103,6 +103,13 @@ pub(crate) struct VisibleCanvas {
 }
 
 impl VisibleCanvas {
+    pub(crate) fn world_rect(self, canvas: &CanvasState) -> egui::Rect {
+        egui::Rect::from_two_pos(
+            canvas.screen_to_world(self.visible_rect.min, self.canvas_rect),
+            canvas.screen_to_world(self.visible_rect.max, self.canvas_rect),
+        )
+    }
+
     /// A pasted or dropped batch lands where the user can see it. Returns the
     /// smallest move that puts `bounds` inside the visible canvas, keeping focus
     /// padding. On an axis where the batch is too big, it centers the batch and
@@ -110,11 +117,7 @@ impl VisibleCanvas {
     pub(crate) fn land(self, canvas: &mut CanvasState, bounds: egui::Rect) -> egui::Vec2 {
         let padding_world =
             crate::canvas::FOCUS_SELECTION_PADDING_SCREEN / canvas.viewport_state().camera_zoom;
-        let area = egui::Rect::from_two_pos(
-            canvas.screen_to_world(self.visible_rect.min, self.canvas_rect),
-            canvas.screen_to_world(self.visible_rect.max, self.canvas_rect),
-        )
-        .shrink(padding_world);
+        let area = self.world_rect(canvas).shrink(padding_world);
         let offset = egui::vec2(
             axis_offset_inside(bounds.x_range(), area.x_range()),
             axis_offset_inside(bounds.y_range(), area.y_range()),
@@ -159,36 +162,29 @@ pub(crate) fn plan_source_intent_geometries(
             display_size_for_dimensions(width, height, settings.placement_target_area)
         })
         .collect::<Vec<_>>();
-    let mut anchor_world = anchor_world;
-    if let Some(landing) = landing {
-        let layout = if uses_approximate_dimensions && sizes.len() > 1 {
-            crate::placement::arrangement::balanced_grid_layout_for_sizes(
-                &sizes,
-                settings.gap,
-                anchor_world,
-            )
-        } else {
-            crate::placement::arrangement::compact_layout_for_sizes(
-                &sizes,
-                settings.gap,
-                anchor_world,
-            )
-        };
-        if let Some(bounds) = layout
-            .into_iter()
-            .map(|(center, size)| egui::Rect::from_center_size(center, size))
+    let mut layout = if uses_approximate_dimensions && sizes.len() > 1 {
+        crate::placement::arrangement::balanced_grid_layout_for_sizes(
+            &sizes,
+            settings.gap,
+            anchor_world,
+        )
+    } else {
+        crate::placement::arrangement::compact_layout_for_sizes(&sizes, settings.gap, anchor_world)
+    };
+    if let Some(landing) = landing
+        && let Some(bounds) = layout
+            .iter()
+            .map(|(center, size)| egui::Rect::from_center_size(*center, *size))
             .reduce(|left, right| left.union(right))
-        {
-            anchor_world += landing.land(canvas, bounds);
+    {
+        let offset = landing.land(canvas, bounds);
+        for (center, _) in &mut layout {
+            *center += offset;
         }
     }
-    let centers = if uses_approximate_dimensions && sizes.len() > 1 {
-        canvas.balanced_guided_layout_for_sizes(&sizes, anchor_world, screen_rect, settings.gap)
-    } else {
-        canvas.compact_guided_layout_for_sizes(&sizes, anchor_world, screen_rect, settings.gap)
-    };
+    canvas.guide_snap_arrangement_inputs(&mut layout, screen_rect);
 
-    centers
+    layout
         .into_iter()
         .map(|(center_world, size_world)| RectGeometry::new(center_world, size_world, 1.0, 0.0, 0))
         .collect()

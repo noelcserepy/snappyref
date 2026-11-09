@@ -141,10 +141,7 @@ impl SnappyRefApp {
                 }
                 let source_count = sources.len();
                 let destination = self.canvas.group_paste_context();
-                // A Group reflows what it admits, so only a canvas paste lands in view.
-                let landing = destination
-                    .is_none()
-                    .then(|| self.visible_canvas(screen_rect));
+                let landing = self.paste_landing(screen_rect);
                 self.enqueue_sources_at(sources, screen_rect, desired_world, landing, destination);
                 if pureref {
                     self.status = if source_count == 1 {
@@ -377,14 +374,20 @@ impl SnappyRefApp {
         }
     }
 
+    /// Where a paste lands. A Group reflows what it admits, so only a canvas
+    /// paste moves into view.
+    pub(super) fn paste_landing(
+        &self,
+        screen_rect: egui::Rect,
+    ) -> Option<crate::placement::creation::VisibleCanvas> {
+        self.canvas
+            .group_paste_context()
+            .is_none()
+            .then(|| self.visible_canvas(screen_rect))
+    }
+
     pub(super) fn import_viewport_world_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
-        let visible_screen_rect = self.visible_canvas_screen_rect(screen_rect);
-        egui::Rect::from_two_pos(
-            self.canvas
-                .screen_to_world(visible_screen_rect.min, screen_rect),
-            self.canvas
-                .screen_to_world(visible_screen_rect.max, screen_rect),
-        )
+        self.visible_canvas(screen_rect).world_rect(&self.canvas)
     }
 
     pub(super) fn preferred_import_world_with_pointer(

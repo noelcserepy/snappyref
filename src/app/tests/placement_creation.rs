@@ -830,10 +830,7 @@ fn pasted_content_lands_inside_visible_canvas() {
             .all_placement_ids()
             .into_iter()
             .filter(|id| !before.contains(id))
-            .map(|id| {
-                let geometry = app.canvas.placement_for_id(id).unwrap().state.geometry;
-                egui::Rect::from_center_size(geometry.center, geometry.scaled_size())
-            })
+            .map(|id| app.canvas.placement_for_id(id).unwrap().visual_bounds())
             .collect::<Vec<_>>();
         let outside = pasted
             .iter()
@@ -845,4 +842,38 @@ fn pasted_content_lands_inside_visible_canvas() {
             "{case}: {outside:?} outside visible canvas {visible:?}"
         );
     }
+}
+
+#[test]
+fn rotated_copy_lands_inside_visible_canvas() {
+    let ctx = egui::Context::default();
+    let root = TempRoot::new("snappyref-rotated-paste");
+    let library = Library::initialize(root.to_path_buf()).unwrap();
+    let mut app = test_app(Some(library.clone()));
+    let mut item = persisted_loaded_item(&library, library.allocate_document_id(), 1);
+    item.placement.state.geometry.size = egui::vec2(600., 100.);
+    item.placement.state.geometry.center = egui::pos2(0., -400.);
+    item.placement.state.geometry.rotation = std::f32::consts::FRAC_PI_2;
+    item.placement = library.fixture_placement(1, item.placement).unwrap();
+    let id = item.placement.id();
+    app.canvas.add_prepared_placement_image(&ctx, item);
+    app.canvas.select_placements(&[id]);
+    let payload = app.copy_selected_board_payload().unwrap();
+    let screen = test_screen_rect();
+    let anchor = app.preferred_import_world_with_pointer(screen, Some(egui::pos2(600., 780.)));
+
+    app.paste_board_payload_at(&payload, screen, anchor)
+        .unwrap();
+
+    let pasted = app
+        .canvas
+        .placement_for_id(app.canvas.selected_placement_ids()[0])
+        .unwrap();
+    assert_ne!(pasted.id(), id);
+    let visible = app.import_viewport_world_rect(screen);
+    assert!(
+        visible.contains_rect(pasted.visual_bounds()),
+        "{:?} outside {visible:?}",
+        pasted.visual_bounds()
+    );
 }

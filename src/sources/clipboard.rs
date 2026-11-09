@@ -662,7 +662,7 @@ pub(crate) fn clipboard_payload_bounds(payload: &ClipboardBoardSelection) -> Opt
         bounds = Some(bounds.map_or(group.bounds(), |existing| existing.union(group.bounds())));
     }
     for placement in &payload.placements {
-        let rect = placement.geometry().unrotated_bounds();
+        let rect = placement.geometry().visual_bounds();
         bounds = Some(match bounds {
             Some(existing) => existing.union(rect),
             None => rect,

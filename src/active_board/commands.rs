@@ -40,7 +40,8 @@ pub(crate) fn paste_json_at(
 }
 
 /// Centers the copied selection on the anchor. With `landing`, it then moves
-/// inside the visible canvas. It may cover items already there.
+/// inside the visible canvas. It may cover items already there. This is where an
+/// outside payload is validated; a duplicate's own payload is trusted.
 pub(crate) fn paste_board_payload_at(
     context: &mut ActiveBoardCommandContext<'_>,
     payload: &ClipboardBoardSelection,
@@ -67,7 +68,6 @@ fn paste_payload(
     // Duplicate sources in payload order: selected placements, then annotations.
     sources: Option<&[i64]>,
 ) -> Result<PasteCommandOutcome, String> {
-    validate_clipboard_payload(payload)?;
     let group_context = context.canvas.group_paste_context();
     let Some(library) = context.library else {
         return Err("Storage unavailable".to_owned());
