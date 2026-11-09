@@ -129,7 +129,9 @@ impl SnappyRefApp {
 
         match read(paste_text.as_deref()) {
             Ok(Some(ClipboardContent::BoardSelection(selection))) => {
-                if let Err(error) = self.paste_board_payload_at(&selection, desired_world) {
+                if let Err(error) =
+                    self.paste_board_payload_at(&selection, screen_rect, desired_world)
+                {
                     self.status = error;
                 }
             }
@@ -139,7 +141,8 @@ impl SnappyRefApp {
                 }
                 let source_count = sources.len();
                 let destination = self.canvas.group_paste_context();
-                self.enqueue_sources_at(sources, screen_rect, desired_world, destination);
+                let landing = self.paste_landing(screen_rect);
+                self.enqueue_sources_at(sources, screen_rect, desired_world, landing, destination);
                 if pureref {
                     self.status = if source_count == 1 {
                         "Queued PureRef paste: 1 image".to_owned()
@@ -159,13 +162,15 @@ impl SnappyRefApp {
         screen_rect: egui::Rect,
         desired_world: egui::Pos2,
     ) {
-        self.enqueue_sources_at(sources, screen_rect, desired_world, None);
+        let landing = Some(self.visible_canvas(screen_rect));
+        self.enqueue_sources_at(sources, screen_rect, desired_world, landing, None);
     }
     pub(super) fn enqueue_sources_at(
         &mut self,
         sources: Vec<ImportSource>,
         screen_rect: egui::Rect,
         desired_world: egui::Pos2,
+        landing: Option<crate::placement::creation::VisibleCanvas>,
         destination: Option<(i64, i64)>,
     ) {
         let config = self.import_request_config();
@@ -184,6 +189,7 @@ impl SnappyRefApp {
             &self.external_hover_provisional_placement_ids,
             screen_rect,
             desired_world,
+            landing,
             config,
             trace,
             destination,
@@ -358,14 +364,30 @@ impl SnappyRefApp {
         self.preferred_import_world_with_pointer(screen_rect, pointer_screen_pos)
     }
 
+    pub(super) fn visible_canvas(
+        &self,
+        screen_rect: egui::Rect,
+    ) -> crate::placement::creation::VisibleCanvas {
+        crate::placement::creation::VisibleCanvas {
+            canvas_rect: screen_rect,
+            visible_rect: self.visible_canvas_screen_rect(screen_rect),
+        }
+    }
+
+    /// Where a paste lands. A Group reflows what it admits, so only a canvas
+    /// paste moves into view.
+    pub(super) fn paste_landing(
+        &self,
+        screen_rect: egui::Rect,
+    ) -> Option<crate::placement::creation::VisibleCanvas> {
+        self.canvas
+            .group_paste_context()
+            .is_none()
+            .then(|| self.visible_canvas(screen_rect))
+    }
+
     pub(super) fn import_viewport_world_rect(&self, screen_rect: egui::Rect) -> egui::Rect {
-        let visible_screen_rect = self.visible_canvas_screen_rect(screen_rect);
-        egui::Rect::from_two_pos(
-            self.canvas
-                .screen_to_world(visible_screen_rect.min, screen_rect),
-            self.canvas
-                .screen_to_world(visible_screen_rect.max, screen_rect),
-        )
+        self.visible_canvas(screen_rect).world_rect(&self.canvas)
     }
 
     pub(super) fn preferred_import_world_with_pointer(

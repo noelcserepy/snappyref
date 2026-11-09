@@ -1,5 +1,5 @@
 #[cfg(test)]
-use crate::sources::clipboard::decode_board_selection;
+use crate::sources::clipboard::{decode_board_selection, validate_clipboard_payload};
 use eframe::egui;
 
 use crate::canvas::CanvasState;
@@ -9,7 +9,6 @@ use crate::data::{
 use crate::library::storage::Library;
 use crate::sources::clipboard::{
     ClipboardBoardSelection, clipboard_payload_bounds, copy_selected_board_payload,
-    validate_clipboard_payload,
 };
 
 pub(crate) struct ActiveBoardCommandContext<'a> {
@@ -36,37 +35,42 @@ pub(crate) fn paste_json_at(
         return Ok(None);
     };
 
-    paste_board_payload_at(context, &payload, anchor_world).map(Some)
+    paste_board_payload_at(context, &payload, anchor_world, None).map(Some)
 }
 
+/// Centers the copied selection on the anchor. With `landing`, it then moves
+/// inside the visible canvas. It may cover items already there. The payload was
+/// validated where it was decoded, or built from this canvas.
 pub(crate) fn paste_board_payload_at(
     context: &mut ActiveBoardCommandContext<'_>,
     payload: &ClipboardBoardSelection,
-    requested_anchor_world: egui::Pos2,
+    anchor_world: egui::Pos2,
+    landing: Option<crate::placement::creation::VisibleCanvas>,
 ) -> Result<PasteCommandOutcome, String> {
-    paste_payload(context, payload, requested_anchor_world, None)
+    let source_center = egui::pos2(payload.source_center_x, payload.source_center_y);
+    let mut target_center = anchor_world;
+    if let Some(landing) = landing
+        && let Some(bounds) = clipboard_payload_bounds(payload)
+    {
+        target_center += landing.land(
+            context.canvas,
+            bounds.translate(anchor_world - source_center),
+        );
+    }
+    paste_payload(context, payload, target_center, None)
 }
 fn paste_payload(
     context: &mut ActiveBoardCommandContext<'_>,
     payload: &ClipboardBoardSelection,
-    requested_anchor_world: egui::Pos2,
+    target_center: egui::Pos2,
     // Duplicate sources in payload order: selected placements, then annotations.
     sources: Option<&[i64]>,
 ) -> Result<PasteCommandOutcome, String> {
-    validate_clipboard_payload(payload)?;
     let group_context = context.canvas.group_paste_context();
     let Some(library) = context.library else {
         return Err("Storage unavailable".to_owned());
     };
-    let source_center = egui::pos2(payload.source_center_x, payload.source_center_y);
-    let target_anchor_world = placement_anchor_for_payload(
-        context.canvas,
-        context.viewport_world,
-        context.placement_gap,
-        payload,
-        requested_anchor_world,
-    )?;
-    let delta = target_anchor_world - source_center;
+    let delta = target_center - egui::pos2(payload.source_center_x, payload.source_center_y);
     let mut reload = Vec::new();
 
     let mut pasted_placement_ids = Vec::new();
@@ -238,7 +242,14 @@ pub(crate) fn duplicate_selection(
         .into_iter()
         .chain(context.canvas.selected_annotation_ids())
         .collect::<Vec<_>>();
-    let mut outcome = paste_payload(context, &payload, bounds.center() + offset, Some(&sources))?;
+    let target_center = duplicate_center(
+        context.canvas,
+        context.viewport_world,
+        context.placement_gap,
+        bounds,
+        bounds.center() + offset,
+    );
+    let mut outcome = paste_payload(context, &payload, target_center, Some(&sources))?;
     outcome.status = outcome.status.replacen("Pasted", "Duplicated", 1);
     Ok(Some(outcome))
 }
@@ -319,16 +330,14 @@ fn pasted_stack_order(
     pasted_stack_order
 }
 
-fn placement_anchor_for_payload(
+/// A duplicate goes in the nearest free spot beside existing items.
+fn duplicate_center(
     canvas: &CanvasState,
     viewport_world: egui::Rect,
     placement_gap: f32,
-    payload: &ClipboardBoardSelection,
+    bounds: egui::Rect,
     requested_anchor_world: egui::Pos2,
-) -> Result<egui::Pos2, String> {
-    let Some(bounds) = clipboard_payload_bounds(payload) else {
-        return Ok(requested_anchor_world);
-    };
+) -> egui::Pos2 {
     let existing = canvas
         .committed_placements()
         .into_iter()
@@ -343,15 +352,13 @@ fn placement_anchor_for_payload(
             )
         })
         .collect::<Vec<_>>();
-    Ok(
-        crate::placement::initial_layout::arrange_rect_with_existing_layout(
-            &existing,
-            requested_anchor_world,
-            viewport_world,
-            bounds.width(),
-            bounds.height(),
-            placement_gap,
-        ),
+    crate::placement::initial_layout::arrange_rect_with_existing_layout(
+        &existing,
+        requested_anchor_world,
+        viewport_world,
+        bounds.width(),
+        bounds.height(),
+        placement_gap,
     )
 }
 
@@ -446,7 +453,8 @@ mod group_tests {
             2
         ];
         let before = context.canvas.all_placement_ids();
-        assert!(paste_board_payload_at(&mut context, &malformed, egui::Pos2::ZERO).is_err());
+        let malformed = serde_json::to_string(&malformed).unwrap();
+        assert!(paste_json_at(&mut context, &malformed, egui::Pos2::ZERO).is_err());
         assert_eq!(context.canvas.all_placement_ids(), before);
         source.delete_placements(&ids);
         source.select_group(source_id);
@@ -850,7 +858,7 @@ mod paste_geometry_tests {
     use super::*;
 
     #[test]
-    fn paste_uses_current_geometry_when_moves_and_board_switches_are_not_persisted() {
+    fn duplicate_uses_current_geometry_when_moves_and_board_switches_are_not_persisted() {
         let root = crate::test_support::TempRoot::new("paste-current-canvas");
         let library = Library::initialize(root.to_path_buf()).unwrap();
         let path = library.store_rgba_image("source", &[255; 4], 1, 1).unwrap();
@@ -884,7 +892,6 @@ mod paste_geometry_tests {
             current.state.geometry.center = egui::pos2(x, 0.0);
             canvas.add_unresolved_placement(current.clone());
             canvas.select_placements(&[current.id()]);
-            let payload = copy_selected_board_payload(&canvas).unwrap();
             let mut context = ActiveBoardCommandContext {
                 canvas: &mut canvas,
                 library: Some(&library),
@@ -895,7 +902,8 @@ mod paste_geometry_tests {
                     egui::pos2(3000.0, 3000.0),
                 ),
             };
-            paste_board_payload_at(&mut context, &payload, egui::pos2(x, 0.0)).unwrap();
+            // A duplicate goes beside the item where the canvas has it now.
+            duplicate_selection(&mut context).unwrap().unwrap();
             assert_eq!(
                 context
                     .canvas

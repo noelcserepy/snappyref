@@ -392,6 +392,7 @@ impl PlacementCreation {
         provisional_ids: &[i64],
         screen_rect: egui::Rect,
         anchor: egui::Pos2,
+        landing: Option<super::creation::VisibleCanvas>,
         config: super::content_resolution::ContentResolutionRequestConfig,
         trace: Option<crate::image_preparation::ImagePrepTrace>,
         destination: Option<(i64, i64)>,
@@ -456,6 +457,7 @@ impl PlacementCreation {
                 sources.iter().map(Self::source_intent).collect(),
                 anchor,
                 screen_rect,
+                landing,
                 settings,
             );
             (batch.created, batch.history_action)

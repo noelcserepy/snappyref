@@ -227,9 +227,14 @@ impl BoardEditing {
         context: &mut BoardEditContext<'_>,
         payload: &crate::sources::clipboard::ClipboardBoardSelection,
         anchor: eframe::egui::Pos2,
+        landing: Option<crate::placement::creation::VisibleCanvas>,
     ) -> Result<String, String> {
-        let outcome =
-            super::commands::paste_board_payload_at(&mut context.command(), payload, anchor)?;
+        let outcome = super::commands::paste_board_payload_at(
+            &mut context.command(),
+            payload,
+            anchor,
+            landing,
+        )?;
         self.accept_paste(context, outcome)
     }
     pub(crate) fn duplicate(
