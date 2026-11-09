@@ -28,11 +28,11 @@ pub(crate) fn annotation_color(color: CanvasAnnotationColor) -> egui::Color32 {
 /// stroke zooms with the images it points at.
 pub(crate) fn stroke_width_value(width: CanvasStrokeWidth) -> f32 {
     match width {
-        CanvasStrokeWidth::S => 1.25,
+        CanvasStrokeWidth::S => 1.0,
         CanvasStrokeWidth::M => 2.0,
-        CanvasStrokeWidth::L => 3.5,
-        CanvasStrokeWidth::Xl => 6.0,
-        CanvasStrokeWidth::Xxl => 10.0,
+        CanvasStrokeWidth::L => 4.0,
+        CanvasStrokeWidth::Xl => 8.0,
+        CanvasStrokeWidth::Xxl => 16.0,
     }
 }
 

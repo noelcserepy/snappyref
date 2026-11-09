@@ -11,7 +11,7 @@
 use eframe::egui;
 
 use super::CanvasState;
-use super::render::{annotation_color, stroke_width_value};
+use super::render::annotation_color;
 use crate::data::{
     CanvasAnnotationColor, CanvasAnnotationKind, CanvasRectangleFill, CanvasStrokeWidth,
     CanvasTextSize,
@@ -417,9 +417,16 @@ fn paint_change(ui: &mut egui::Ui, hud: &StyleHud) {
                     &CanvasStrokeWidth::ALL,
                     lit,
                     |painter, center, ink, width| {
+                        let points = match width {
+                            CanvasStrokeWidth::S => 1.0,
+                            CanvasStrokeWidth::M => 2.0,
+                            CanvasStrokeWidth::L => 3.0,
+                            CanvasStrokeWidth::Xl => 4.5,
+                            CanvasStrokeWidth::Xxl => 6.5,
+                        };
                         painter.line_segment(
                             [center - egui::vec2(7.0, 0.0), center + egui::vec2(7.0, 0.0)],
-                            egui::Stroke::new(stroke_width_value(width), ink),
+                            egui::Stroke::new(points, ink),
                         );
                     },
                 );

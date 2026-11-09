@@ -602,3 +602,87 @@ fn hold(harness: &mut Harness<'_, SnappyRefApp>) {
         harness.step();
     }
 }
+
+/// One label and one arrow at each size, Shift+1 to 5, on the readme board,
+/// at the opening zoom and two zoomed-out views. Each step doubles, so Size 1
+/// notes a detail and Size 5 still reads as a heading zoomed out.
+#[test]
+fn inspect_annotation_size_range_writes_artifact() {
+    let mut scenario = InspectScenario::new("annotation-size-range");
+    let root = TempRoot::new("snappyref-inspect-annotation-size-range");
+    let (mut harness, bounds) = readme_board(&root);
+    let screen = test_screen_rect();
+    let at = |name: &str, u: f32, v: f32| {
+        let rect = bounds[name];
+        inspect_world_to_screen(
+            rect.min + egui::vec2(rect.width() * u, rect.height() * v),
+            screen,
+        )
+    };
+    let empty = screen.right_bottom() - egui::vec2(30., 30.);
+    let mut labels = Vec::new();
+    let sizes = [
+        egui::Key::Num1,
+        egui::Key::Num2,
+        egui::Key::Num3,
+        egui::Key::Num4,
+        egui::Key::Num5,
+    ];
+    let images = [
+        "matterhorn",
+        "great-wave",
+        "woman-water-pitcher",
+        "tetons-snake-river",
+        "earthrise",
+    ];
+    for (step, (key, image)) in sizes.into_iter().zip(images).enumerate() {
+        settle_at(&mut harness, Some(empty), empty);
+        shortcut(&mut harness, egui::Modifiers::SHIFT, key);
+        color(&mut harness, 2);
+        labels.push(place_label(
+            &mut harness,
+            at(image, 0.04, 0.04),
+            &format!("Size {}", step + 1),
+        ));
+        commit(&mut harness);
+        settle_at(&mut harness, Some(empty), empty);
+        hold_drag(
+            &mut harness,
+            egui::Key::A,
+            at(image, 0.1, 0.85),
+            at(image, 0.9, 0.85),
+        );
+    }
+    settle_at(&mut harness, Some(empty), empty);
+    let heights: Vec<f32> = labels
+        .iter()
+        .map(|&id| {
+            let label = harness.state().canvas.annotation_for_id(id).unwrap();
+            label.end().y - label.start().y
+        })
+        .collect();
+    scenario.fact("label_heights", serde_json::json!(heights));
+    scenario.assertion(
+        "each size step doubles the label's height",
+        heights
+            .windows(2)
+            .all(|pair| (1.9..2.1).contains(&(pair[1] / pair[0]))),
+    );
+    scenario.capture_screen("opening-zoom", &mut harness);
+    for frame in ["zoomed-out-3", "zoomed-out-6"] {
+        harness.hover_at(screen.center());
+        for _ in 0..3 {
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, -1.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+        }
+        settle_at(&mut harness, None, empty);
+        scenario.fact(frame, serde_json::json!(harness.state().canvas.zoom));
+        scenario.capture_screen(frame, &mut harness);
+    }
+    scenario.finish();
+}

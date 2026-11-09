@@ -28,6 +28,7 @@ SCENARIOS = {
     'annotation-endpoint-drag': ('inspect_annotation_endpoint_drag_writes_artifact', 'annotation-endpoint-drag', False),
     'annotation-board': ('inspect_annotation_board_writes_artifact', 'annotation-board', False),
     'annotation-style-keys': ('inspect_annotation_style_keys_writes_artifact', 'annotation-style-keys', False),
+    'annotation-size-range': ('inspect_annotation_size_range_writes_artifact', 'annotation-size-range', False),
     'readme-board': ('inspect_readme_board_writes_artifact', 'readme-board', False),
     'pureref-import': ('inspect_pureref_import_writes_artifact', 'pureref-import', False),
     'pureref-export': ('inspect_pureref_export_writes_artifact', 'pureref-export', False),
