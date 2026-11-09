@@ -1,5 +1,5 @@
 #[cfg(test)]
-use crate::sources::clipboard::decode_board_selection;
+use crate::sources::clipboard::{decode_board_selection, validate_clipboard_payload};
 use eframe::egui;
 
 use crate::canvas::CanvasState;
@@ -9,7 +9,6 @@ use crate::data::{
 use crate::library::storage::Library;
 use crate::sources::clipboard::{
     ClipboardBoardSelection, clipboard_payload_bounds, copy_selected_board_payload,
-    validate_clipboard_payload,
 };
 
 pub(crate) struct ActiveBoardCommandContext<'a> {
@@ -40,15 +39,14 @@ pub(crate) fn paste_json_at(
 }
 
 /// Centers the copied selection on the anchor. With `landing`, it then moves
-/// inside the visible canvas. It may cover items already there. This is where an
-/// outside payload is validated; a duplicate's own payload is trusted.
+/// inside the visible canvas. It may cover items already there. The payload was
+/// validated where it was decoded, or built from this canvas.
 pub(crate) fn paste_board_payload_at(
     context: &mut ActiveBoardCommandContext<'_>,
     payload: &ClipboardBoardSelection,
     anchor_world: egui::Pos2,
     landing: Option<crate::placement::creation::VisibleCanvas>,
 ) -> Result<PasteCommandOutcome, String> {
-    validate_clipboard_payload(payload)?;
     let source_center = egui::pos2(payload.source_center_x, payload.source_center_y);
     let mut target_center = anchor_world;
     if let Some(landing) = landing
@@ -455,7 +453,8 @@ mod group_tests {
             2
         ];
         let before = context.canvas.all_placement_ids();
-        assert!(paste_board_payload_at(&mut context, &malformed, egui::Pos2::ZERO, None).is_err());
+        let malformed = serde_json::to_string(&malformed).unwrap();
+        assert!(paste_json_at(&mut context, &malformed, egui::Pos2::ZERO).is_err());
         assert_eq!(context.canvas.all_placement_ids(), before);
         source.delete_placements(&ids);
         source.select_group(source_id);

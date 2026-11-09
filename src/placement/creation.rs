@@ -145,7 +145,9 @@ fn axis_offset_inside(span: egui::Rangef, area: egui::Rangef) -> f32 {
 }
 
 /// Lays a batch out around `anchor_world`. With `landing`, the batch then moves
-/// inside the visible canvas; without it, it stays centered on the anchor.
+/// inside the visible canvas; without it, it stays centered on the anchor. The
+/// guide snap runs last, so it can pull the batch up to its release distance
+/// into the focus padding, which is wider, and never out of view.
 pub(crate) fn plan_source_intent_geometries(
     canvas: &mut CanvasState,
     intents: &[SourceIntent],
